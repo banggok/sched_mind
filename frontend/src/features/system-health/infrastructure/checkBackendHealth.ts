@@ -6,15 +6,17 @@ export function isHealthyResponse(value: unknown): boolean {
   return 'status' in value && value.status === 'ok'
 }
 
-export async function checkBackendHealth(
-  signal?: AbortSignal,
+export function createBackendHealthChecker(
+  apiBaseURL: string,
   fetcher: typeof fetch = fetch,
-): Promise<boolean> {
-  const response = await fetcher('/api/health', { signal })
+): (signal?: AbortSignal) => Promise<boolean> {
+  return async (signal?: AbortSignal) => {
+    const response = await fetcher(`${apiBaseURL}/health`, { signal })
 
-  if (!response.ok) {
-    return false
+    if (!response.ok) {
+      return false
+    }
+
+    return isHealthyResponse(await response.json())
   }
-
-  return isHealthyResponse(await response.json())
 }
