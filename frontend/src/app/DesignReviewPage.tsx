@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react'
-
-import { checkBackendHealth, type HealthStatus } from './health'
+import {
+  SystemHealthBadge,
+  type HealthStatus,
+} from '../features/system-health/presentation/SystemHealthBadge'
 
 const palette = [
   { name: 'Navy', value: '#0C162D', className: 'bg-[#0C162D]' },
@@ -46,48 +47,11 @@ function CalendarIcon() {
   )
 }
 
-function HealthBadge({ status }: { status: HealthStatus }) {
-  const label = {
-    checking: 'Checking API',
-    online: 'Backend connected',
-    offline: 'Backend offline',
-  }[status]
-
-  const dotClass = {
-    checking: 'bg-[#50ABE5] animate-pulse',
-    online: 'bg-emerald-400',
-    offline: 'bg-rose-500',
-  }[status]
-
-  return (
-    <div
-      className="inline-flex items-center gap-2 rounded-full border border-[#2A93D6]/20 bg-[#E5F5FF] px-3 py-2 text-xs font-semibold text-[#115488]"
-      role="status"
-    >
-      <span className={`size-2 rounded-full ${dotClass}`} />
-      {label}
-    </div>
-  )
-}
-
-export function App() {
-  const [healthStatus, setHealthStatus] =
-    useState<HealthStatus>('checking')
-
-  useEffect(() => {
-    const controller = new AbortController()
-
-    checkBackendHealth(controller.signal)
-      .then((healthy) => setHealthStatus(healthy ? 'online' : 'offline'))
-      .catch((error: unknown) => {
-        if (!(error instanceof DOMException && error.name === 'AbortError')) {
-          setHealthStatus('offline')
-        }
-      })
-
-    return () => controller.abort()
-  }, [])
-
+export function DesignReviewPage({
+  healthStatus,
+}: {
+  healthStatus: HealthStatus
+}) {
   return (
     <main className="min-h-screen bg-white text-[#101828]">
       <header className="border-b border-[#EBF0F5] bg-white px-5 py-5 sm:px-8 lg:px-12">
@@ -122,7 +86,7 @@ export function App() {
               <span className="rounded-full bg-[#E5F5FF] px-3 py-2 text-xs font-extrabold tracking-[0.12em] text-[#0C4DA2] uppercase">
                 Design direction 01
               </span>
-              <HealthBadge status={healthStatus} />
+              <SystemHealthBadge status={healthStatus} />
             </div>
             <h1 className="max-w-3xl text-5xl leading-[0.96] font-black tracking-[-0.055em] text-balance sm:text-7xl lg:text-[5.5rem]">
               Smarter Planning.

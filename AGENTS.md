@@ -80,6 +80,121 @@ Must NOT contain business rules.
 
 ---
 
+# Frontend Architecture
+
+The frontend uses feature-oriented Clean Architecture pragmatically.
+
+Do not create layers or abstractions before an actual feature requires them.
+
+For business features, prefer this structure:
+
+```text
+src/
+├── app/
+├── features/
+│   └── <feature-name>/
+│       ├── domain/
+│       ├── application/
+│       ├── infrastructure/
+│       └── presentation/
+└── shared/
+```
+
+## Frontend Layer Responsibilities
+
+### domain
+
+Responsible for:
+
+- Business models
+- Business rules
+- Value Objects
+- Domain validation
+- Domain errors
+
+Must NOT depend on:
+
+- React
+- HTTP clients
+- Browser APIs
+- State-management libraries
+- UI libraries
+- API DTOs
+
+### application
+
+Responsible for:
+
+- Use case orchestration
+- Application workflows
+- Ports consumed by use cases
+- Mapping application results
+
+Must NOT contain:
+
+- React components
+- HTTP implementation
+- Styling
+- Browser-specific behavior
+
+### infrastructure
+
+Responsible for:
+
+- HTTP API clients
+- Storage adapters
+- External service integration
+- API DTO mapping
+- Implementations of application ports
+
+Must NOT contain business rules.
+
+### presentation
+
+Responsible for:
+
+- React components
+- Pages
+- Hooks
+- View models
+- User interaction
+- Presentation state
+
+Must NOT:
+
+- Implement business rules
+- Use raw API DTOs as domain models
+- Call HTTP clients directly when a use case exists
+- Contain persistence or integration logic
+
+## Frontend Dependency Direction
+
+Dependencies must point toward the business core:
+
+```text
+presentation → application → domain
+infrastructure → application/domain contracts
+```
+
+The domain layer must remain framework-independent.
+
+## Frontend Implementation Rules
+
+- Organize business code by feature.
+- Keep feature-specific code inside its feature boundary.
+- Put code in `shared` only when it is genuinely reused by multiple features.
+- Do not create generic repositories, services, factories, or hooks without an actual need.
+- Separate API DTOs from domain models when their responsibilities differ.
+- Map API data at the infrastructure boundary.
+- Keep React components focused on rendering and interaction.
+- Move business decisions out of components and hooks into domain or application code.
+- Do not introduce interfaces for every function or service.
+- Prefer plain functions and TypeScript types until polymorphism or substitution is required.
+- Preserve observable behavior during refactoring.
+- Do not refactor unrelated code while implementing a feature.
+
+---
+
 # Domain-Driven Design Rules
 
 - Business logic belongs in the Domain layer.
