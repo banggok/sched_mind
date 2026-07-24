@@ -1,0 +1,14 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+
+# Go
+backend/bin/
+backend/coverage.out
+
+# Frontend
+frontend/dist/
+frontend/node_modules/
+frontend/*.tsbuildinfo
+
