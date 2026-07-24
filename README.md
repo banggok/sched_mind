@@ -1,4 +1,6 @@
-# sched_mind
+# SchedMind
+
+> Smarter Planning. Better Delivery.
 
 Minimal foundation for a scheduling application, with a Go backend organized
 using Domain-Driven Design boundaries and a React/Tailwind frontend.
@@ -32,6 +34,17 @@ Then start the development server:
 ```sh
 ./scripts/run-frontend.sh
 ```
+
+## Run backend and frontend together
+
+After installing the frontend dependencies, start both development servers with:
+
+```sh
+./scripts/run-all.sh
+```
+
+Press `Ctrl+C` to stop both servers. If either server exits, the script stops
+the other server and returns the exit status of the server that exited first.
 
 ## Validate
 
