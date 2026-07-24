@@ -2,7 +2,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 
 import { App } from './App'
-import './style.css'
+import './styles.css'
 
 const rootElement = document.querySelector<HTMLElement>('#app')
 
@@ -15,4 +15,3 @@ createRoot(rootElement).render(
     <App />
   </StrictMode>,
 )
-
