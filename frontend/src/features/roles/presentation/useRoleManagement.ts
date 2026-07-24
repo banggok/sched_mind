@@ -190,7 +190,7 @@ function errorMessage(error: unknown, fallback: string): string {
     case 'ROLE_NAME_INVALID':
       return 'Role name contains unsupported characters'
     case 'ROLE_NAME_ALREADY_EXISTS':
-      return 'A role with this name already exists'
+      return 'Role name already exists'
     case 'ROLE_NOT_FOUND':
       return 'This role no longer exists. Refresh the list and try again.'
     case 'ROLE_IN_USE':

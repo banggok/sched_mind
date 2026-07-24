@@ -158,7 +158,7 @@ export function RolesDashboardPage({
                 </span>
                 <h3 className="mt-5 text-xl font-black">No roles yet</h3>
                 <p className="mx-auto mt-2 max-w-sm text-[#6D6E70]">
-                  Add the first engineering role to start organizing your team.
+                  Add the first team role to start organizing your team.
                 </p>
                 <button
                   className="mt-5 text-sm font-extrabold text-[#2A93D6]"

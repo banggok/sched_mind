@@ -3,7 +3,7 @@
 ## User Story
 
 **Sebagai** Engineering Lead,
-**Saya ingin** mengelola daftar role engineer,
+**Saya ingin** mengelola daftar role tim,
 **Sehingga** team member dan task dapat diklasifikasikan berdasarkan role yang sesuai.
 
 ---
@@ -65,7 +65,7 @@ Contoh nama valid:
 
 ### AC-1 — Menampilkan daftar role
 
-**Given** Engineering Lead membuka halaman Role Management
+**Given** Engineering Lead membuka halaman Roles
 **When** data role berhasil dimuat
 **Then** sistem menampilkan seluruh role yang tersedia
 **And** setiap role menampilkan minimal nama role
@@ -76,7 +76,7 @@ Contoh nama valid:
 ### AC-2 — Empty state
 
 **Given** belum terdapat role dalam sistem
-**When** Engineering Lead membuka halaman Role Management
+**When** Engineering Lead membuka halaman Roles
 **Then** sistem menampilkan empty state
 **And** sistem menyediakan aksi untuk menambahkan role baru.
 
@@ -84,7 +84,7 @@ Contoh nama valid:
 
 ### AC-3 — Menambahkan role
 
-**Given** Engineering Lead berada pada halaman Role Management
+**Given** Engineering Lead berada pada halaman Roles
 **When** Engineering Lead memasukkan nama role yang valid dan menyimpan data
 **Then** sistem membuat role baru
 **And** sistem melakukan trim terhadap whitespace di awal dan akhir nama
@@ -350,7 +350,7 @@ Role berikut tersedia:
 
 **Steps**
 
-1. Buka halaman Role Management.
+1. Buka halaman Roles.
 
 **Expected Result**
 
@@ -372,7 +372,7 @@ Tidak ada role dalam database.
 
 **Steps**
 
-1. Buka halaman Role Management.
+1. Buka halaman Roles.
 
 **Expected Result**
 

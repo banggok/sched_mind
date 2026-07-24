@@ -81,6 +81,26 @@ describe('RolesDashboardPage', () => {
     expect(await screen.findByText('Backend Engineer')).toBeTruthy()
   })
 
+  it('shows the specified duplicate-name message without exposing API details', async () => {
+    const user = userEvent.setup()
+    const fixture = gatewayFixture([])
+    fixture.gateway.create = vi
+      .fn()
+      .mockRejectedValue({
+        code: 'ROLE_NAME_ALREADY_EXISTS',
+        message: 'unique index roles_name_ci_unique',
+      })
+    render(<RolesDashboardPage gateway={fixture.gateway} />)
+
+    await screen.findByText('No roles yet')
+    await user.click(screen.getAllByRole('button', { name: 'Add Role' })[0])
+    await user.type(screen.getByLabelText('Role name'), 'Backend')
+    await user.click(screen.getByRole('button', { name: 'Add role' }))
+
+    expect(await screen.findByText('Role name already exists')).toBeTruthy()
+    expect(screen.queryByText('unique index roles_name_ci_unique')).toBeNull()
+  })
+
   it('cancels deletion and reports an in-use failure', async () => {
     const user = userEvent.setup()
     const fixture = gatewayFixture([role('backend', 'Backend')])
