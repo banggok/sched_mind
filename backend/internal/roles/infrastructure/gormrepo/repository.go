@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/banggok/sched_mind/backend/internal/roles/domain"
+	"github.com/banggok/sched_mind/backend/internal/shared/listing"
 	"gorm.io/gorm"
 )
 
@@ -17,12 +18,20 @@ func New(database *gorm.DB) *Repository {
 	return &Repository{database: database}
 }
 
-func (repository *Repository) List(ctx context.Context) ([]domain.Role, error) {
+func (repository *Repository) List(ctx context.Context, query listing.Query) (listing.Page[domain.Role], error) {
 	var models []roleModel
-	if err := repository.database.WithContext(ctx).
-		Order("LOWER(name) ASC").
+	statement := repository.database.WithContext(ctx).Model(&roleModel{})
+	if search := strings.ToLower(strings.TrimSpace(query.Search)); search != "" {
+		statement = statement.Where("LOWER(name) LIKE ?", escapeLike(search)+"%")
+	}
+	var total int64
+	if err := statement.Count(&total).Error; err != nil {
+		return listing.Page[domain.Role]{}, err
+	}
+	if err := statement.Order("LOWER(name) ASC").Order("id ASC").
+		Limit(query.PageSize).Offset((query.Page - 1) * query.PageSize).
 		Find(&models).Error; err != nil {
-		return nil, err
+		return listing.Page[domain.Role]{}, err
 	}
 
 	roles := make([]domain.Role, 0, len(models))
@@ -30,7 +39,15 @@ func (repository *Repository) List(ctx context.Context) ([]domain.Role, error) {
 		roles = append(roles, toDomain(model))
 	}
 
-	return roles, nil
+	return listing.Page[domain.Role]{
+		Items: roles, Page: query.Page, PageSize: query.PageSize, Total: total,
+	}, nil
+}
+
+func escapeLike(value string) string {
+	value = strings.ReplaceAll(value, `\`, `\\`)
+	value = strings.ReplaceAll(value, `%`, `\%`)
+	return strings.ReplaceAll(value, `_`, `\_`)
 }
 
 func (repository *Repository) FindByID(ctx context.Context, id string) (*domain.Role, error) {

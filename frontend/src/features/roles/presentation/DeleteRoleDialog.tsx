@@ -42,7 +42,7 @@ export function DeleteRoleDialog({
           Delete {role.name}?
         </h2>
         <p className="mt-3 leading-7 text-[#6D6E70]">
-          This role will be permanently removed. Roles assigned to team members
+          This role will be permanently removed. Roles assigned to members
           cannot be deleted.
         </p>
         {error ? (

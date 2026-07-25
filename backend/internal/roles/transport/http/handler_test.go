@@ -10,10 +10,12 @@ import (
 	"time"
 
 	"github.com/banggok/sched_mind/backend/internal/roles/domain"
+	"github.com/banggok/sched_mind/backend/internal/shared/listing"
 )
 
 type serviceStub struct {
 	roles       []domain.Role
+	listQuery   listing.Query
 	createRole  *domain.Role
 	createError error
 	updateRole  *domain.Role
@@ -21,8 +23,11 @@ type serviceStub struct {
 	deleteError error
 }
 
-func (service *serviceStub) List(context.Context) ([]domain.Role, error) {
-	return service.roles, nil
+func (service *serviceStub) List(_ context.Context, query listing.Query) (listing.Page[domain.Role], error) {
+	service.listQuery = query
+	return listing.Page[domain.Role]{
+		Items: service.roles, Page: query.Page, PageSize: query.PageSize, Total: int64(len(service.roles)),
+	}, nil
 }
 
 func (service *serviceStub) Create(context.Context, string) (*domain.Role, error) {
@@ -47,7 +52,7 @@ func TestListRolesResponse(t *testing.T) {
 	router := http.NewServeMux()
 	New(service).Register(router)
 
-	request := httptest.NewRequest(http.MethodGet, "/api/roles", nil)
+	request := httptest.NewRequest(http.MethodGet, "/api/roles?search=back&page=2&pageSize=10", nil)
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, request)
 
@@ -60,6 +65,26 @@ func TestListRolesResponse(t *testing.T) {
 	}
 	if len(payload.Data) != 1 || payload.Data[0].Name != "Backend" {
 		t.Fatalf("data = %#v, want Backend role", payload.Data)
+	}
+	if service.listQuery != (listing.Query{Search: "back", Page: 2, PageSize: 10}) {
+		t.Fatalf("list query = %#v, want parsed search and pagination", service.listQuery)
+	}
+	if payload.Page != 2 || payload.PageSize != 10 || payload.Total != 1 {
+		t.Fatalf("metadata = page %d size %d total %d", payload.Page, payload.PageSize, payload.Total)
+	}
+}
+
+func TestListRolesRejectsInvalidPagination(t *testing.T) {
+	t.Parallel()
+
+	router := http.NewServeMux()
+	New(&serviceStub{}).Register(router)
+	request := httptest.NewRequest(http.MethodGet, "/api/roles?page=0", nil)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", response.Code)
 	}
 }
 

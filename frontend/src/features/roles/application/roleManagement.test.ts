@@ -12,17 +12,16 @@ import type { RolesGateway } from './rolesGateway'
 describe('role management workflows', () => {
   it('sorts list results and normalizes mutation input', async () => {
     const gateway = gatewayStub()
-    gateway.list = vi.fn().mockResolvedValue([
-      role('qa', 'QA'),
-      role('backend', 'Backend'),
-    ])
+    gateway.list = vi.fn().mockResolvedValue({
+      items: [role('qa', 'QA'), role('backend', 'Backend')],
+      page: 1, pageSize: 20, total: 2,
+    })
     gateway.create = vi.fn().mockResolvedValue(role('new', 'Frontend'))
     gateway.update = vi.fn().mockResolvedValue(role('new', 'Frontend Engineer'))
 
-    await expect(listRoles(gateway)).resolves.toEqual([
-      role('backend', 'Backend'),
-      role('qa', 'QA'),
-    ])
+    await expect(listRoles(gateway, query)).resolves.toMatchObject({
+      items: [role('backend', 'Backend'), role('qa', 'QA')],
+    })
     await createRole(gateway, '  Frontend  ')
     await updateRole(gateway, 'new', ' Frontend Engineer ')
 
@@ -45,12 +44,13 @@ describe('role management workflows', () => {
 
 function gatewayStub(): RolesGateway {
   return {
-    list: vi.fn().mockResolvedValue([]),
+    list: vi.fn().mockResolvedValue({ items: [], page: 1, pageSize: 20, total: 0 }),
     create: vi.fn(),
     update: vi.fn(),
     delete: vi.fn().mockResolvedValue(undefined),
   }
 }
+const query = { search: '', page: 1, pageSize: 20 }
 function role(id: string, name: string): Role {
   return {
     id,

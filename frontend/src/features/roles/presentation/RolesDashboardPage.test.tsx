@@ -2,6 +2,7 @@ import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
+import { AppShell } from '../../../app/AppShell'
 import type { RolesGateway } from '../application/rolesGateway'
 import type { Role } from '../domain/role'
 import { RolesDashboardPage } from './RolesDashboardPage'
@@ -10,8 +11,15 @@ describe('RolesDashboardPage', () => {
   it('shows the available workspace navigation and current location', async () => {
     const user = userEvent.setup()
     const fixture = gatewayFixture([])
-    render(<RolesDashboardPage gateway={fixture.gateway} />)
+    render(
+      <AppShell activePage="roles">
+        <RolesDashboardPage gateway={fixture.gateway} />
+      </AppShell>,
+    )
 
+    expect(
+      screen.getByRole('link', { name: 'SchedMind home' }).getAttribute('href'),
+    ).toBe('/')
     const toggle = screen.getByRole('button', { name: 'Expand navigation' })
     expect(toggle.getAttribute('aria-expanded')).toBe('false')
     await user.click(toggle)
@@ -22,9 +30,20 @@ describe('RolesDashboardPage', () => {
     ).toBe('true')
 
     const navigation = screen.getByRole('navigation', {
-      name: 'Team Management',
+      name: 'Application navigation',
     })
+    expect(
+      within(navigation).getByRole('region', { name: 'Team' }),
+    ).toBeTruthy()
     const current = within(navigation).getByRole('link', { name: 'Roles' })
+    await user.click(
+      within(navigation).getByRole('link', { name: 'Members' }),
+    )
+    expect(
+      screen.getByRole('button', { name: 'Collapse navigation' }).getAttribute(
+        'aria-expanded',
+      ),
+    ).toBe('true')
 
     expect(current.getAttribute('href')).toBe('#roles')
     expect(current.getAttribute('aria-current')).toBe('page')
@@ -56,6 +75,32 @@ describe('RolesDashboardPage', () => {
     ).toBeTruthy()
     expect(fixture.gateway.create).toHaveBeenCalledWith('Backend')
     expect(await screen.findByText('Backend')).toBeTruthy()
+  })
+
+  it('filters roles and distinguishes no search results from no data', async () => {
+    const user = userEvent.setup()
+    const fixture = gatewayFixture([
+      role('android', 'Android'),
+      role('backend', 'Backend'),
+    ])
+    render(<RolesDashboardPage gateway={fixture.gateway} />)
+
+    const search = await screen.findByLabelText('Search roles')
+    await user.type(search, 'back')
+    expect(screen.getByRole('status', { name: 'Loading roles' })).toBeTruthy()
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('status', { name: 'Loading roles' }),
+      ).toBeNull(),
+    )
+    expect(await screen.findByText('Backend')).toBeTruthy()
+    expect(screen.queryByText('Android')).toBeNull()
+
+    await user.clear(search)
+    await user.type(search, 'web')
+    expect(await screen.findByText('No matching roles')).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: 'Clear search' }))
+    expect(await screen.findByText('Android')).toBeTruthy()
   })
 
   it('edits a role and refreshes the list', async () => {
@@ -124,7 +169,7 @@ describe('RolesDashboardPage', () => {
 
     expect(
       await screen.findByText(
-        'Role is assigned to one or more team members and cannot be deleted',
+        'Role is assigned to one or more members and cannot be deleted',
       ),
     ).toBeTruthy()
     expect(screen.getByRole('alertdialog')).toBeTruthy()
@@ -138,7 +183,12 @@ describe('RolesDashboardPage', () => {
     fixture.gateway.list = vi
       .fn()
       .mockRejectedValueOnce(new Error('postgres connection refused'))
-      .mockResolvedValueOnce([...fixture.roles])
+      .mockResolvedValueOnce({
+        items: [...fixture.roles],
+        page: 1,
+        pageSize: 5,
+        total: fixture.roles.length,
+      })
 
     render(<RolesDashboardPage gateway={fixture.gateway} />)
 
@@ -212,7 +262,12 @@ describe('RolesDashboardPage', () => {
 function gatewayFixture(initialRoles: Role[]) {
   const roles = [...initialRoles]
   const gateway: RolesGateway = {
-    list: vi.fn().mockImplementation(async () => [...roles]),
+    list: vi.fn().mockImplementation(async (query) => {
+      const matching = roles.filter((item) =>
+        item.name.toLowerCase().startsWith(query.search.toLowerCase()),
+      )
+      return { items: matching, page: query.page, pageSize: query.pageSize, total: matching.length }
+    }),
     create: vi.fn().mockImplementation(async (name: string) => {
       const created = role(`role-${roles.length + 1}`, name)
       roles.push(created)

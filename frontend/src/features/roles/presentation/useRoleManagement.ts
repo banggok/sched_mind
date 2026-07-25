@@ -7,6 +7,7 @@ import {
   updateRole,
 } from '../application/roleManagement'
 import type { RolesGateway } from '../application/rolesGateway'
+import type { PageQuery } from '../../../shared/application/pagination'
 import { RoleNameError, type Role } from '../domain/role'
 
 type FormMode = 'create' | 'edit'
@@ -16,7 +17,7 @@ interface FormState {
   role?: Role
 }
 
-export function useRoleManagement(gateway: RolesGateway) {
+export function useRoleManagement(gateway: RolesGateway, query: PageQuery) {
   const [roles, setRoles] = useState<Role[]>([])
   const [loading, setLoading] = useState(true)
   const [pageError, setPageError] = useState('')
@@ -27,12 +28,15 @@ export function useRoleManagement(gateway: RolesGateway) {
   const [deleteError, setDeleteError] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [notification, setNotification] = useState('')
+  const [total, setTotal] = useState(0)
 
   const load = useCallback(
     async (signal?: AbortSignal) => {
+      setLoading(true)
       try {
-        const result = await listRoles(gateway, signal)
-        setRoles(result)
+        const result = await listRoles(gateway, query, signal)
+        setRoles(result.items)
+        setTotal(result.total)
         setPageError('')
       } catch (error) {
         if (!(error instanceof DOMException && error.name === 'AbortError')) {
@@ -44,7 +48,7 @@ export function useRoleManagement(gateway: RolesGateway) {
         }
       }
     },
-    [gateway],
+    [gateway, query.page, query.pageSize, query.search],
   )
 
   useEffect(() => {
@@ -149,6 +153,7 @@ export function useRoleManagement(gateway: RolesGateway) {
 
   return {
     roles,
+    total,
     loading,
     pageError,
     form,
@@ -194,7 +199,7 @@ function errorMessage(error: unknown, fallback: string): string {
     case 'ROLE_NOT_FOUND':
       return 'This role no longer exists. Refresh the list and try again.'
     case 'ROLE_IN_USE':
-      return 'Role is assigned to one or more team members and cannot be deleted'
+      return 'Role is assigned to one or more members and cannot be deleted'
     default:
       return fallback
   }

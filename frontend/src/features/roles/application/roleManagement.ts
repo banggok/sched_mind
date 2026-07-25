@@ -1,11 +1,14 @@
 import { normalizeRoleName, sortRolesByName, type Role } from '../domain/role'
 import type { RolesGateway } from './rolesGateway'
+import type { PageQuery, PageResult } from '../../../shared/application/pagination'
 
 export async function listRoles(
   gateway: RolesGateway,
+  query: PageQuery,
   signal?: AbortSignal,
-): Promise<Role[]> {
-  return sortRolesByName(await gateway.list(signal))
+): Promise<PageResult<Role>> {
+  const result = await gateway.list(query, signal)
+  return { ...result, items: sortRolesByName(result.items) }
 }
 
 export async function createRole(
