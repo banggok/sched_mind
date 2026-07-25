@@ -5,13 +5,15 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/banggok/sched_mind/backend/internal/roles/domain"
+	"github.com/banggok/sched_mind/backend/internal/shared/listing"
 )
 
 type Service interface {
-	List(context.Context) ([]domain.Role, error)
+	List(context.Context, listing.Query) (listing.Page[domain.Role], error)
 	Create(context.Context, string) (*domain.Role, error)
 	Update(context.Context, string, string) (*domain.Role, error)
 	Delete(context.Context, string) error
@@ -29,7 +31,10 @@ type roleResponse struct {
 }
 
 type listResponse struct {
-	Data []roleResponse `json:"data"`
+	Data     []roleResponse `json:"data"`
+	Page     int            `json:"page"`
+	PageSize int            `json:"pageSize"`
+	Total    int64          `json:"total"`
 }
 
 type nameRequest struct {
@@ -54,17 +59,40 @@ func (handler *Handler) Register(mux *http.ServeMux) {
 }
 
 func (handler *Handler) list(response http.ResponseWriter, request *http.Request) {
-	roles, err := handler.service.List(request.Context())
+	query, err := parseListQuery(request)
+	if err != nil {
+		writeJSON(response, http.StatusBadRequest, errorResponse{Code: "INVALID_REQUEST", Message: err.Error()})
+		return
+	}
+	result, err := handler.service.List(request.Context(), query)
 	if err != nil {
 		writeError(response, err)
 		return
 	}
 
-	data := make([]roleResponse, 0, len(roles))
-	for _, role := range roles {
+	data := make([]roleResponse, 0, len(result.Items))
+	for _, role := range result.Items {
 		data = append(data, mapRole(role))
 	}
-	writeJSON(response, http.StatusOK, listResponse{Data: data})
+	writeJSON(response, http.StatusOK, listResponse{Data: data, Page: result.Page, PageSize: result.PageSize, Total: result.Total})
+}
+
+func parseListQuery(request *http.Request) (listing.Query, error) {
+	query := listing.Query{Search: request.URL.Query().Get("search"), Page: 1, PageSize: 5}
+	var err error
+	if value := request.URL.Query().Get("page"); value != "" {
+		query.Page, err = strconv.Atoi(value)
+		if err != nil || query.Page < 1 {
+			return listing.Query{}, errors.New("page must be a positive integer")
+		}
+	}
+	if value := request.URL.Query().Get("pageSize"); value != "" {
+		query.PageSize, err = strconv.Atoi(value)
+		if err != nil || query.PageSize < 1 || query.PageSize > 100 {
+			return listing.Query{}, errors.New("pageSize must be between 1 and 100")
+		}
+	}
+	return query, nil
 }
 
 func (handler *Handler) create(response http.ResponseWriter, request *http.Request) {

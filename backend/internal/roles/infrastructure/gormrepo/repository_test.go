@@ -11,6 +11,7 @@ import (
 
 	"github.com/banggok/sched_mind/backend/internal/roles/application"
 	"github.com/banggok/sched_mind/backend/internal/roles/domain"
+	"github.com/banggok/sched_mind/backend/internal/shared/listing"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -65,16 +66,38 @@ func TestRepositorySortsRolesAndEnforcesCaseInsensitiveUniqueness(t *testing.T) 
 		}
 	}
 
-	roles, err := repository.List(context.Background())
+	roles, err := repository.List(context.Background(), listing.Query{Page: 1, PageSize: 20})
 	if err != nil {
 		t.Fatalf("List() error = %v", err)
 	}
-	got := []string{roles[0].Name, roles[1].Name, roles[2].Name}
+	got := []string{roles.Items[0].Name, roles.Items[1].Name, roles.Items[2].Name}
 	want := []string{"backend", "Frontend", "QA"}
 	for index := range want {
 		if got[index] != want[index] {
 			t.Fatalf("roles[%d] = %q, want %q", index, got[index], want[index])
 		}
+	}
+	if roles.Total != 3 || roles.Page != 1 || roles.PageSize != 20 {
+		t.Fatalf("page metadata = %#v, want page 1, size 20, total 3", roles)
+	}
+
+	secondPage, err := repository.List(context.Background(), listing.Query{Page: 2, PageSize: 2})
+	if err != nil {
+		t.Fatalf("List() second page error = %v", err)
+	}
+	if secondPage.Total != 3 || len(secondPage.Items) != 1 || secondPage.Items[0].Name != "QA" {
+		t.Fatalf("second page = %#v, want QA with total 3", secondPage)
+	}
+
+	searchResult, err := repository.List(context.Background(), listing.Query{
+		Search: "BA",
+		Page:   1, PageSize: 20,
+	})
+	if err != nil {
+		t.Fatalf("List() search error = %v", err)
+	}
+	if searchResult.Total != 1 || len(searchResult.Items) != 1 || searchResult.Items[0].Name != "backend" {
+		t.Fatalf("search result = %#v, want backend only", searchResult)
 	}
 
 	duplicate, err := domain.NewRole("duplicate", "BACKEND", now)

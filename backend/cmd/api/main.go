@@ -11,10 +11,13 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/banggok/sched_mind/backend/internal/roles/application"
-	"github.com/banggok/sched_mind/backend/internal/roles/infrastructure/gormrepo"
+	"github.com/banggok/sched_mind/backend/internal/httpapi"
+	roleapplication "github.com/banggok/sched_mind/backend/internal/roles/application"
+	rolegormrepo "github.com/banggok/sched_mind/backend/internal/roles/infrastructure/gormrepo"
 	rolepostgres "github.com/banggok/sched_mind/backend/internal/roles/infrastructure/postgres"
-	transporthttp "github.com/banggok/sched_mind/backend/internal/transport/http"
+	teammemberapplication "github.com/banggok/sched_mind/backend/internal/teammembers/application"
+	teammembergormrepo "github.com/banggok/sched_mind/backend/internal/teammembers/infrastructure/gormrepo"
+	teammemberpostgres "github.com/banggok/sched_mind/backend/internal/teammembers/infrastructure/postgres"
 )
 
 func main() {
@@ -105,13 +108,18 @@ func run(config *configuration) (runError error) {
 	if err := rolepostgres.Migrate(database); err != nil {
 		return fmt.Errorf("migrate database: %w", err)
 	}
+	if err := teammemberpostgres.Migrate(database); err != nil {
+		return fmt.Errorf("migrate team member database: %w", err)
+	}
 
-	roleRepository := gormrepo.New(database)
-	roleService := application.NewService(roleRepository)
+	roleRepository := rolegormrepo.New(database)
+	roleService := roleapplication.NewService(roleRepository)
+	teamMemberRepository := teammembergormrepo.New(database)
+	teamMemberService := teammemberapplication.NewService(teamMemberRepository)
 
 	server := &http.Server{
 		Addr:    config.address,
-		Handler: transporthttp.NewRouter(roleService),
+		Handler: httpapi.NewRouter(roleService, teamMemberService),
 	}
 
 	signalContext, stopSignals := signal.NotifyContext(

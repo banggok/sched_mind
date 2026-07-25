@@ -3,7 +3,7 @@
 ## User Story
 
 **Sebagai** Engineering Lead,
-**Saya ingin** mengelola daftar role engineer,
+**Saya ingin** mengelola daftar role tim,
 **Sehingga** team member dan task dapat diklasifikasikan berdasarkan role yang sesuai.
 
 ---
@@ -65,18 +65,21 @@ Contoh nama valid:
 
 ### AC-1 — Menampilkan daftar role
 
-**Given** Engineering Lead membuka halaman Role Management
+**Given** Engineering Lead membuka halaman Roles
 **When** data role berhasil dimuat
 **Then** sistem menampilkan seluruh role yang tersedia
 **And** setiap role menampilkan minimal nama role
-**And** daftar role diurutkan berdasarkan nama secara ascending tanpa membedakan huruf besar-kecil.
+**And** daftar role diurutkan berdasarkan nama secara ascending tanpa membedakan huruf besar-kecil
+**And** sistem menyediakan pencarian nama role secara case-insensitive
+**And** ketika tidak ada role yang cocok, sistem menampilkan no-results state yang berbeda dari empty state
+**And** sistem menyediakan aksi untuk menghapus pencarian.
 
 ---
 
 ### AC-2 — Empty state
 
 **Given** belum terdapat role dalam sistem
-**When** Engineering Lead membuka halaman Role Management
+**When** Engineering Lead membuka halaman Roles
 **Then** sistem menampilkan empty state
 **And** sistem menyediakan aksi untuk menambahkan role baru.
 
@@ -84,7 +87,7 @@ Contoh nama valid:
 
 ### AC-3 — Menambahkan role
 
-**Given** Engineering Lead berada pada halaman Role Management
+**Given** Engineering Lead berada pada halaman Roles
 **When** Engineering Lead memasukkan nama role yang valid dan menyimpan data
 **Then** sistem membuat role baru
 **And** sistem melakukan trim terhadap whitespace di awal dan akhir nama
@@ -130,6 +133,8 @@ Contoh nama valid:
 **Then** sistem menyimpan nama baru
 **And** ID role tetap sama
 **And** referensi team member terhadap role tersebut tetap valid
+**And** daftar team member menampilkan nama role terbaru
+**And** form perubahan team member memilih role dengan nama terbaru
 **And** sistem menampilkan notifikasi bahwa role berhasil diperbarui.
 
 ---
@@ -203,6 +208,21 @@ Contoh nama valid:
 
 ---
 
+### AC-15 — Daftar role menggunakan pagination
+
+**Given** daftar role tersedia
+**When** Engineering Lead membuka halaman Roles
+**Then** sistem meminta halaman pertama dengan ukuran default 5
+**And** sistem menampilkan rentang item, jumlah total item, halaman aktif, dan jumlah halaman
+**And** Engineering Lead dapat berpindah ke halaman sebelumnya atau berikutnya ketika tersedia.
+
+**When** Engineering Lead mengubah pencarian
+**Then** pencarian dijalankan oleh backend tanpa membedakan huruf besar-kecil
+**And** pagination kembali ke halaman pertama
+**And** response hanya memuat halaman hasil yang diminta.
+
+---
+
 ## API Contract
 
 Endpoint dapat disesuaikan dengan konvensi repository, tetapi perilakunya harus setara dengan kontrak berikut.
@@ -210,7 +230,7 @@ Endpoint dapat disesuaikan dengan konvensi repository, tetapi perilakunya harus 
 ### List Roles
 
 ```http
-GET /api/roles
+GET /api/roles?search=back&page=1&pageSize=5
 ```
 
 #### Success Response
@@ -224,7 +244,10 @@ GET /api/roles
       "createdAt": "2026-07-24T10:00:00Z",
       "updatedAt": "2026-07-24T10:00:00Z"
     }
-  ]
+  ],
+  "page": 1,
+  "pageSize": 5,
+  "total": 1
 }
 ```
 
@@ -350,7 +373,7 @@ Role berikut tersedia:
 
 **Steps**
 
-1. Buka halaman Role Management.
+1. Buka halaman Roles.
 
 **Expected Result**
 
@@ -372,7 +395,7 @@ Tidak ada role dalam database.
 
 **Steps**
 
-1. Buka halaman Role Management.
+1. Buka halaman Roles.
 
 **Expected Result**
 
@@ -724,13 +747,16 @@ Role `Android` tersedia.
 **Steps**
 
 1. Ubah nama role `Backend` menjadi `Backend Engineer`.
-2. Buka detail team member Harry.
+2. Buka daftar team member.
+3. Buka form Edit team member Harry.
 
 **Expected Result**
 
 1. Team member Harry tetap mereferensikan ID role yang sama.
-2. Nama role yang ditampilkan berubah menjadi `Backend Engineer`.
-3. Tidak terjadi orphan reference.
+2. Daftar menampilkan nama role `Backend Engineer`.
+3. Form Edit memilih role `Backend Engineer`.
+4. Perubahan terlihat tanpa hard refresh.
+5. Tidak terjadi orphan reference.
 
 ---
 
@@ -770,12 +796,16 @@ Menguji:
 * Database persistence.
 * Unique constraint case-insensitive.
 * Referential integrity terhadap team member.
+* Backend search dan pagination, termasuk metadata serta default page size.
 
 ## Frontend Test
 
 Menguji:
 
 * Render list.
+* Skeleton saat initial load dan selama remote search.
+* Search list, clear search, dan no-results state.
+* Pagination dan reset ke halaman pertama setelah search berubah.
 * Empty state.
 * Create form.
 * Inline validation.
@@ -784,6 +814,7 @@ Menguji:
 * Cancel deletion.
 * Error saat role sedang digunakan.
 * Refresh daftar setelah mutation berhasil.
+* Rename role memperbarui nama role pada daftar dan form Edit Member tanpa hard refresh.
 
 ---
 

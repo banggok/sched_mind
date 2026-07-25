@@ -1,4 +1,4 @@
-package handler
+package systemhealthhttp
 
 import (
 	"encoding/json"
@@ -9,7 +9,12 @@ type healthResponse struct {
 	Status string `json:"status"`
 }
 
-func Health(response http.ResponseWriter, _ *http.Request) {
+func Register(mux *http.ServeMux) {
+	mux.HandleFunc("GET /health", health)
+	mux.HandleFunc("GET /api/health", health)
+}
+
+func health(response http.ResponseWriter, _ *http.Request) {
 	response.Header().Set("Content-Type", "application/json")
 	response.WriteHeader(http.StatusOK)
 

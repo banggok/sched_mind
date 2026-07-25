@@ -1,5 +1,6 @@
 import type { RolesGateway } from '../application/rolesGateway'
 import type { Role } from '../domain/role'
+import { RequestCache } from '../../../shared/infrastructure/RequestCache'
 
 interface RoleDTO {
   id: string
@@ -10,6 +11,9 @@ interface RoleDTO {
 
 interface ListRolesDTO {
   data: RoleDTO[]
+  page: number
+  pageSize: number
+  total: number
 }
 
 interface ErrorDTO {
@@ -28,12 +32,35 @@ export class RolesAPIError extends Error {
   }
 }
 
-export function createHTTPRolesGateway(apiBaseURL: string): RolesGateway {
+export function createHTTPRolesGateway(
+  apiBaseURL: string,
+  onRolesChanged: () => void = () => undefined,
+): RolesGateway {
+  const listRequests = new Map<string, RequestCache<ReturnType<RolesGateway['list']> extends Promise<infer T> ? T : never>>()
+  const invalidateLists = () => {
+    listRequests.forEach((request) => request.invalidate())
+    listRequests.clear()
+  }
   return {
-    async list(signal) {
-      const response = await fetch(`${apiBaseURL}/roles`, { signal })
-      const payload = await readResponse<ListRolesDTO>(response)
-      return payload.data.map(mapRole)
+    async list(query, signal) {
+      const parameters = new URLSearchParams({
+        search: query.search,
+        page: String(query.page),
+        pageSize: String(query.pageSize),
+      })
+      const key = parameters.toString()
+      const listRequest = listRequests.get(key) ?? new RequestCache()
+      listRequests.set(key, listRequest)
+      return listRequest.run(async () => {
+        const response = await fetch(`${apiBaseURL}/roles?${parameters}`, {})
+        const payload = await readResponse<ListRolesDTO>(response)
+        return {
+          items: payload.data.map(mapRole),
+          page: payload.page,
+          pageSize: payload.pageSize,
+          total: payload.total,
+        }
+      }, signal)
     },
     async create(name) {
       const response = await fetch(`${apiBaseURL}/roles`, {
@@ -41,7 +68,10 @@ export function createHTTPRolesGateway(apiBaseURL: string): RolesGateway {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name }),
       })
-      return mapRole(await readResponse<RoleDTO>(response))
+      const role = mapRole(await readResponse<RoleDTO>(response))
+      invalidateLists()
+      onRolesChanged()
+      return role
     },
     async update(id, name) {
       const response = await fetch(`${apiBaseURL}/roles/${encodeURIComponent(id)}`, {
@@ -49,7 +79,10 @@ export function createHTTPRolesGateway(apiBaseURL: string): RolesGateway {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name }),
       })
-      return mapRole(await readResponse<RoleDTO>(response))
+      const role = mapRole(await readResponse<RoleDTO>(response))
+      invalidateLists()
+      onRolesChanged()
+      return role
     },
     async delete(id) {
       const response = await fetch(`${apiBaseURL}/roles/${encodeURIComponent(id)}`, {
@@ -58,6 +91,8 @@ export function createHTTPRolesGateway(apiBaseURL: string): RolesGateway {
       if (!response.ok) {
         await throwAPIError(response)
       }
+      invalidateLists()
+      onRolesChanged()
     },
   }
 }

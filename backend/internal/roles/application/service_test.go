@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/banggok/sched_mind/backend/internal/roles/domain"
+	"github.com/banggok/sched_mind/backend/internal/shared/listing"
 )
 
 type memoryRepository struct {
@@ -26,7 +27,7 @@ func newMemoryRepository() *memoryRepository {
 	}
 }
 
-func (repository *memoryRepository) List(context.Context) ([]domain.Role, error) {
+func (repository *memoryRepository) List(_ context.Context, query listing.Query) (listing.Page[domain.Role], error) {
 	repository.mu.Lock()
 	defer repository.mu.Unlock()
 
@@ -38,7 +39,17 @@ func (repository *memoryRepository) List(context.Context) ([]domain.Role, error)
 		return domain.NormalizedNameKey(roles[left].Name) <
 			domain.NormalizedNameKey(roles[right].Name)
 	})
-	return roles, nil
+	start := (query.Page - 1) * query.PageSize
+	if start > len(roles) {
+		start = len(roles)
+	}
+	end := start + query.PageSize
+	if end > len(roles) {
+		end = len(roles)
+	}
+	return listing.Page[domain.Role]{
+		Items: roles[start:end], Page: query.Page, PageSize: query.PageSize, Total: int64(len(roles)),
+	}, nil
 }
 
 func (repository *memoryRepository) FindByID(_ context.Context, id string) (*domain.Role, error) {

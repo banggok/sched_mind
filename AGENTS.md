@@ -240,6 +240,13 @@ Rules:
 
 - Use loading indicators appropriate to the expected duration and affected area.
 - Prefer local loading states over full-page loading states.
+- Every page or data section that waits for an initial backend response must
+  render an appropriate skeleton or loader by default, even when the user story
+  or PRD does not explicitly request one.
+- Prefer a shape-preserving skeleton for lists, tables, cards, and other
+  structured content so loading does not cause unnecessary layout shifts.
+- Use the project's established shared loading pattern for equivalent content;
+  do not create a different loader for each feature without a UX reason.
 - Preserve existing visible data during background refresh when safe.
 - Avoid replacing useful content with an empty spinner during refetch.
 - Use skeletons only when they improve perceived continuity.
@@ -295,6 +302,31 @@ Rules:
 - Distinguish loading, empty, error, and successful zero-result states.
 - Tables and lists should clearly communicate sorting, filtering, pagination,
   and selection state.
+- Every user-facing data list must provide search by default unless the
+  requirement explicitly excludes it.
+- Every user-facing production data list must provide pagination by default,
+  even when pagination is not explicitly mentioned in the user story or PRD.
+- Use a default page size of `5` unless the domain, expected data density, or
+  an explicit requirement justifies another value.
+- Pagination controls must communicate the current page, available navigation,
+  and the visible result range or total count when available.
+- A search or filter change must reset pagination to the first page.
+- Preserve search and pagination state during refreshes and mutations when it
+  remains valid.
+- Search must be case-insensitive for ordinary human-readable names and labels,
+  unless the domain defines different matching semantics.
+- Distinguish an empty dataset from a search with no matching results, and
+  provide a clear way to reset the search.
+- Client-side search is permitted only when the complete relevant dataset is
+  loaded. Paginated or server-limited datasets must search through the backend
+  query contract rather than filtering only the visible page.
+- Production lists must use backend pagination so the frontend does not need to
+  load an unbounded dataset. Client-side pagination is permitted only for a
+  small static list whose bounded size is explicit and documented.
+- Backend list contracts must return enough metadata to render pagination,
+  including the current page, page size, and total matching records.
+- Debounce remote search when it prevents unnecessary requests without hiding
+  user intent. Do not debounce local filtering of an already complete dataset.
 - Preserve filters, sorting, pagination, and draft changes when users navigate
   within the same workflow when practical.
 - Avoid displaying raw IDs when a meaningful business label is available.
@@ -317,6 +349,21 @@ Whenever appropriate, provide a clear next action.
 
 - Navigation must be predictable.
 - The current location and active state should be visible.
+- Global application chrome such as the top bar, sidebar, and primary
+  navigation must be owned by the application shell and remain structurally
+  stable across page navigation.
+- Reserve stable scrollbar space or use an equivalent layout strategy so
+  global chrome does not shift horizontally when navigating between pages with
+  different content heights.
+- Feature pages must render inside the shared application shell. They must not
+  create, duplicate, or remount global chrome merely because the active route
+  changed.
+- Primary page navigation must reset the document viewport to the top-left
+  unless the workflow explicitly requires scroll restoration. Apply this at the
+  routing or application-shell boundary, not separately inside feature pages.
+- Route hash values must not collide with DOM element IDs unless native anchor
+  scrolling is the explicit intended behavior. Otherwise the browser can
+  override application scroll restoration after a route change.
 - Users should not lose unsaved work without warning.
 - Multi-step workflows should show current progress when the sequence is not
   obvious.
@@ -403,6 +450,12 @@ Requirements:
 
 - Reuse existing interaction patterns and shared UI components.
 - Similar actions should behave similarly.
+- Prefer the shortest user-facing term that remains clear in its visible
+  context. Remove redundant qualifiers when a page, group, or workflow already
+  provides that context.
+- Do not shorten domain models, API contracts, database concepts, or code
+  identifiers when doing so would introduce ambiguity or reduce business
+  meaning.
 - Status labels, button terminology, date formats, spacing, and validation
   behavior must remain consistent.
 - Do not create a new interaction pattern when an established project pattern
@@ -516,6 +569,80 @@ Do not wrap every concrete implementation with an interface.
 
 ---
 
+# Documentation Consistency
+
+- For every code, behavior, UX, configuration, API, database, or architecture
+  change, assess whether related documentation must also be updated.
+- At minimum, consider `AGENTS.md`, `docs/architecture.md`, the affected
+  `user_story/*.md` file, `README.md`, API documentation, and `.env.example`
+  when they are relevant to the change.
+- Update an affected user story when observable product behavior, acceptance
+  criteria, validation, terminology, or required tests change.
+- Update architecture documentation when boundaries, dependencies, shared
+  components, persistence strategy, integration strategy, or structural
+  decisions change.
+- Update `AGENTS.md` only for durable project-wide engineering or product rules,
+  not for one-off implementation details.
+- When a decision is intended to become a reusable standard for future
+  features or new projects, codify the durable principle in `AGENTS.md`.
+- Keep `AGENTS.md` portable: describe the rule and decision criteria without
+  coupling it to one current feature, endpoint, or screen.
+- Record project-specific structural decisions and the architecture currently
+  in use in `docs/architecture.md`, rather than presenting them as universal
+  rules.
+- Do not modify documentation mechanically when the change has no effect on its
+  content.
+- Keep domain terminology, user-facing terminology, API contracts, tests, and
+  documentation consistent while respecting their different responsibilities.
+- Include the documentation-impact assessment and the files updated, or state
+  that no documentation change was required, in the completion report.
+
+---
+
+# User Story Authoring Standards
+
+When creating or revising a user story:
+
+- Read `AGENTS.md`, the current architecture documentation, related user
+  stories, and established product terminology before defining requirements.
+- State the actor, business outcome, scope, out-of-scope behavior, assumptions,
+  and unresolved questions. Do not invent business rules merely to make the
+  story appear complete.
+- Define business invariants, validation boundaries, derived values, entity
+  identity behavior, uniqueness semantics, and deletion or referential
+  restrictions when they are relevant.
+- Identify upstream and downstream relationships. For every create, update, or
+  delete operation, assess which related lists, details, selectors, summaries,
+  derived values, persisted projections, or caches must reflect the confirmed
+  change.
+- Specify observable consistency requirements across related workflows. A
+  successful mutation must not require a hard refresh to become visible unless
+  delayed consistency is an explicit product decision.
+- Apply applicable project-wide defaults from this file even when the initial
+  request omits them. Examples include search, pagination, loading feedback,
+  empty and no-result states, error recovery, accessibility, responsive
+  behavior, and duplicate-submission prevention.
+- Define API behavior when the story introduces or changes a contract,
+  including request fields, response fields, pagination metadata, status codes,
+  validation errors, not-found behavior, conflict behavior, and compatibility
+  expectations.
+- Keep acceptance criteria observable and implementation-independent. Put
+  mandatory technical constraints in a separate implementation or completion
+  section only when architecture, security, data integrity, interoperability,
+  or operational correctness requires them.
+- Include behavior-focused test scenarios for success, validation failure,
+  boundary values, dependency failure, related-entity propagation, loading,
+  empty state, search, pagination, permissions, concurrency, and rollback when
+  each is applicable.
+- Keep acceptance criteria, API examples, test cases, required automated tests,
+  and technical completion criteria mutually consistent. A behavior declared
+  mandatory in one section must not disappear from the others.
+- Distinguish current requirements from future stories. Record deferred scope
+  explicitly instead of partially designing or implementing it in the current
+  story.
+
+---
+
 # Integration Configuration
 
 - Configuration for databases, external APIs, queues, caches, storage, and
@@ -569,6 +696,21 @@ Do not wrap every concrete implementation with an interface.
   during shutdown.
 - Preserve and report startup, runtime, shutdown, and cleanup errors.
 - Do not wait indefinitely during shutdown.
+
+## Local Backend Verification
+
+- After changing backend source code, configuration, dependencies, or database
+  migrations, restart the local backend before manual or integration
+  verification.
+- Stop the previous backend process and confirm that the replacement process is
+  listening successfully. Do not assume a newly started command replaced an
+  existing process when its port was already occupied.
+- Verify at least one affected endpoint after the restart so stale binaries,
+  stale processes, unapplied migrations, or outdated API contracts are detected
+  before presenting the application for review.
+- When frontend and backend run together, restart the complete local stack when
+  that is the safest way to guarantee the frontend is connected to the updated
+  backend.
 
 ---
 
@@ -704,6 +846,7 @@ Verify:
 
 - DDD boundary
 - SOLID adherence
+- Documentation consistency
 - Error handling
 - Concurrency
 - Security

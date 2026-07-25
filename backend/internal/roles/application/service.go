@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/banggok/sched_mind/backend/internal/roles/domain"
+	"github.com/banggok/sched_mind/backend/internal/shared/listing"
 )
 
 type Service struct {
@@ -32,8 +33,8 @@ func NewServiceWithDependencies(
 	return &Service{repository: repository, now: now, newID: newID}
 }
 
-func (service *Service) List(ctx context.Context) ([]domain.Role, error) {
-	return service.repository.List(ctx)
+func (service *Service) List(ctx context.Context, query listing.Query) (listing.Page[domain.Role], error) {
+	return service.repository.List(ctx, query)
 }
 
 func (service *Service) Create(ctx context.Context, name string) (*domain.Role, error) {
