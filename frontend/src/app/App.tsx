@@ -10,6 +10,8 @@ import { CapacityOverridesPanel } from "../features/capacity-overrides/presentat
 import type { TeamMember } from "../features/team-members/domain/teamMember";
 import { createHTTPPublicHolidaysGateway } from "../features/public-holidays/infrastructure/httpPublicHolidaysGateway";
 import { PublicHolidaysPage } from "../features/public-holidays/presentation/PublicHolidaysPage";
+import { createHTTPProjectsGateway } from "../features/projects/infrastructure/httpProjectsGateway";
+import { ProjectsPage } from "../features/projects/presentation/ProjectsPage";
 
 const apiBaseURL = requiredEnvironment(
   "VITE_API_BASE_URL",
@@ -18,6 +20,7 @@ const apiBaseURL = requiredEnvironment(
 const teamMembersGateway = createHTTPTeamMembersGateway(apiBaseURL);
 const capacityOverridesGateway = createHTTPCapacityOverridesGateway(apiBaseURL);
 const publicHolidaysGateway = createHTTPPublicHolidaysGateway(apiBaseURL);
+const projectsGateway = createHTTPProjectsGateway(apiBaseURL);
 const rolesGateway = createHTTPRolesGateway(
   apiBaseURL,
   teamMembersGateway.invalidateListCache,
@@ -36,11 +39,13 @@ export function App() {
     };
   }, []);
   const activePage: ApplicationPage =
-    route === "#team-members"
-      ? "team-members"
-      : route === "#public-holidays"
-        ? "public-holidays"
-        : "roles";
+    route === "#projects"
+      ? "projects"
+      : route === "#team-members"
+        ? "team-members"
+        : route === "#public-holidays"
+          ? "public-holidays"
+          : "roles";
 
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0, behavior: "auto" });
@@ -48,7 +53,9 @@ export function App() {
 
   return (
     <AppShell activePage={activePage}>
-      {activePage === "public-holidays" ? (
+      {activePage === "projects" ? (
+        <ProjectsPage gateway={projectsGateway} />
+      ) : activePage === "public-holidays" ? (
         <PublicHolidaysPage gateway={publicHolidaysGateway} />
       ) : activePage === "team-members" ? (
         <TeamMembersDashboardPage

@@ -23,6 +23,8 @@ The current product manages:
 - Roles used to classify Members and future work;
 - Members with a Role, Daily Capacity, Buffer, and derived Commitment Capacity;
 - date-bounded Capacity Overrides scoped to one Member;
+- Public Holidays used as global zero-capacity dates;
+- Projects with priority and Open, Locked, or Closed lifecycle;
 - a technical backend health indicator.
 
 Detailed rules are owned by:
@@ -30,6 +32,8 @@ Detailed rules are owned by:
 - [US-1.1 Manage Roles](../../user_story/US-1.1-manage-roles.md)
 - [US-1.2 Manage Team Members](../../user_story/US-1.2-manage-team-members.md)
 - [US-2.1 Manage Capacity Override](../../user_story/US-2.1-manage-capacity-override.md)
+- [US-2.2 Manage Public Holiday](../../user_story/US-2.2-manage-public-holiday.md)
+- [US-3.1 Create Project](../../user_story/US-3.1-create-project.md)
 
 The primary product actor in these stories is the Engineering Lead.
 
@@ -66,14 +70,23 @@ Exact creation, editing, deletion, concurrency, filtering, and capacity
 resolution rules belong to US-2.1.
 
 Public Holiday has precedence over a Capacity Override and resolves daily
-capacity to zero, but Public Holiday management is outside the current story.
-The scheduling engine consumes resolved capacity; its broader algorithm remains
+capacity to zero. Public Holiday management is implemented by US-2.2. The
+scheduling engine consumes resolved capacity; its broader algorithm remains
 future scope.
+
+### Project
+
+A Project is the root planning entity and WBS level `0`. It has a unique
+case-insensitive Name, system-assigned Priority, and an Open, Locked, or Closed
+lifecycle. Locked protects Execution and Commitment baselines while Forecast
+remains dynamic. Closed Projects are historical, read-only, and excluded from
+scheduling and Gantt. Exact transitions, ordering, deletion, and downstream
+contracts belong to US-3.1.
 
 ## Future scheduling context
 
-Product discussions anticipate Projects, WBS tasks, dependencies, assignees,
-effort, priority, buffers, and forecast, execution, commitment, and actual dates.
+Product discussions anticipate WBS tasks, dependencies, assignees, effort,
+buffers, and forecast, execution, commitment, and actual dates.
 They may ultimately drive Delivery Impact and health status. The repository does
 not yet contain approved authoritative rules for those concepts.
 
@@ -81,7 +94,8 @@ In particular, do not invent:
 
 - WBS hierarchy or executable-leaf semantics beyond explicit references in an
   approved story;
-- project-priority or same-assignee scheduling algorithms;
+- same-assignee scheduling algorithms beyond the Project Priority trigger
+  contract approved in US-3.1;
 - freeze-date behavior;
 - forecast, execution, commitment, or actual-date calculations;
 - project-buffer allocation;

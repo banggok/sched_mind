@@ -6,6 +6,8 @@ import (
 	"fmt"
 	capacityoverrideapplication "github.com/banggok/sched_mind/backend/internal/capacityoverrides/application"
 	capacityoverridegormrepo "github.com/banggok/sched_mind/backend/internal/capacityoverrides/infrastructure/gormrepo"
+	projectapplication "github.com/banggok/sched_mind/backend/internal/projects/application"
+	projectgormrepo "github.com/banggok/sched_mind/backend/internal/projects/infrastructure/gormrepo"
 	publicholidayapplication "github.com/banggok/sched_mind/backend/internal/publicholidays/application"
 	publicholidaygormrepo "github.com/banggok/sched_mind/backend/internal/publicholidays/infrastructure/gormrepo"
 	"log"
@@ -140,10 +142,12 @@ func run(config *configuration) (runError error) {
 		publicHolidayRepository,
 		func() time.Time { return time.Now().In(config.location) },
 	)
+	projectRepository := projectgormrepo.New(database)
+	projectService := projectapplication.NewService(projectRepository, projectapplication.NoopScheduler{})
 
 	server := &http.Server{
 		Addr:    config.address,
-		Handler: httpapi.NewRouter(roleService, teamMemberService, capacityOverrideService, publicHolidayService),
+		Handler: httpapi.NewRouter(roleService, teamMemberService, capacityOverrideService, publicHolidayService, projectService),
 	}
 
 	signalContext, stopSignals := signal.NotifyContext(
