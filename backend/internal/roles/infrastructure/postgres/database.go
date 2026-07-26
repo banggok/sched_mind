@@ -23,7 +23,7 @@ func (schemaMigration) TableName() string {
 }
 
 func Open(databaseURL string) (*gorm.DB, error) {
-	database, err := gorm.Open(postgres.Open(databaseURL), &gorm.Config{})
+	database, err := gorm.Open(postgres.Open(databaseURL), &gorm.Config{TranslateError: true})
 	if err != nil {
 		return nil, fmt.Errorf("open PostgreSQL: %w", err)
 	}

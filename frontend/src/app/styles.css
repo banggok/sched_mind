@@ -68,6 +68,7 @@
   --layer-navigation-control: 45;
   --layer-dialog: 50;
   --layer-nested-dialog: 60;
+  --layer-dialog-popover: 65;
   --layer-notification: 70;
 }
 
@@ -312,6 +313,9 @@ select:disabled {
 }
 .layer-nested-dialog {
   z-index: var(--layer-nested-dialog);
+}
+.layer-dialog-popover {
+  z-index: var(--layer-dialog-popover);
 }
 .layer-notification {
   z-index: var(--layer-notification);

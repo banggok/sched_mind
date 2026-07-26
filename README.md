@@ -85,6 +85,25 @@ Filtering is inclusive (`startDate <= effectiveDate <= endDate`). The default
 page size is `5`; invalid Effective Date values return
 `400 INVALID_EFFECTIVE_DATE`.
 
+Public Holiday endpoints are global Schedule resources:
+
+```text
+GET    /api/public-holidays
+GET    /api/public-holidays/{publicHolidayId}
+GET    /api/public-holidays/calendar?startDate=2026-08-01&endDate=2026-08-31
+POST   /api/public-holidays
+PUT    /api/public-holidays/{publicHolidayId}
+DELETE /api/public-holidays/{publicHolidayId}
+```
+
+The list accepts `page`, `pageSize`, and optional exact date-only
+`holidayDate`. Create and update require inclusive date-only `startDate` and
+`endDate` plus a trimmed `description` of at most 100 characters. Weekend dates
+are skipped because Saturday and Sunday are holidays by default. Each weekday
+may belong to only one Public Holiday range; any conflict rejects the complete
+mutation. Active and upcoming ranges are listed before expired ranges using the
+configured `APP_TIMEZONE`.
+
 ## Run the frontend
 
 Install frontend dependencies once:

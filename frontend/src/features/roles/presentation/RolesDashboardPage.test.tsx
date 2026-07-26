@@ -33,7 +33,9 @@ describe("RolesDashboardPage", () => {
       name: "Application navigation",
     });
     expect(
-      within(navigation).getByRole("region", { name: "Team" }),
+      within(navigation).getByRole("region", {
+        name: "Team Configuration",
+      }),
     ).toBeTruthy();
     const current = within(navigation).getByRole("link", { name: "Roles" });
     await user.click(within(navigation).getByRole("link", { name: "Members" }));

@@ -105,6 +105,7 @@ function NavigationLink({
 const icons: Record<ApplicationPage, ReactNode> = {
   roles: <RoleIcon />,
   "team-members": <TeamMembersIcon />,
+  "public-holidays": <CalendarIcon />,
 };
 
 function groupNavigationItems() {
@@ -158,6 +159,23 @@ function TeamMembersIcon() {
     >
       <circle cx="9" cy="8" r="3" />
       <path d="M3.5 19c.5-3.5 2.3-5.2 5.5-5.2s5 1.7 5.5 5.2M16 7.5a2.5 2.5 0 0 1 0 5M16.5 14.5c2.4.4 3.7 1.9 4 4.5" />
+    </svg>
+  );
+}
+
+function CalendarIcon() {
+  return (
+    <svg
+      className="size-5"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <rect x="3" y="5" width="18" height="16" rx="3" />
+      <path d="M7 3v4M17 3v4M3 10h18M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01" />
     </svg>
   );
 }

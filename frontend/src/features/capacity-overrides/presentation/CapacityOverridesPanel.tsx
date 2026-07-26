@@ -23,10 +23,15 @@ import { EmptyState } from "../../../shared/presentation/EmptyState";
 export function CapacityOverridesPanel({
   member,
   gateway,
+  loadPublicHolidayDates,
   onClose,
 }: {
   member: TeamMember;
   gateway: CapacityOverridesGateway;
+  loadPublicHolidayDates?(
+    startDate: string,
+    endDate: string,
+  ): Promise<string[]>;
   onClose(): void;
 }) {
   const [items, setItems] = useState<CapacityOverride[]>([]),
@@ -212,6 +217,7 @@ export function CapacityOverridesPanel({
                   initialDate={effectiveDate}
                   instruction="Select the date to check."
                   selectedDates={effectiveDate ? [effectiveDate] : []}
+                  loadPublicHolidayDates={loadPublicHolidayDates}
                   onSelect={(date) => {
                     setEffectiveDate(date);
                     setPage(1);
@@ -361,6 +367,7 @@ export function CapacityOverridesPanel({
               endDate={form.endDate}
               startError={errors.startDate}
               endError={errors.endDate}
+              loadPublicHolidayDates={loadPublicHolidayDates}
               onChange={(startDate, endDate) =>
                 setForm({ ...form, startDate, endDate })
               }
@@ -494,12 +501,17 @@ function DateRangePicker({
   endDate,
   startError,
   endError,
+  loadPublicHolidayDates,
   onChange,
 }: {
   startDate: string;
   endDate: string;
   startError?: string;
   endError?: string;
+  loadPublicHolidayDates?(
+    startDate: string,
+    endDate: string,
+  ): Promise<string[]>;
   onChange(startDate: string, endDate: string): void;
 }) {
   const waitingForEnd = startDate !== "" && endDate === "";
@@ -532,6 +544,7 @@ function DateRangePicker({
             : "Select a start date."
         }
         selectedDates={[startDate, endDate].filter(Boolean)}
+        loadPublicHolidayDates={loadPublicHolidayDates}
         isInRange={(date) =>
           Boolean(startDate && endDate && date > startDate && date < endDate)
         }

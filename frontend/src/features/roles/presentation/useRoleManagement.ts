@@ -57,14 +57,6 @@ export function useRoleManagement(gateway: RolesGateway, query: PageQuery) {
     return () => controller.abort();
   }, [load]);
 
-  useEffect(() => {
-    if (!notification) {
-      return;
-    }
-    const timeout = window.setTimeout(() => setNotification(""), 5000);
-    return () => window.clearTimeout(timeout);
-  }, [notification]);
-
   function openCreate() {
     setForm({ mode: "create" });
     setName("");

@@ -9,6 +9,7 @@ import { useDebouncedValue } from "../../../shared/presentation/useDebouncedValu
 import { Button } from "../../../shared/presentation/Button";
 import { EmptyState } from "../../../shared/presentation/EmptyState";
 import { ListSurface } from "../../../shared/presentation/ListSurface";
+import { Toast } from "../../../shared/presentation/Toast";
 import type { RolesGateway } from "../application/rolesGateway";
 import type { Role } from "../domain/role";
 import { DeleteRoleDialog } from "./DeleteRoleDialog";
@@ -146,22 +147,10 @@ export function RolesDashboardPage({ gateway }: { gateway: RolesGateway }) {
         />
       ) : null}
 
-      {management.notification ? (
-        <div
-          className="layer-notification fixed right-5 bottom-5 flex max-w-sm items-center gap-4 rounded-panel bg-overlay px-5 py-4 text-sm font-bold text-on-brand shadow-floating"
-          role="status"
-        >
-          <span>{management.notification}</span>
-          <button
-            type="button"
-            className="grid size-8 shrink-0 place-items-center rounded-action text-lg hover:bg-surface/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
-            aria-label="Dismiss notification"
-            onClick={() => management.setNotification("")}
-          >
-            ×
-          </button>
-        </div>
-      ) : null}
+      <Toast
+        message={management.notification}
+        onDismiss={() => management.setNotification("")}
+      />
     </>
   );
 }
