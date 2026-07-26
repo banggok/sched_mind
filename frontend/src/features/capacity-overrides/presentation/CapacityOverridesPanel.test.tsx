@@ -45,6 +45,7 @@ describe("CapacityOverridesPanel", () => {
     ).toBeTruthy();
     expect(await screen.findByText("No capacity overrides yet")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "+ Add Override" }));
+    await user.type(screen.getByLabelText("Description"), "Training");
     expect(screen.queryByText("No capacity overrides yet")).toBeNull();
     expect(screen.queryByText("Effective Date")).toBeNull();
     expect(screen.queryByRole("button", { name: "+ Add Override" })).toBeNull();
@@ -67,6 +68,7 @@ describe("CapacityOverridesPanel", () => {
     await user.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() =>
       expect(api.create).toHaveBeenCalledWith("m", {
+        description: "Training",
         startDate: "2026-07-03",
         endDate: "2026-07-03",
         capacity: 4,
@@ -78,6 +80,7 @@ describe("CapacityOverridesPanel", () => {
     const item = {
       id: "o",
       teamMemberId: "m",
+      description: "Training",
       startDate: "2026-07-03",
       endDate: "2026-07-04",
       capacity: 4,
@@ -92,7 +95,8 @@ describe("CapacityOverridesPanel", () => {
         onClose={vi.fn()}
       />,
     );
-    expect(await screen.findByText("4 hours/day")).toBeTruthy();
+    expect(await screen.findByText("Training")).toBeTruthy();
+    expect(screen.getByText(/4 hours\/day/)).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Delete" }));
     expect(api.delete).not.toHaveBeenCalled();
     await user.click(
@@ -115,6 +119,7 @@ describe("CapacityOverridesPanel", () => {
     const item: CapacityOverride = {
       id: "o",
       teamMemberId: "m",
+      description: "Training",
       startDate: "2026-07-03",
       endDate: "2026-07-04",
       capacity: 4,
@@ -129,16 +134,16 @@ describe("CapacityOverridesPanel", () => {
       />,
     );
 
-    expect(await screen.findByText("4 hours/day")).toBeTruthy();
+    expect(await screen.findByText("Training")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Edit" }));
 
     expect(await screen.findByText("Edit override")).toBeTruthy();
-    expect(screen.queryByText("4 hours/day")).toBeNull();
+    expect(screen.queryByText(/4 hours\/day/)).toBeNull();
     expect(screen.queryByText("Effective Date")).toBeNull();
     expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
 
     await user.click(screen.getByRole("button", { name: "Cancel" }));
-    expect(screen.getByText("4 hours/day")).toBeTruthy();
+    expect(screen.getByText(/4 hours\/day/)).toBeTruthy();
     expect(screen.getByText("Effective Date")).toBeTruthy();
   });
 });
@@ -198,6 +203,7 @@ describe("Date range calendar placement", () => {
     );
     await screen.findByText("No capacity overrides yet");
     await user.click(screen.getByRole("button", { name: "+ Add Override" }));
+    await user.type(screen.getByLabelText("Description"), "Training");
     await user.click(
       screen.getByRole("button", {
         name: "Date range: Select start and end date",
@@ -227,6 +233,7 @@ describe("Capacity input normalization", () => {
     );
     await screen.findByText("No capacity overrides yet");
     await user.click(screen.getByRole("button", { name: "+ Add Override" }));
+    await user.type(screen.getByLabelText("Description"), "Training");
     await user.click(
       screen.getByRole("button", {
         name: "Date range: Select start and end date",
@@ -247,6 +254,7 @@ describe("Capacity input normalization", () => {
     await user.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() =>
       expect(api.create).toHaveBeenCalledWith("m", {
+        description: "Training",
         startDate: "2026-07-03",
         endDate: "2026-07-03",
         capacity: 8,
@@ -261,6 +269,7 @@ describe("Effective Date filtering", () => {
     const item = {
       id: "o",
       teamMemberId: "m",
+      description: "Support",
       startDate: "2026-07-26",
       endDate: "2026-07-28",
       capacity: 3,
@@ -283,7 +292,7 @@ describe("Effective Date filtering", () => {
         onClose={vi.fn()}
       />,
     );
-    expect(await screen.findByText("3 hours/day")).toBeTruthy();
+    expect(await screen.findByText("Support")).toBeTruthy();
     await user.click(
       screen.getByRole("button", { name: "Effective Date: Select date" }),
     );
@@ -299,7 +308,7 @@ describe("Effective Date filtering", () => {
     await user.click(
       screen.getByRole("button", { name: "Clear Effective Date" }),
     );
-    expect(await screen.findByText("3 hours/day")).toBeTruthy();
+    expect(await screen.findByText("Support")).toBeTruthy();
     expect(api.list).toHaveBeenLastCalledWith(
       "m",
       { page: 1, pageSize: 5, effectiveDate: undefined },
@@ -311,6 +320,7 @@ describe("Effective Date filtering", () => {
     const items = Array.from({ length: 5 }, (_, index) => ({
       id: `o-${index}`,
       teamMemberId: "m",
+      description: `Training ${index}`,
       startDate: "2026-07-26",
       endDate: "2026-07-28",
       capacity: 3,

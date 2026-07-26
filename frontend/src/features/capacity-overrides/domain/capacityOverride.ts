@@ -1,6 +1,7 @@
 export interface CapacityOverride {
   id: string;
   teamMemberId: string;
+  description: string;
   startDate: string;
   endDate: string;
   capacity: number;
@@ -8,11 +9,13 @@ export interface CapacityOverride {
   updatedAt: Date;
 }
 export interface CapacityOverrideInput {
+  description: string;
   startDate: string;
   endDate: string;
   capacity: number | undefined;
 }
-export type CapacityOverrideField = "startDate" | "endDate" | "capacity";
+export type CapacityOverrideField =
+  "description" | "startDate" | "endDate" | "capacity";
 export class CapacityOverrideValidationError extends Error {
   constructor(
     readonly field: CapacityOverrideField,
@@ -25,6 +28,19 @@ export class CapacityOverrideValidationError extends Error {
 export function validateCapacityOverride(
   input: CapacityOverrideInput,
 ): Required<CapacityOverrideInput> {
+  const description = input.description.trim();
+  if (!description)
+    throw new CapacityOverrideValidationError(
+      "description",
+      "CAPACITY_OVERRIDE_DESCRIPTION_REQUIRED",
+      "Description is required",
+    );
+  if ([...description].length > 100)
+    throw new CapacityOverrideValidationError(
+      "description",
+      "CAPACITY_OVERRIDE_DESCRIPTION_TOO_LONG",
+      "Description must not exceed 100 characters",
+    );
   if (!input.startDate)
     throw new CapacityOverrideValidationError(
       "startDate",
@@ -79,7 +95,7 @@ export function validateCapacityOverride(
       "CAPACITY_OVERRIDE_CAPACITY_INVALID_INCREMENT",
       "Capacity must use 0.5-hour increments",
     );
-  return input as Required<CapacityOverrideInput>;
+  return { ...input, description } as Required<CapacityOverrideInput>;
 }
 function isDateOnly(value: string) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;

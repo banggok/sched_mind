@@ -72,6 +72,9 @@ PUT    /api/team-members/{teamMemberId}/capacity-overrides/{capacityOverrideId}
 DELETE /api/team-members/{teamMemberId}/capacity-overrides/{capacityOverrideId}
 ```
 
+Capacity Override create and update payloads require `description` (maximum 100
+characters) together with `startDate`, `endDate`, and `capacity`.
+
 The list accepts `page`, `pageSize`, and an optional date-only `effectiveDate`:
 
 ```text

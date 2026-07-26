@@ -26,32 +26,35 @@ export function CalendarPopover({
     new Date(Date.UTC(initial.getUTCFullYear(), initial.getUTCMonth(), 1)),
   );
   const [placement, setPlacement] = useState<"above" | "below">("below");
+  const [maxHeight, setMaxHeight] = useState<number>();
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
 
   useLayoutEffect(() => {
     if (!open) return;
-    function position() {
-      const trigger = triggerRef.current?.getBoundingClientRect();
-      const popover = popoverRef.current?.getBoundingClientRect();
-      if (!trigger || !popover) return;
-      const spaceBelow = window.innerHeight - trigger.bottom;
-      const spaceAbove = trigger.top;
-      setPlacement(
-        spaceBelow < popover.height + 8 && spaceAbove > spaceBelow
-          ? "above"
-          : "below",
-      );
+    const trigger = triggerRef.current?.getBoundingClientRect();
+    const popover = popoverRef.current?.getBoundingClientRect();
+    if (!trigger || !popover) return;
+    const spaceBelow = window.innerHeight - trigger.bottom;
+    const spaceAbove = trigger.top;
+    const requiredSpace =
+      Math.max(popoverRef.current?.scrollHeight ?? 0, popover.height) + 8;
+    if (spaceBelow >= requiredSpace) return;
+    if (spaceAbove >= requiredSpace) {
+      setPlacement("above");
+      return;
     }
-    position();
-    window.addEventListener("resize", position);
-    window.addEventListener("scroll", position, true);
-    return () => {
-      window.removeEventListener("resize", position);
-      window.removeEventListener("scroll", position, true);
-    };
-  }, [open, month]);
+    setMaxHeight(Math.max(spaceBelow - 8, 1));
+  }, [open]);
+
+  function setCalendarOpen(nextOpen: boolean) {
+    if (nextOpen) {
+      setPlacement("below");
+      setMaxHeight(undefined);
+    }
+    setOpen(nextOpen);
+  }
 
   useEffect(() => {
     if (!open) return;
@@ -60,13 +63,13 @@ export function CalendarPopover({
         event.target instanceof Node &&
         !rootRef.current?.contains(event.target)
       ) {
-        setOpen(false);
+        setCalendarOpen(false);
       }
     }
     function keydown(event: KeyboardEvent) {
       if (event.key !== "Escape") return;
       event.preventDefault();
-      setOpen(false);
+      setCalendarOpen(false);
       triggerRef.current?.focus();
     }
     document.addEventListener("pointerdown", pointerdown);
@@ -87,7 +90,7 @@ export function CalendarPopover({
         aria-haspopup="dialog"
         aria-expanded={open}
         className="mt-2 w-full rounded-control border border-border-strong bg-surface p-3 text-left"
-        onClick={() => setOpen((value) => !value)}
+        onClick={() => setCalendarOpen(!open)}
       >
         {buttonLabel}
       </button>
@@ -97,6 +100,12 @@ export function CalendarPopover({
           role="dialog"
           aria-label={`Choose ${label.toLocaleLowerCase()}`}
           data-placement={placement}
+          data-scrollable={maxHeight === undefined ? undefined : "true"}
+          style={
+            maxHeight === undefined
+              ? undefined
+              : { maxHeight, overflowY: "auto" }
+          }
           className={`calendar-popover layer-popover absolute rounded-surface border border-border-strong bg-surface p-4 shadow-floating ${
             placement === "above" ? "bottom-full mb-2" : "mt-2"
           }`}
@@ -148,7 +157,7 @@ export function CalendarPopover({
                         : "hover:bg-brand-soft"
                   }`}
                   onClick={() => {
-                    if (onSelect(day)) setOpen(false);
+                    if (onSelect(day)) setCalendarOpen(false);
                   }}
                 >
                   {Number(day.slice(-2))}

@@ -4,6 +4,7 @@ import { RequestCache } from "../../../shared/infrastructure/RequestCache";
 interface DTO {
   id: string;
   teamMemberId: string;
+  description: string;
   startDate: string;
   endDate: string;
   capacity: number;

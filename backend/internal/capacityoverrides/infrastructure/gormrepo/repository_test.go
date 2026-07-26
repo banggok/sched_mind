@@ -67,7 +67,7 @@ func value(t *testing.T, id, member, start, end string, hours float64) domain.Ca
 	t.Helper()
 	capacity, _ := domain.NewCapacity(hours)
 	parse := func(v string) time.Time { r, _ := time.Parse("2006-01-02", v); return r }
-	result, err := domain.New(id, member, parse(start), parse(end), capacity, time.Now().UTC())
+	result, err := domain.New(id, member, "Training", parse(start), parse(end), capacity, time.Now().UTC())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,13 +92,18 @@ func TestRepositoryScopePaginationOverlapUpdateDelete(t *testing.T) {
 		t.Fatal(err)
 	}
 	page, err := repo.List(ctx, "member-a", application.ListQuery{Query: listing.Query{Page: 1, PageSize: 1}})
-	if err != nil || page.Total != 2 || page.Items[0].ID != "one" {
+	if err != nil || page.Total != 2 || page.Items[0].ID != "one" || page.Items[0].Description != "Training" {
 		t.Fatalf("page=%+v err=%v", page, err)
 	}
 	first.Capacity, _ = domain.NewCapacity(6)
+	first.Description = "Production support"
 	first.UpdatedAt = time.Now().Add(time.Hour)
 	if err := repo.Update(ctx, first); err != nil {
 		t.Fatal(err)
+	}
+	updated, err := repo.Find(ctx, "member-a", "one")
+	if err != nil || updated == nil || updated.Description != "Production support" {
+		t.Fatalf("updated=%+v err=%v", updated, err)
 	}
 	if err := repo.Delete(ctx, "member-b", "one"); !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("mismatch=%v", err)

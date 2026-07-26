@@ -22,15 +22,29 @@ func TestCapacityValidation(t *testing.T) {
 func TestPeriodRulesAndUpdateOwnership(t *testing.T) {
 	capacity, _ := NewCapacity(4)
 	now := time.Now()
-	value, err := New("id", "member", date("2026-07-03"), date("2026-07-03"), capacity, now)
+	value, err := New("id", "member", " Training ", date("2026-07-03"), date("2026-07-03"), capacity, now)
 	if err != nil || value == nil {
 		t.Fatalf("new: %v", err)
 	}
-	if err := value.Update(date("2026-07-04"), date("2026-07-03"), capacity, now); !errors.Is(err, ErrInvalidDateRange) {
+	if value.Description != "Training" {
+		t.Fatalf("description=%q", value.Description)
+	}
+	if err := value.Update("Training", date("2026-07-04"), date("2026-07-03"), capacity, now); !errors.Is(err, ErrInvalidDateRange) {
 		t.Fatalf("error=%v", err)
 	}
 	if value.TeamMemberID != "member" {
 		t.Fatal("ownership changed")
+	}
+}
+
+func TestDescriptionRules(t *testing.T) {
+	capacity, _ := NewCapacity(4)
+	now := time.Now()
+	if _, err := New("id", "member", "  ", now, now, capacity, now); !errors.Is(err, ErrDescriptionRequired) {
+		t.Fatalf("blank description error=%v", err)
+	}
+	if _, err := New("id", "member", string(make([]rune, 101)), now, now, capacity, now); !errors.Is(err, ErrDescriptionTooLong) {
+		t.Fatalf("long description error=%v", err)
 	}
 }
 func TestOverlapAndResolution(t *testing.T) {

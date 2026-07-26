@@ -10,6 +10,7 @@ describe("HTTP capacity override gateway", () => {
             {
               id: "o",
               teamMemberId: "m",
+              description: "Training",
               startDate: "2026-07-03",
               endDate: "2026-07-03",
               capacity: 0,
@@ -49,6 +50,7 @@ describe("HTTP capacity override gateway", () => {
             data: {
               id: "o",
               teamMemberId: "m",
+              description: "Training",
               startDate: "2026-07-03",
               endDate: "2026-07-03",
               capacity: 4,
@@ -69,6 +71,7 @@ describe("HTTP capacity override gateway", () => {
     const gateway = createHTTPCapacityOverridesGateway("/api");
     await gateway.list("m", { page: 1, pageSize: 5 });
     await gateway.create("m", {
+      description: "Training",
       startDate: "2026-07-03",
       endDate: "2026-07-03",
       capacity: 4,
@@ -94,6 +97,7 @@ describe("HTTP capacity override Effective Date cache", () => {
           data: {
             id: "o",
             teamMemberId: "m",
+            description: "Support",
             startDate: "2026-07-26",
             endDate: "2026-07-28",
             capacity: 3,
@@ -128,6 +132,7 @@ describe("HTTP capacity override Effective Date cache", () => {
       "effectiveDate=2026-07-27",
     );
     await gateway.create("m", {
+      description: "Support",
       startDate: "2026-07-26",
       endDate: "2026-07-28",
       capacity: 3,

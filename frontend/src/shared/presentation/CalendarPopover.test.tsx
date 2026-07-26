@@ -34,4 +34,66 @@ describe("CalendarPopover", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(document.activeElement).toBe(outsideAction);
   });
+
+  it("opens below with internal scrolling when neither side can fit it", async () => {
+    const user = userEvent.setup();
+    const rectangle = vi
+      .spyOn(HTMLElement.prototype, "getBoundingClientRect")
+      .mockImplementation(function (this: HTMLElement) {
+        if (this.getAttribute("role") === "dialog")
+          return rectangleValue(0, 0, 352, 600);
+        if (this.getAttribute("aria-haspopup") === "dialog")
+          return rectangleValue(0, 300, 352, 50);
+        return rectangleValue(0, 0, 0, 0);
+      });
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: 500,
+    });
+    render(
+      <CalendarPopover
+        label="Effective Date"
+        buttonLabel="Select date"
+        instruction="Select a date."
+        selectedDates={[]}
+        onSelect={vi.fn(() => true)}
+      />,
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "Effective Date: Select date" }),
+    );
+    const calendar = screen.getByRole("dialog");
+    expect(calendar.getAttribute("data-placement")).toBe("below");
+    expect(calendar.getAttribute("data-scrollable")).toBe("true");
+    expect(calendar.style.overflowY).toBe("auto");
+
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: 1200,
+    });
+    window.dispatchEvent(new Event("scroll"));
+    expect(calendar.getAttribute("data-placement")).toBe("below");
+    expect(calendar.getAttribute("data-scrollable")).toBe("true");
+    rectangle.mockRestore();
+  });
 });
+
+function rectangleValue(
+  left: number,
+  top: number,
+  width: number,
+  height: number,
+) {
+  return {
+    top,
+    bottom: top + height,
+    left,
+    right: left + width,
+    width,
+    height,
+    x: left,
+    y: top,
+    toJSON() {},
+  };
+}

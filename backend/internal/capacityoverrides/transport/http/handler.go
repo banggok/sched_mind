@@ -33,13 +33,15 @@ func (h *Handler) Register(mux *http.ServeMux) {
 }
 
 type writeRequest struct {
-	StartDate string   `json:"startDate"`
-	EndDate   string   `json:"endDate"`
-	Capacity  *float64 `json:"capacity"`
+	Description string   `json:"description"`
+	StartDate   string   `json:"startDate"`
+	EndDate     string   `json:"endDate"`
+	Capacity    *float64 `json:"capacity"`
 }
 type item struct {
 	ID           string  `json:"id"`
 	TeamMemberID string  `json:"teamMemberId"`
+	Description  string  `json:"description"`
 	StartDate    string  `json:"startDate"`
 	EndDate      string  `json:"endDate"`
 	Capacity     float64 `json:"capacity"`
@@ -149,7 +151,7 @@ func decode(w http.ResponseWriter, r *http.Request) (application.WriteInput, boo
 	if !ok {
 		return application.WriteInput{}, false
 	}
-	return application.WriteInput{StartDate: start, EndDate: end, Capacity: payload.Capacity}, true
+	return application.WriteInput{Description: payload.Description, StartDate: start, EndDate: end, Capacity: payload.Capacity}, true
 }
 func ensureEOF(decoder *json.Decoder) error {
 	var extra any
@@ -203,7 +205,7 @@ func parseQuery(r *http.Request) (application.ListQuery, string, string, error) 
 	return q, "", "", nil
 }
 func mapItem(value domain.CapacityOverride) item {
-	return item{value.ID, value.TeamMemberID, value.StartDate.Format("2006-01-02"), value.EndDate.Format("2006-01-02"), value.Capacity.Hours(), value.CreatedAt.UTC().Format(time.RFC3339), value.UpdatedAt.UTC().Format(time.RFC3339)}
+	return item{value.ID, value.TeamMemberID, value.Description, value.StartDate.Format("2006-01-02"), value.EndDate.Format("2006-01-02"), value.Capacity.Hours(), value.CreatedAt.UTC().Format(time.RFC3339), value.UpdatedAt.UTC().Format(time.RFC3339)}
 }
 func writeError(w http.ResponseWriter, err error) {
 	status, code, message, field := 500, "INTERNAL_ERROR", "An internal error occurred", ""
@@ -222,6 +224,10 @@ func writeError(w http.ResponseWriter, err error) {
 		status, code, message, field = 400, "CAPACITY_OVERRIDE_CAPACITY_EXCEEDS_LIMIT", err.Error(), "capacity"
 	case errors.Is(err, domain.ErrCapacityInvalidIncrement):
 		status, code, message, field = 400, "CAPACITY_OVERRIDE_CAPACITY_INVALID_INCREMENT", err.Error(), "capacity"
+	case errors.Is(err, domain.ErrDescriptionRequired):
+		status, code, message, field = 400, "CAPACITY_OVERRIDE_DESCRIPTION_REQUIRED", err.Error(), "description"
+	case errors.Is(err, domain.ErrDescriptionTooLong):
+		status, code, message, field = 400, "CAPACITY_OVERRIDE_DESCRIPTION_TOO_LONG", err.Error(), "description"
 	case errors.Is(err, domain.ErrOverlaps):
 		status, code, message = 409, "CAPACITY_OVERRIDE_OVERLAPS", err.Error()
 	case errors.Is(err, domain.ErrNotFound):
