@@ -104,6 +104,18 @@ may belong to only one Public Holiday range; any conflict rejects the complete
 mutation. Active and upcoming ranges are listed before expired ranges using the
 configured `APP_TIMEZONE`.
 
+Project endpoints:
+
+```text
+GET    /api/projects?search=alpha&page=1&pageSize=5
+GET    /api/projects/{projectId}
+POST   /api/projects
+PUT    /api/projects/{projectId}
+POST   /api/projects/{projectId}/status
+POST   /api/projects/{projectId}/priority
+DELETE /api/projects/{projectId}
+```
+
 ## Run the frontend
 
 Install frontend dependencies once:

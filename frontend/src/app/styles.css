@@ -262,6 +262,10 @@ select:disabled {
   border-color: var(--color-danger);
 }
 
+.ui-search-input {
+  padding-left: calc(var(--spacing-control-inline) + 1.5rem);
+}
+
 .required-label::after {
   content: " *";
   color: var(--color-danger);

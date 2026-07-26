@@ -63,10 +63,12 @@ Member deletion soft-deletes the Member and all owned Capacity Overrides in one
 transaction. Direct Capacity Override deletion remains a hard delete. Default
 GORM scopes exclude deleted records; historical readers must opt in explicitly.
 Active Member name search uses a PostgreSQL partial prefix index; names remain
-non-unique and can also be reused after deletion. Until Project Management defines root lifecycle tables,
-`executable_leaves` is a provisional active-assignment projection: any row for
-a Member blocks deletion. This projection contract must be revisited when WBS
-level `0` and Project `Closed` status are implemented.
+non-unique and can also be reused after deletion. `executable_leaves` remains a
+provisional Member-assignment projection and has no Project/WBS ownership
+columns. US-3.1 introduces the Project root lifecycle without retrofitting that
+provisional table because the WBS model is explicitly out of scope. The future
+WBS implementation must replace or extend the projection so Member assignment
+checks can distinguish active Project work from Closed history.
 
 ## Backend API conventions
 
@@ -130,6 +132,36 @@ Public Holiday endpoints are top-level global resources:
 /api/public-holidays
 ```
 
+Project Management is an independent `projects` feature boundary. A Project is
+WBS level `0`; creation does not create a separate WBS row. PostgreSQL stores a
+normalized `name_key` for case-insensitive uniqueness and indexed prefix
+search, a unique positive integer Priority, nullable derived dates, lifecycle
+status, Closed At, and nullable locked baseline snapshots. Until WBS and
+timeline tables exist, the snapshots are nullable and close correctly rejects
+every newly created zero-leaf Project. Lock also rejects a zero-leaf Project,
+because there is no task timeline to protect. No provisional WBS or scheduler
+data is created by the Project feature.
+
+Active Projects (`open` and `locked`) precede Closed Projects and order by
+Priority. Closed Projects order by Closed At descending and ID ascending.
+Priority Move Up/Down locks the active ordering, swaps with the adjacent active
+Project in one transaction, and invokes the minimal scheduling application
+port before commit. The current composition supplies a no-op adapter because
+the Scheduling Engine is outside implemented scope; application and repository
+tests enforce failure rollback for the future adapter.
+
+Project endpoints are:
+
+```text
+GET    /api/projects
+GET    /api/projects/{projectId}
+POST   /api/projects
+PUT    /api/projects/{projectId}
+POST   /api/projects/{projectId}/status
+POST   /api/projects/{projectId}/priority
+DELETE /api/projects/{projectId}
+```
+
 ## Frontend stack and structure
 
 The frontend uses React 19, TypeScript, Vite, Tailwind CSS 4, Vitest, jsdom, and
@@ -153,6 +185,11 @@ page identifiers, labels, hashes, ordering, and breadcrumb/sidebar metadata.
 The Role, Member, and Capacity Override features separate domain/application
 models from HTTP DTOs. Capacity Overrides are presented inside the Member
 workflow rather than as standalone navigation.
+
+Projects use the same feature-layer boundaries and shared list, search,
+pagination, dialog, loading, and Toast primitives. Their list cache identity is
+`search/page/pageSize`; mutations invalidate every Project list entry so an
+older in-flight response cannot restore stale ordering or lifecycle state.
 
 ## Frontend state and shared infrastructure
 

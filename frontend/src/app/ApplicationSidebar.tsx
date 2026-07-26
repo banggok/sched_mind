@@ -106,7 +106,25 @@ const icons: Record<ApplicationPage, ReactNode> = {
   roles: <RoleIcon />,
   "team-members": <TeamMembersIcon />,
   "public-holidays": <CalendarIcon />,
+  projects: <ProjectIcon />,
 };
+
+function ProjectIcon() {
+  return (
+    <svg
+      className="size-5"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M4 6.5h6l2 2h8v10H4z" />
+      <path d="M4 9h16" />
+    </svg>
+  );
+}
 
 function groupNavigationItems() {
   return navigationItems.reduce<

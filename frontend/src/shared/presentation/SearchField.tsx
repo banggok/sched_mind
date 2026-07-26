@@ -19,7 +19,7 @@ export function SearchField({
       <input
         type="search"
         aria-label={label}
-        className="ui-input min-h-10 py-2 pr-3 pl-9 text-label"
+        className="ui-input ui-search-input min-h-10 py-2 pr-3 text-label"
         placeholder={label}
         value={value}
         onChange={(event) => onChange(event.target.value)}
