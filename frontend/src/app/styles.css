@@ -179,6 +179,22 @@ select:disabled {
     opacity var(--duration-interface) var(--ease-interface);
 }
 
+.ui-switch[aria-checked="true"] {
+  border-color: var(--color-brand-strong);
+  background: var(--color-brand-strong);
+  color: var(--color-on-brand);
+}
+
+.ui-switch[aria-checked="false"] {
+  border-color: var(--color-border-strong);
+  background: var(--color-surface-muted);
+  color: var(--color-text-secondary);
+}
+
+.ui-switch:not(:disabled):hover {
+  border-color: var(--color-brand);
+}
+
 .ui-button:disabled {
   opacity: 0.55;
 }

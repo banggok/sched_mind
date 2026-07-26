@@ -25,7 +25,14 @@ Business features are organized under `backend/internal/<feature>/` with
 `domain`, `application`, `transport`, and `infrastructure` packages when those
 responsibilities exist. Technical health handling intentionally has only a
 transport package because it has no business model or application workflow.
-Shared pagination types live under `internal/shared/listing`.
+Shared pagination types and standard HTTP list-query parsing live under
+`internal/shared/listing`. Other context-free technical helpers live in
+narrowly scoped packages: `internal/shared/identity` owns UUID v4 generation,
+`internal/shared/persistence` owns SQL `LIKE` pattern escaping, and
+`internal/shared/httpjson` owns JSON response serialization. Feature handlers
+retain request/response DTOs and error mapping. Application services continue
+to receive ID generator functions so tests remain deterministic; feature
+domains do not depend on the generator implementation.
 
 The API performs graceful shutdown for interrupt and termination signals using
 the environment-configured timeout. It stops HTTP work before closing the owned
@@ -159,8 +166,23 @@ POST   /api/projects
 PUT    /api/projects/{projectId}
 POST   /api/projects/{projectId}/status
 POST   /api/projects/{projectId}/priority
+PATCH  /api/projects/{projectId}/settings
 DELETE /api/projects/{projectId}
 ```
+
+Project Settings persist `automatic_scheduling` (default `true`) and integer
+`project_buffer` (default `20`, constrained to `0..100`). Only Open Projects may
+change settings; Locked and Closed settings are read-only. Re-enabling
+Automatic Scheduling invokes the project-scoped `RecalculateProjectSchedule`
+application port inside the settings transaction, so dependency failure rolls
+back the settings update. Disabling preserves existing timeline data.
+
+The production scheduling adapter remains no-op until Epic 6 implements task
+timelines and the concrete Scheduling Engine. Persistence and coordination are
+available now; timeline recalculation and Actual End preservation are not yet
+production capabilities. The update locks and filters by Project primary key,
+which is already indexed, so this single-row query requires no additional
+index.
 
 ## Frontend stack and structure
 
@@ -190,6 +212,15 @@ Projects use the same feature-layer boundaries and shared list, search,
 pagination, dialog, loading, and Toast primitives. Their list cache identity is
 `search/page/pageSize`; mutations invalidate every Project list entry so an
 older in-flight response cannot restore stale ordering or lifecycle state.
+
+Project Name and settings share the same Add/Edit dialog and persist through one
+atomic create or update operation; there is no separate Settings action. Status
+remains outside the form and changes only through lifecycle command buttons.
+Open settings are editable, Locked settings remain visible but read-only while
+Name keeps its existing edit contract, and the complete Closed form is
+read-only. Closing discards pending changes. OFF→ON uses nested confirmation,
+while Project Buffer stays stored and disabled whenever Automatic Scheduling is
+off. The dedicated PATCH endpoint remains available for API compatibility.
 
 ## Frontend state and shared infrastructure
 

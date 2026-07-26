@@ -2,12 +2,12 @@ package application
 
 import (
 	"context"
-	"crypto/rand"
 	"errors"
 	"fmt"
 	"time"
 
 	"github.com/banggok/sched_mind/backend/internal/projects/domain"
+	"github.com/banggok/sched_mind/backend/internal/shared/identity"
 	"github.com/banggok/sched_mind/backend/internal/shared/listing"
 )
 
@@ -22,7 +22,7 @@ func NewService(store Store, scheduler Scheduler) *Service {
 	if scheduler == nil {
 		scheduler = NoopScheduler{}
 	}
-	return &Service{store: store, scheduler: scheduler, now: func() time.Time { return time.Now().UTC() }, newID: newUUID}
+	return &Service{store: store, scheduler: scheduler, now: func() time.Time { return time.Now().UTC() }, newID: identity.NewUUID}
 }
 
 func NewServiceWithDependencies(store Store, scheduler Scheduler, now func() time.Time, newID func() (string, error)) *Service {
@@ -48,15 +48,18 @@ func (s *Service) Get(ctx context.Context, id string) (*domain.Project, error) {
 	return value, nil
 }
 
-func (s *Service) Create(ctx context.Context, name string) (*domain.Project, error) {
+func (s *Service) Create(ctx context.Context, name string, automaticScheduling bool, projectBuffer int) (*domain.Project, error) {
 	if _, err := domain.NormalizeName(name); err != nil {
+		return nil, err
+	}
+	if err := domain.ValidateProjectBuffer(projectBuffer); err != nil {
 		return nil, err
 	}
 	id, err := s.newID()
 	if err != nil {
 		return nil, fmt.Errorf("generate project ID: %w", err)
 	}
-	value, err := s.store.CreateNext(ctx, id, name, s.now())
+	value, err := s.store.CreateNext(ctx, id, name, automaticScheduling, projectBuffer, s.now())
 	if err != nil {
 		return nil, fmt.Errorf("create project: %w", err)
 	}
@@ -66,19 +69,19 @@ func (s *Service) Create(ctx context.Context, name string) (*domain.Project, err
 	return value, nil
 }
 
-func (s *Service) Update(ctx context.Context, id, name string) (*domain.Project, error) {
-	value, err := s.Get(ctx, id)
-	if err != nil {
+func (s *Service) Update(ctx context.Context, id, name string, automaticScheduling bool, projectBuffer int) (*domain.Project, error) {
+	if _, err := domain.NormalizeName(name); err != nil {
 		return nil, err
+	}
+	if err := domain.ValidateProjectBuffer(projectBuffer); err != nil {
+		return nil, err
+	}
+	value, err := s.store.UpdateDetails(ctx, id, name, automaticScheduling, projectBuffer, s.now(), s.scheduler.RecalculateProjectSchedule)
+	if err != nil {
+		return nil, fmt.Errorf("update project: %w", err)
 	}
 	if value == nil {
-		return nil, errors.New("update project: get returned nil")
-	}
-	if err := value.Rename(name, s.now()); err != nil {
-		return nil, err
-	}
-	if err := s.store.Update(ctx, *value); err != nil {
-		return nil, fmt.Errorf("update project: %w", err)
+		return nil, errors.New("update project: store returned nil without error")
 	}
 	return value, nil
 }
@@ -108,19 +111,23 @@ func (s *Service) MovePriority(ctx context.Context, id string, direction domain.
 	return value, nil
 }
 
+func (s *Service) UpdateSettings(ctx context.Context, id string, automaticScheduling bool, projectBuffer int) (*domain.Project, error) {
+	if err := domain.ValidateProjectBuffer(projectBuffer); err != nil {
+		return nil, err
+	}
+	value, err := s.store.UpdateSettings(ctx, id, automaticScheduling, projectBuffer, s.now(), s.scheduler.RecalculateProjectSchedule)
+	if err != nil {
+		return nil, fmt.Errorf("update project settings: %w", err)
+	}
+	if value == nil {
+		return nil, errors.New("update project settings: store returned nil without error")
+	}
+	return value, nil
+}
+
 func (s *Service) Delete(ctx context.Context, id string) error {
 	if err := s.store.DeleteChildless(ctx, id); err != nil {
 		return fmt.Errorf("delete project: %w", err)
 	}
 	return nil
-}
-
-func newUUID() (string, error) {
-	var value [16]byte
-	if _, err := rand.Read(value[:]); err != nil {
-		return "", err
-	}
-	value[6] = (value[6] & 0x0f) | 0x40
-	value[8] = (value[8] & 0x3f) | 0x80
-	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", value[0:4], value[4:6], value[6:8], value[8:10], value[10:16]), nil
 }

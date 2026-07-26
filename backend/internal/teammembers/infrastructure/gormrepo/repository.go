@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/banggok/sched_mind/backend/internal/shared/listing"
+	sharedpersistence "github.com/banggok/sched_mind/backend/internal/shared/persistence"
 	"github.com/banggok/sched_mind/backend/internal/teammembers/application"
 	"github.com/banggok/sched_mind/backend/internal/teammembers/domain"
 	"gorm.io/gorm"
@@ -29,7 +30,7 @@ func (repository *Repository) List(
 	var models []teamMemberModel
 	statement := repository.database.WithContext(ctx).Model(&teamMemberModel{})
 	if search := strings.ToLower(strings.TrimSpace(query.Search)); search != "" {
-		statement = statement.Where("LOWER(name) LIKE ?", escapeLike(search)+"%")
+		statement = statement.Where("LOWER(name) LIKE ?", sharedpersistence.EscapeLike(search)+"%")
 	}
 	var total int64
 	if err := statement.Count(&total).Error; err != nil {
@@ -54,12 +55,6 @@ func (repository *Repository) List(
 	return listing.Page[application.TeamMemberRecord]{
 		Items: records, Page: query.Page, PageSize: query.PageSize, Total: total,
 	}, nil
-}
-
-func escapeLike(value string) string {
-	value = strings.ReplaceAll(value, `\`, `\\`)
-	value = strings.ReplaceAll(value, `%`, `\%`)
-	return strings.ReplaceAll(value, `_`, `\_`)
 }
 
 func (repository *Repository) FindByID(

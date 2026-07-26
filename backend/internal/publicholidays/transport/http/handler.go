@@ -11,6 +11,7 @@ import (
 
 	"github.com/banggok/sched_mind/backend/internal/publicholidays/application"
 	"github.com/banggok/sched_mind/backend/internal/publicholidays/domain"
+	"github.com/banggok/sched_mind/backend/internal/shared/httpjson"
 	"github.com/banggok/sched_mind/backend/internal/shared/listing"
 )
 
@@ -65,7 +66,7 @@ type errorResponse struct {
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	query, code, field, err := parseQuery(r)
 	if err != nil {
-		writeJSON(w, 400, errorResponse{code, err.Error(), field})
+		httpjson.Write(w, 400, errorResponse{code, err.Error(), field})
 		return
 	}
 	result, err := h.service.List(r.Context(), query)
@@ -77,7 +78,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	for _, value := range result.Items {
 		data = append(data, mapItem(value))
 	}
-	writeJSON(w, 200, listResponse{data, result.Page, result.PageSize, result.Total})
+	httpjson.Write(w, 200, listResponse{data, result.Page, result.PageSize, result.Total})
 }
 func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 	value, err := h.service.Get(r.Context(), r.PathValue("publicHolidayId"))
@@ -89,7 +90,7 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("public holiday service returned nil"))
 		return
 	}
-	writeJSON(w, 200, itemResponse{mapItem(*value)})
+	httpjson.Write(w, 200, itemResponse{mapItem(*value)})
 }
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	input, ok := decode(w, r)
@@ -105,7 +106,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("public holiday service returned nil"))
 		return
 	}
-	writeJSON(w, 201, itemResponse{mapItem(*value)})
+	httpjson.Write(w, 201, itemResponse{mapItem(*value)})
 }
 func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 	input, ok := decode(w, r)
@@ -121,7 +122,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("public holiday service returned nil"))
 		return
 	}
-	writeJSON(w, 200, itemResponse{mapItem(*value)})
+	httpjson.Write(w, 200, itemResponse{mapItem(*value)})
 }
 func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
 	if err := h.service.Delete(r.Context(), r.PathValue("publicHolidayId")); err != nil {
@@ -153,19 +154,19 @@ func (h *Handler) calendar(w http.ResponseWriter, r *http.Request) {
 	for _, date := range dates {
 		values = append(values, date.Format("2006-01-02"))
 	}
-	writeJSON(w, 200, map[string]any{"data": values})
+	httpjson.Write(w, 200, map[string]any{"data": values})
 }
 func decode(w http.ResponseWriter, r *http.Request) (application.WriteInput, bool) {
 	var payload writeRequest
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&payload); err != nil {
-		writeJSON(w, 400, errorResponse{Code: "INVALID_REQUEST", Message: "Request body is invalid"})
+		httpjson.Write(w, 400, errorResponse{Code: "INVALID_REQUEST", Message: "Request body is invalid"})
 		return application.WriteInput{}, false
 	}
 	var extra any
 	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
-		writeJSON(w, 400, errorResponse{Code: "INVALID_REQUEST", Message: "Request body is invalid"})
+		httpjson.Write(w, 400, errorResponse{Code: "INVALID_REQUEST", Message: "Request body is invalid"})
 		return application.WriteInput{}, false
 	}
 	start, ok := parseDate(w, payload.StartDate, "startDate", domain.ErrStartDateRequired)
@@ -185,7 +186,7 @@ func parseDate(w http.ResponseWriter, value, field string, required error) (time
 	}
 	date, err := time.Parse("2006-01-02", value)
 	if err != nil || date.Format("2006-01-02") != value {
-		writeJSON(w, 400, errorResponse{Code: "INVALID_HOLIDAY_DATE", Message: field + " must be a valid date in YYYY-MM-DD format", Field: field})
+		httpjson.Write(w, 400, errorResponse{Code: "INVALID_HOLIDAY_DATE", Message: field + " must be a valid date in YYYY-MM-DD format", Field: field})
 		return time.Time{}, false
 	}
 	return date, true
@@ -238,10 +239,5 @@ func writeError(w http.ResponseWriter, err error) {
 	case errors.Is(err, domain.ErrNotFound):
 		status, code, message = 404, "PUBLIC_HOLIDAY_NOT_FOUND", err.Error()
 	}
-	writeJSON(w, status, errorResponse{code, message, field})
-}
-func writeJSON(w http.ResponseWriter, status int, payload any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(payload)
+	httpjson.Write(w, status, errorResponse{code, message, field})
 }

@@ -9,10 +9,31 @@ export interface Project {
   endDate?: string;
   autoCalculateDate: boolean;
   autoDependencyByAssignee: boolean;
+  automaticScheduling: boolean;
+  projectBuffer: number;
   priority: number;
   closedAt?: Date;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export class ProjectSettingsError extends Error {
+  constructor(
+    readonly field: "projectBuffer",
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+export function validateProjectBuffer(value: number): number {
+  if (!Number.isInteger(value) || value < 0 || value > 100) {
+    throw new ProjectSettingsError(
+      "projectBuffer",
+      "Project buffer must be a whole number between 0 and 100",
+    );
+  }
+  return value;
 }
 
 export class ProjectNameError extends Error {

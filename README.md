@@ -106,6 +106,9 @@ configured `APP_TIMEZONE`.
 
 Project endpoints:
 
+Project create/update payloads contain `name`, `automaticScheduling`, and
+`projectBuffer`. Status changes only through the status command endpoint.
+
 ```text
 GET    /api/projects?search=alpha&page=1&pageSize=5
 GET    /api/projects/{projectId}
@@ -113,6 +116,7 @@ POST   /api/projects
 PUT    /api/projects/{projectId}
 POST   /api/projects/{projectId}/status
 POST   /api/projects/{projectId}/priority
+PATCH  /api/projects/{projectId}/settings
 DELETE /api/projects/{projectId}
 ```
 

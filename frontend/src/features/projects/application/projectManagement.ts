@@ -4,6 +4,7 @@ import type {
 } from "../../../shared/application/pagination";
 import {
   normalizeProjectName,
+  validateProjectBuffer,
   type PriorityDirection,
   type Project,
   type ProjectStatus,
@@ -20,15 +21,28 @@ export function listProjects(
 export function createProject(
   gateway: ProjectsGateway,
   name: string,
+  automaticScheduling: boolean,
+  projectBuffer: number,
 ): Promise<Project> {
-  return gateway.create(normalizeProjectName(name));
+  return gateway.create(
+    normalizeProjectName(name),
+    automaticScheduling,
+    validateProjectBuffer(projectBuffer),
+  );
 }
 export function updateProject(
   gateway: ProjectsGateway,
   id: string,
   name: string,
+  automaticScheduling: boolean,
+  projectBuffer: number,
 ): Promise<Project> {
-  return gateway.update(id, normalizeProjectName(name));
+  return gateway.update(
+    id,
+    normalizeProjectName(name),
+    automaticScheduling,
+    validateProjectBuffer(projectBuffer),
+  );
 }
 export function changeProjectStatus(
   gateway: ProjectsGateway,
@@ -49,4 +63,16 @@ export function deleteProject(
   id: string,
 ): Promise<void> {
   return gateway.delete(id);
+}
+export function updateProjectSettings(
+  gateway: ProjectsGateway,
+  id: string,
+  automaticScheduling: boolean,
+  projectBuffer: number,
+): Promise<Project> {
+  return gateway.updateSettings(
+    id,
+    automaticScheduling,
+    validateProjectBuffer(projectBuffer),
+  );
 }
