@@ -18,7 +18,5 @@ type Repository interface {
 	RoleExists(context.Context, string) (bool, error)
 	Create(context.Context, domain.TeamMember) error
 	Update(context.Context, domain.TeamMember) error
-	IsAssignedToTask(context.Context, string) (bool, error)
-	HasCapacityOverride(context.Context, string) (bool, error)
-	Delete(context.Context, string) error
+	DeleteIfNoActiveTask(context.Context, string) error
 }

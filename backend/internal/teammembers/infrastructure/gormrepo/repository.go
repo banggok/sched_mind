@@ -11,6 +11,7 @@ import (
 	"github.com/banggok/sched_mind/backend/internal/teammembers/application"
 	"github.com/banggok/sched_mind/backend/internal/teammembers/domain"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type Repository struct {
@@ -126,44 +127,36 @@ func (repository *Repository) Update(
 	return nil
 }
 
-func (repository *Repository) IsAssignedToTask(
-	ctx context.Context,
-	id string,
-) (bool, error) {
-	var count int64
-	if err := repository.database.WithContext(ctx).
-		Model(&executableLeafModel{}).
-		Where("assignee_id = ?", id).
-		Count(&count).Error; err != nil {
-		return false, fmt.Errorf("count executable leaf assignments: %w", err)
-	}
-	return count > 0, nil
-}
-
-func (repository *Repository) HasCapacityOverride(
-	ctx context.Context,
-	id string,
-) (bool, error) {
-	var count int64
-	if err := repository.database.WithContext(ctx).
-		Model(&capacityOverrideModel{}).
-		Where("team_member_id = ?", id).
-		Count(&count).Error; err != nil {
-		return false, fmt.Errorf("count capacity overrides: %w", err)
-	}
-	return count > 0, nil
-}
-
-func (repository *Repository) Delete(ctx context.Context, id string) error {
-	result := repository.database.WithContext(ctx).
-		Delete(&teamMemberModel{}, "id = ?", id)
-	if result.Error != nil {
-		return mapConstraintError(result.Error)
-	}
-	if result.RowsAffected == 0 {
-		return domain.ErrNotFound
-	}
-	return nil
+func (repository *Repository) DeleteIfNoActiveTask(ctx context.Context, id string) error {
+	return repository.database.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var member teamMemberModel
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			First(&member, "id = ?", id).Error; errors.Is(err, gorm.ErrRecordNotFound) {
+			return domain.ErrNotFound
+		} else if err != nil {
+			return fmt.Errorf("lock team member for delete: %w", err)
+		}
+		var activeAssignments int64
+		if err := tx.Model(&executableLeafModel{}).
+			Where("assignee_id = ?", id).Count(&activeAssignments).Error; err != nil {
+			return fmt.Errorf("count active task assignments: %w", err)
+		}
+		if activeAssignments > 0 {
+			return domain.ErrAssignedToTask
+		}
+		if err := tx.Where("team_member_id = ?", id).
+			Delete(&capacityOverrideModel{}).Error; err != nil {
+			return fmt.Errorf("soft delete capacity overrides: %w", err)
+		}
+		result := tx.Delete(&member)
+		if result.Error != nil {
+			return mapConstraintError(result.Error)
+		}
+		if result.RowsAffected == 0 {
+			return domain.ErrNotFound
+		}
+		return nil
+	})
 }
 
 func fromDomain(member domain.TeamMember) *teamMemberModel {

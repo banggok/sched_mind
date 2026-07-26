@@ -2,8 +2,8 @@ export function ListSkeleton({
   label,
   rows = 3,
 }: {
-  label: string
-  rows?: number
+  label: string;
+  rows?: number;
 }) {
   return (
     <div
@@ -15,9 +15,9 @@ export function ListSkeleton({
       {Array.from({ length: rows }, (_, index) => (
         <div
           key={index}
-          className="h-16 animate-pulse rounded-2xl bg-[#F2F2F2] motion-reduce:animate-none"
+          className="h-16 animate-pulse rounded-panel bg-skeleton motion-reduce:animate-none"
         />
       ))}
     </div>
-  )
+  );
 }

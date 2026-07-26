@@ -21,7 +21,4 @@ var (
 	ErrAssignedToTask   = errors.New(
 		"team member is assigned to one or more tasks and cannot be deleted",
 	)
-	ErrHasCapacityOverride = errors.New(
-		"team member has capacity overrides and cannot be deleted",
-	)
 )

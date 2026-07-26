@@ -1,24 +1,26 @@
-import tailwindcss from '@tailwindcss/vite'
-import react from '@vitejs/plugin-react'
-import { defineConfig, loadEnv } from 'vite'
+import tailwindcss from "@tailwindcss/vite";
+import react from "@vitejs/plugin-react";
+import { defineConfig, loadEnv } from "vite";
 
 export default defineConfig(({ command, mode }) => {
-  const environment = loadEnv(mode, '..', '')
-  const proxyTarget = environment.VITE_BACKEND_PROXY_TARGET
-  const apiBaseURL = environment.VITE_API_BASE_URL
+  const environment = loadEnv(mode, "..", "");
+  const proxyTarget = environment.VITE_BACKEND_PROXY_TARGET;
+  const apiBaseURL = environment.VITE_API_BASE_URL;
 
-  if (command === 'serve' && !proxyTarget) {
-    throw new Error('VITE_BACKEND_PROXY_TARGET environment variable is required')
+  if (command === "serve" && !proxyTarget) {
+    throw new Error(
+      "VITE_BACKEND_PROXY_TARGET environment variable is required",
+    );
   }
   if (!apiBaseURL) {
-    throw new Error('VITE_API_BASE_URL environment variable is required')
+    throw new Error("VITE_API_BASE_URL environment variable is required");
   }
 
   return {
-    envDir: '..',
+    envDir: "..",
     plugins: [react(), tailwindcss()],
     server:
-      command === 'serve'
+      command === "serve"
         ? {
             proxy: {
               [apiBaseURL]: {
@@ -28,5 +30,5 @@ export default defineConfig(({ command, mode }) => {
             },
           }
         : undefined,
-  }
-})
+  };
+});

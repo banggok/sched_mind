@@ -1,56 +1,69 @@
-import { createHTTPRolesGateway } from '../features/roles/infrastructure/httpRolesGateway'
-import { RolesDashboardPage } from '../features/roles/presentation/RolesDashboardPage'
-import { createHTTPTeamMembersGateway } from '../features/team-members/infrastructure/httpTeamMembersGateway'
-import { TeamMembersDashboardPage } from '../features/team-members/presentation/TeamMembersDashboardPage'
-import { useEffect, useState } from 'react'
-import { AppShell } from './AppShell'
-import type { ApplicationPage } from './navigation'
+import { createHTTPRolesGateway } from "../features/roles/infrastructure/httpRolesGateway";
+import { RolesDashboardPage } from "../features/roles/presentation/RolesDashboardPage";
+import { createHTTPTeamMembersGateway } from "../features/team-members/infrastructure/httpTeamMembersGateway";
+import { TeamMembersDashboardPage } from "../features/team-members/presentation/TeamMembersDashboardPage";
+import { useEffect, useState } from "react";
+import { AppShell } from "./AppShell";
+import type { ApplicationPage } from "./navigation";
+import { createHTTPCapacityOverridesGateway } from "../features/capacity-overrides/infrastructure/httpCapacityOverridesGateway";
+import { CapacityOverridesPanel } from "../features/capacity-overrides/presentation/CapacityOverridesPanel";
+import type { TeamMember } from "../features/team-members/domain/teamMember";
 
 const apiBaseURL = requiredEnvironment(
-  'VITE_API_BASE_URL',
+  "VITE_API_BASE_URL",
   import.meta.env.VITE_API_BASE_URL,
-)
-const teamMembersGateway = createHTTPTeamMembersGateway(apiBaseURL)
+);
+const teamMembersGateway = createHTTPTeamMembersGateway(apiBaseURL);
+const capacityOverridesGateway = createHTTPCapacityOverridesGateway(apiBaseURL);
 const rolesGateway = createHTTPRolesGateway(
   apiBaseURL,
   teamMembersGateway.invalidateListCache,
-)
+);
 
 export function App() {
-  const [route, setRoute] = useState(window.location.hash)
+  const [route, setRoute] = useState(window.location.hash);
+  const [capacityMember, setCapacityMember] = useState<TeamMember>();
   useEffect(() => {
-    const updateRoute = () => setRoute(window.location.hash)
-    window.addEventListener('hashchange', updateRoute)
-    window.addEventListener('popstate', updateRoute)
+    const updateRoute = () => setRoute(window.location.hash);
+    window.addEventListener("hashchange", updateRoute);
+    window.addEventListener("popstate", updateRoute);
     return () => {
-      window.removeEventListener('hashchange', updateRoute)
-      window.removeEventListener('popstate', updateRoute)
-    }
-  }, [])
+      window.removeEventListener("hashchange", updateRoute);
+      window.removeEventListener("popstate", updateRoute);
+    };
+  }, []);
   const activePage: ApplicationPage =
-    route === '#team-members' ? 'team-members' : 'roles'
+    route === "#team-members" ? "team-members" : "roles";
 
   useEffect(() => {
-    window.scrollTo({ top: 0, left: 0, behavior: 'auto' })
-  }, [activePage])
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+  }, [activePage]);
 
   return (
     <AppShell activePage={activePage}>
-      {activePage === 'team-members' ? (
+      {activePage === "team-members" ? (
         <TeamMembersDashboardPage
           gateway={teamMembersGateway}
-          rolesGateway={rolesGateway}
+          roleOptionsGateway={rolesGateway}
+          onManageCapacity={setCapacityMember}
         />
       ) : (
         <RolesDashboardPage gateway={rolesGateway} />
       )}
+      {capacityMember ? (
+        <CapacityOverridesPanel
+          member={capacityMember}
+          gateway={capacityOverridesGateway}
+          onClose={() => setCapacityMember(undefined)}
+        />
+      ) : null}
     </AppShell>
-  )
+  );
 }
 
 function requiredEnvironment(name: string, value: string | undefined): string {
   if (!value) {
-    throw new Error(`${name} environment variable is required`)
+    throw new Error(`${name} environment variable is required`);
   }
-  return value.replace(/\/+$/, '')
+  return value.replace(/\/+$/, "");
 }

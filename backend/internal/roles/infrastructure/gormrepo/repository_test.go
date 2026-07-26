@@ -139,6 +139,30 @@ func TestRepositoryPreventsDeletingAssignedRole(t *testing.T) {
 	}
 }
 
+func TestRepositoryTreatsSoftDeletedMemberAsHistoricalRoleReference(t *testing.T) {
+	t.Parallel()
+
+	database := openTestDatabase(t)
+	repository := New(database)
+	role, err := domain.NewRole("role-id", "Backend", time.Now().UTC())
+	if err != nil || role == nil {
+		t.Fatalf("NewRole() role = %#v, error = %v", role, err)
+	}
+	if err := repository.Create(context.Background(), *role); err != nil {
+		t.Fatal(err)
+	}
+	if err := AssignRoleForTest(database, "member-id", role.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Delete(&teamMemberModel{}, "id = ?", "member-id").Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if err := repository.Delete(context.Background(), role.ID); !errors.Is(err, domain.ErrInUse) {
+		t.Fatalf("Delete() error = %v, want ErrInUse", err)
+	}
+}
+
 func TestRepositoryFindReturnsNilWhenRoleDoesNotExist(t *testing.T) {
 	t.Parallel()
 

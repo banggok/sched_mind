@@ -108,7 +108,7 @@ func (repository *Repository) Update(ctx context.Context, role domain.Role) erro
 
 func (repository *Repository) IsInUse(ctx context.Context, id string) (bool, error) {
 	var count int64
-	if err := repository.database.WithContext(ctx).
+	if err := repository.database.WithContext(ctx).Unscoped().
 		Model(&teamMemberModel{}).
 		Where("role_id = ?", id).
 		Count(&count).Error; err != nil {

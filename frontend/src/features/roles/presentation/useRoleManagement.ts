@@ -1,153 +1,153 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from "react";
 
 import {
   createRole,
   deleteRole,
   listRoles,
   updateRole,
-} from '../application/roleManagement'
-import type { RolesGateway } from '../application/rolesGateway'
-import type { PageQuery } from '../../../shared/application/pagination'
-import { RoleNameError, type Role } from '../domain/role'
+} from "../application/roleManagement";
+import type { RolesGateway } from "../application/rolesGateway";
+import type { PageQuery } from "../../../shared/application/pagination";
+import { RoleNameError, type Role } from "../domain/role";
 
-type FormMode = 'create' | 'edit'
+type FormMode = "create" | "edit";
 
 interface FormState {
-  mode: FormMode
-  role?: Role
+  mode: FormMode;
+  role?: Role;
 }
 
 export function useRoleManagement(gateway: RolesGateway, query: PageQuery) {
-  const [roles, setRoles] = useState<Role[]>([])
-  const [loading, setLoading] = useState(true)
-  const [pageError, setPageError] = useState('')
-  const [form, setForm] = useState<FormState>()
-  const [name, setName] = useState('')
-  const [fieldError, setFieldError] = useState('')
-  const [deleting, setDeleting] = useState<Role>()
-  const [deleteError, setDeleteError] = useState('')
-  const [submitting, setSubmitting] = useState(false)
-  const [notification, setNotification] = useState('')
-  const [total, setTotal] = useState(0)
+  const [roles, setRoles] = useState<Role[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [pageError, setPageError] = useState("");
+  const [form, setForm] = useState<FormState>();
+  const [name, setName] = useState("");
+  const [fieldError, setFieldError] = useState("");
+  const [deleting, setDeleting] = useState<Role>();
+  const [deleteError, setDeleteError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [notification, setNotification] = useState("");
+  const [total, setTotal] = useState(0);
 
   const load = useCallback(
     async (signal?: AbortSignal) => {
-      setLoading(true)
+      setLoading(true);
       try {
-        const result = await listRoles(gateway, query, signal)
-        setRoles(result.items)
-        setTotal(result.total)
-        setPageError('')
+        const result = await listRoles(gateway, query, signal);
+        setRoles(result.items);
+        setTotal(result.total);
+        setPageError("");
       } catch (error) {
-        if (!(error instanceof DOMException && error.name === 'AbortError')) {
-          setPageError(errorMessage(error, 'Unable to load roles'))
+        if (!(error instanceof DOMException && error.name === "AbortError")) {
+          setPageError(errorMessage(error, "Unable to load roles"));
         }
       } finally {
         if (!signal?.aborted) {
-          setLoading(false)
+          setLoading(false);
         }
       }
     },
-    [gateway, query.page, query.pageSize, query.search],
-  )
+    [gateway, query],
+  );
 
   useEffect(() => {
-    const controller = new AbortController()
-    void load(controller.signal)
-    return () => controller.abort()
-  }, [load])
+    const controller = new AbortController();
+    void load(controller.signal);
+    return () => controller.abort();
+  }, [load]);
 
   useEffect(() => {
     if (!notification) {
-      return
+      return;
     }
-    const timeout = window.setTimeout(() => setNotification(''), 5000)
-    return () => window.clearTimeout(timeout)
-  }, [notification])
+    const timeout = window.setTimeout(() => setNotification(""), 5000);
+    return () => window.clearTimeout(timeout);
+  }, [notification]);
 
   function openCreate() {
-    setForm({ mode: 'create' })
-    setName('')
-    setFieldError('')
+    setForm({ mode: "create" });
+    setName("");
+    setFieldError("");
   }
 
   function openEdit(role: Role) {
-    setForm({ mode: 'edit', role })
-    setName(role.name)
-    setFieldError('')
+    setForm({ mode: "edit", role });
+    setName(role.name);
+    setFieldError("");
   }
 
   function openDelete(role: Role) {
-    setDeleting(role)
-    setDeleteError('')
+    setDeleting(role);
+    setDeleteError("");
   }
 
   function closeDelete() {
     if (!submitting) {
-      setDeleting(undefined)
-      setDeleteError('')
+      setDeleting(undefined);
+      setDeleteError("");
     }
   }
 
   function closeForm() {
     if (!submitting) {
-      setForm(undefined)
-      setFieldError('')
+      setForm(undefined);
+      setFieldError("");
     }
   }
 
   async function submitForm() {
     if (!form) {
-      return
+      return;
     }
 
-    setSubmitting(true)
-    setFieldError('')
+    setSubmitting(true);
+    setFieldError("");
     try {
-      if (form.mode === 'create') {
-        await createRole(gateway, name)
-        setNotification('Role created successfully')
+      if (form.mode === "create") {
+        await createRole(gateway, name);
+        setNotification("Role created successfully");
       } else if (form.role) {
-        await updateRole(gateway, form.role.id, name)
-        setNotification('Role updated successfully')
+        await updateRole(gateway, form.role.id, name);
+        setNotification("Role updated successfully");
       }
-      setForm(undefined)
-      await load()
+      setForm(undefined);
+      await load();
     } catch (error) {
       setFieldError(
         errorMessage(
           error,
-          form.mode === 'create'
-            ? 'Unable to create role'
-            : 'Unable to update role',
+          form.mode === "create"
+            ? "Unable to create role"
+            : "Unable to update role",
         ),
-      )
+      );
     } finally {
-      setSubmitting(false)
+      setSubmitting(false);
     }
   }
 
   async function confirmDelete() {
     if (!deleting) {
-      return
+      return;
     }
 
-    setSubmitting(true)
-    setDeleteError('')
+    setSubmitting(true);
+    setDeleteError("");
     try {
-      await deleteRole(gateway, deleting.id)
-      setNotification('Role deleted successfully')
-      setDeleting(undefined)
-      await load()
+      await deleteRole(gateway, deleting.id);
+      setNotification("Role deleted successfully");
+      setDeleting(undefined);
+      await load();
     } catch (error) {
       setDeleteError(
         errorMessage(
           error,
-          'Unable to delete this role. Check your connection and try again.',
+          "Unable to delete this role. Check your connection and try again.",
         ),
-      )
+      );
     } finally {
-      setSubmitting(false)
+      setSubmitting(false);
     }
   }
 
@@ -173,34 +173,34 @@ export function useRoleManagement(gateway: RolesGateway, query: PageQuery) {
     submitForm,
     confirmDelete,
     retry: load,
-  }
+  };
 }
 
 function errorMessage(error: unknown, fallback: string): string {
   if (error instanceof RoleNameError) {
-    return error.message
+    return error.message;
   }
   const code =
-    typeof error === 'object' &&
+    typeof error === "object" &&
     error !== null &&
-    'code' in error &&
-    typeof error.code === 'string'
+    "code" in error &&
+    typeof error.code === "string"
       ? error.code
-      : ''
+      : "";
   switch (code) {
-    case 'ROLE_NAME_REQUIRED':
-      return 'Role name is required'
-    case 'ROLE_NAME_TOO_LONG':
-      return 'Role name must not exceed 100 characters'
-    case 'ROLE_NAME_INVALID':
-      return 'Role name contains unsupported characters'
-    case 'ROLE_NAME_ALREADY_EXISTS':
-      return 'Role name already exists'
-    case 'ROLE_NOT_FOUND':
-      return 'This role no longer exists. Refresh the list and try again.'
-    case 'ROLE_IN_USE':
-      return 'Role is assigned to one or more members and cannot be deleted'
+    case "ROLE_NAME_REQUIRED":
+      return "Role name is required";
+    case "ROLE_NAME_TOO_LONG":
+      return "Role name must not exceed 100 characters";
+    case "ROLE_NAME_INVALID":
+      return "Role name contains unsupported characters";
+    case "ROLE_NAME_ALREADY_EXISTS":
+      return "Role name already exists";
+    case "ROLE_NOT_FOUND":
+      return "This role no longer exists. Refresh the list and try again.";
+    case "ROLE_IN_USE":
+      return "Role is assigned to one or more members and cannot be deleted";
     default:
-      return fallback
+      return fallback;
   }
 }

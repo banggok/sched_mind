@@ -185,12 +185,19 @@ Buffer `100%` tidak diperbolehkan karena menghasilkan Commitment Capacity `0` da
 
 ## Delete Rules
 
-Team Member tidak dapat dihapus jika masih direferensikan oleh:
+Team Member tidak dapat dihapus jika menjadi assignee task aktif. Task aktif
+adalah task yang WBS level `0` atau Project root-nya belum berstatus `Closed`.
+Jika minimal satu active-assignment projection tersedia, penghapusan ditolak
+untuk menjaga pekerjaan aktif.
 
-* Executable Leaf sebagai assignee.
-* Capacity Override.
+Jika tidak memiliki task aktif, Team Member dan seluruh Capacity Override
+miliknya di-soft-delete dalam satu transaksi. Assignment dan persisted timeline
+untuk Project yang sudah `Closed` tetap dipertahankan. Nama Team Member yang
+soft-deleted boleh digunakan kembali. Restore belum termasuk scope.
 
-Penghapusan ditolak untuk menjaga referential integrity.
+Sampai Project Management menyediakan WBS root dan status lifecycle,
+`executable_leaves` merupakan provisional active-assignment projection.
+Keputusan ini wajib direview ketika Project Management diimplementasikan.
 
 ---
 
@@ -476,6 +483,9 @@ User story ini tidak mewajibkan scheduler langsung dijalankan otomatis setelah u
 **When** dialog konfirmasi ditampilkan
 **Then** Team Member belum dihapus
 **And** dialog menampilkan nama Team Member
+**And** dialog menjelaskan bahwa Member dan Capacity Override dikeluarkan dari
+active planning, historical records dipertahankan, dan hanya task aktif yang
+dapat menghalangi penghapusan
 **And** tersedia aksi Cancel dan Delete.
 
 ---
@@ -492,9 +502,9 @@ User story ini tidak mewajibkan scheduler langsung dijalankan otomatis setelah u
 
 ## AC-19 — Menghapus Team Member yang tidak digunakan
 
-**Given** Team Member tidak direferensikan oleh Executable Leaf atau Capacity Override
+**Given** Team Member tidak memiliki task aktif
 **When** Engineering Lead mengonfirmasi penghapusan
-**Then** sistem menghapus Team Member
+**Then** sistem melakukan soft delete pada Team Member dan seluruh Capacity Override miliknya dalam satu transaksi
 **And** Team Member tidak lagi muncul dalam daftar
 **And** sistem menampilkan notifikasi keberhasilan.
 
@@ -502,7 +512,7 @@ User story ini tidak mewajibkan scheduler langsung dijalankan otomatis setelah u
 
 ## AC-20 — Menolak penghapusan Team Member yang menjadi assignee
 
-**Given** Team Member direferensikan oleh minimal satu Executable Leaf
+**Given** Team Member menjadi assignee task yang Project/WBS level `0` belum `Closed`
 **When** Engineering Lead mencoba menghapus Team Member
 **Then** sistem menolak penghapusan
 **And** mengembalikan conflict response
@@ -516,17 +526,13 @@ Team member is assigned to one or more tasks and cannot be deleted
 
 ---
 
-## AC-21 — Menolak penghapusan Team Member yang memiliki Capacity Override
+## AC-21 — Cascade soft delete Capacity Override
 
-**Given** Team Member direferensikan oleh minimal satu Capacity Override
-**When** Engineering Lead mencoba menghapus Team Member
-**Then** sistem menolak penghapusan
-**And** mengembalikan conflict response
-**And** menampilkan pesan:
-
-```text
-Team member has capacity overrides and cannot be deleted
-```
+**Given** Team Member tidak memiliki task aktif dan memiliki Capacity Override
+**When** Engineering Lead mengonfirmasi penghapusan
+**Then** sistem menerima penghapusan
+**And** Team Member serta seluruh Capacity Override miliknya di-soft-delete secara atomik
+**And** data tersebut tidak tersedia pada operational list, detail, selector, atau scheduling input baru.
 
 ---
 
@@ -741,8 +747,7 @@ Status kegagalan:
 | Condition                              |        Status |
 | -------------------------------------- | ------------: |
 | Team Member tidak ditemukan            | 404 Not Found |
-| Team Member masih menjadi assignee     |  409 Conflict |
-| Team Member memiliki Capacity Override |  409 Conflict |
+| Team Member memiliki task aktif        |  409 Conflict |
 
 ---
 
@@ -771,7 +776,6 @@ Error code minimum:
 * `BUFFER_OUT_OF_RANGE`
 * `TEAM_MEMBER_NOT_FOUND`
 * `TEAM_MEMBER_ASSIGNED_TO_TASK`
-* `TEAM_MEMBER_HAS_CAPACITY_OVERRIDE`
 
 ---
 
@@ -1266,7 +1270,7 @@ MROUND(6.75, 0.5) = 7
 
 ### Precondition
 
-Team Member tidak menjadi assignee dan tidak memiliki Capacity Override.
+Team Member tidak memiliki task aktif dan boleh memiliki Capacity Override.
 
 ### Steps
 
@@ -1276,7 +1280,7 @@ Team Member tidak menjadi assignee dan tidak memiliki Capacity Override.
 ### Expected Result
 
 1. API mengembalikan `204`.
-2. Team Member dihapus.
+2. Team Member dan seluruh Capacity Override miliknya di-soft-delete.
 3. Team Member tidak muncul pada daftar.
 
 ---
@@ -1299,7 +1303,7 @@ Team Member tidak menjadi assignee dan tidak memiliki Capacity Override.
 
 ### Precondition
 
-Harry menjadi assignee Task A.
+Harry menjadi assignee Task A pada Project yang belum `Closed`.
 
 ### Steps
 
@@ -1313,7 +1317,7 @@ Harry menjadi assignee Task A.
 
 ---
 
-## TC-33 — Menolak delete Team Member yang memiliki Capacity Override
+## TC-33 — Cascade soft delete Capacity Override
 
 ### Precondition
 
@@ -1325,9 +1329,9 @@ Harry memiliki minimal satu Capacity Override.
 
 ### Expected Result
 
-1. API mengembalikan `409`.
-2. Error code `TEAM_MEMBER_HAS_CAPACITY_OVERRIDE`.
-3. Tidak ada data terhapus.
+1. API mengembalikan `204`.
+2. Harry dan seluruh Capacity Override miliknya tidak tersedia pada operational query.
+3. Unscoped historical persistence mempertahankan Member dan Override beserta deletion timestamp.
 
 ---
 
@@ -1469,7 +1473,7 @@ Wajib menguji:
 * Reject Role not found.
 * Reject Team Member not found.
 * Reject delete saat menjadi assignee.
-* Reject delete saat memiliki Capacity Override.
+* Cascade soft delete Capacity Override saat Member dihapus.
 * Transaction rollback.
 * Nilai capacity terbaru tersedia sebagai scheduling input.
 
@@ -1485,7 +1489,10 @@ Wajib menguji:
 * Foreign key Role.
 * Foreign key Executable Leaf assignee.
 * Foreign key Capacity Override.
-* Delete restriction.
+* Active task delete restriction.
+* Transactional soft delete Member dan Capacity Override.
+* Active query mengecualikan soft-deleted records.
+* Nama Member dapat digunakan kembali setelah soft delete.
 * Decimal capacity persistence.
 * Timestamp behavior.
 * Transaction rollback.
@@ -1554,7 +1561,7 @@ Wajib menguji:
 * Buffer validation.
 * Commitment Capacity formula.
 * Update Team Member.
-* Delete restriction.
+* Active task delete restriction dan cascade soft delete.
 * Backend validation.
 * Referential integrity.
 
@@ -1582,8 +1589,8 @@ User story dianggap selesai jika:
 5. Commitment Capacity dihitung sebagai derived value.
 6. Formula pembulatan kelipatan `0.5` memiliki satu implementasi domain yang menjadi source of truth.
 7. Backend tetap memvalidasi seluruh input.
-8. Create, list, get, update, dan delete tersedia.
-9. Referential integrity dengan Executable Leaf dan Capacity Override terjaga.
+8. Create, list, get, update, dan transactional soft delete tersedia.
+9. Referential integrity dengan active task assignment dan Capacity Override terjaga.
 10. Business rule tidak diletakkan pada HTTP handler atau database adapter.
 11. Application layer tidak bergantung pada framework transport.
 12. Error code konsisten dan dapat dipakai frontend.
