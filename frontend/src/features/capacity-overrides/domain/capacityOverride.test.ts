@@ -7,6 +7,7 @@ describe("capacity override validation", () => {
   it.each([0, 0.5, 24])("accepts %s hours", (capacity) =>
     expect(
       validateCapacityOverride({
+        description: "Training",
         startDate: "2026-07-03",
         endDate: "2026-07-03",
         capacity,
@@ -19,6 +20,7 @@ describe("capacity override validation", () => {
   ])("rejects invalid dates", (_value, code) => {
     expect(() =>
       validateCapacityOverride({
+        description: "Training",
         startDate: _value === "2026-07-04" ? "2026-07-04" : _value,
         endDate: "2026-07-03",
         capacity: 4,
@@ -32,6 +34,7 @@ describe("capacity override validation", () => {
   ])("rejects %s", (capacity, code) => {
     try {
       validateCapacityOverride({
+        description: "Training",
         startDate: "2026-07-03",
         endDate: "2026-07-03",
         capacity: capacity as number,
@@ -40,5 +43,28 @@ describe("capacity override validation", () => {
       expect(error).toBeInstanceOf(CapacityOverrideValidationError);
       expect((error as CapacityOverrideValidationError).code).toBe(code);
     }
+  });
+
+  it("trims and validates description", () => {
+    expect(
+      validateCapacityOverride({
+        description: "  Training  ",
+        startDate: "2026-07-03",
+        endDate: "2026-07-03",
+        capacity: 4,
+      }).description,
+    ).toBe("Training");
+    expect(() =>
+      validateCapacityOverride({
+        description: " ",
+        startDate: "2026-07-03",
+        endDate: "2026-07-03",
+        capacity: 4,
+      }),
+    ).toThrowError(
+      expect.objectContaining({
+        code: "CAPACITY_OVERRIDE_DESCRIPTION_REQUIRED",
+      }),
+    );
   });
 });

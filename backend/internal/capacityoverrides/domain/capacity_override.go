@@ -3,7 +3,9 @@ package domain
 import (
 	"math"
 	"strconv"
+	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 type Capacity struct{ halfHours uint8 }
@@ -29,12 +31,17 @@ func (capacity Capacity) Decimal() string {
 
 type CapacityOverride struct {
 	ID, TeamMemberID     string
+	Description          string
 	StartDate, EndDate   time.Time
 	Capacity             Capacity
 	CreatedAt, UpdatedAt time.Time
 }
 
-func New(id, teamMemberID string, startDate, endDate time.Time, capacity Capacity, now time.Time) (*CapacityOverride, error) {
+func New(id, teamMemberID, description string, startDate, endDate time.Time, capacity Capacity, now time.Time) (*CapacityOverride, error) {
+	description, err := normalizeDescription(description)
+	if err != nil {
+		return nil, err
+	}
 	if startDate.IsZero() {
 		return nil, ErrStartDateRequired
 	}
@@ -44,11 +51,11 @@ func New(id, teamMemberID string, startDate, endDate time.Time, capacity Capacit
 	if endDate.Before(startDate) {
 		return nil, ErrInvalidDateRange
 	}
-	return &CapacityOverride{ID: id, TeamMemberID: teamMemberID, StartDate: startDate, EndDate: endDate, Capacity: capacity, CreatedAt: now, UpdatedAt: now}, nil
+	return &CapacityOverride{ID: id, TeamMemberID: teamMemberID, Description: description, StartDate: startDate, EndDate: endDate, Capacity: capacity, CreatedAt: now, UpdatedAt: now}, nil
 }
 
-func Rehydrate(id, teamMemberID string, startDate, endDate time.Time, capacity Capacity, createdAt, updatedAt time.Time) (*CapacityOverride, error) {
-	override, err := New(id, teamMemberID, startDate, endDate, capacity, createdAt)
+func Rehydrate(id, teamMemberID, description string, startDate, endDate time.Time, capacity Capacity, createdAt, updatedAt time.Time) (*CapacityOverride, error) {
+	override, err := New(id, teamMemberID, description, startDate, endDate, capacity, createdAt)
 	if err != nil {
 		return nil, err
 	}
@@ -56,7 +63,11 @@ func Rehydrate(id, teamMemberID string, startDate, endDate time.Time, capacity C
 	return override, nil
 }
 
-func (override *CapacityOverride) Update(startDate, endDate time.Time, capacity Capacity, now time.Time) error {
+func (override *CapacityOverride) Update(description string, startDate, endDate time.Time, capacity Capacity, now time.Time) error {
+	description, err := normalizeDescription(description)
+	if err != nil {
+		return err
+	}
 	if startDate.IsZero() {
 		return ErrStartDateRequired
 	}
@@ -66,8 +77,19 @@ func (override *CapacityOverride) Update(startDate, endDate time.Time, capacity 
 	if endDate.Before(startDate) {
 		return ErrInvalidDateRange
 	}
-	override.StartDate, override.EndDate, override.Capacity, override.UpdatedAt = startDate, endDate, capacity, now
+	override.Description, override.StartDate, override.EndDate, override.Capacity, override.UpdatedAt = description, startDate, endDate, capacity, now
 	return nil
+}
+
+func normalizeDescription(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", ErrDescriptionRequired
+	}
+	if utf8.RuneCountInString(value) > 100 {
+		return "", ErrDescriptionTooLong
+	}
+	return value, nil
 }
 
 func Overlaps(leftStart, leftEnd, rightStart, rightEnd time.Time) bool {

@@ -82,6 +82,17 @@ Capacity Override is a nested Member resource rather than a top-level resource:
 /api/team-members/{teamMemberId}/capacity-overrides
 ```
 
+Capacity Override stores a required, trimmed `description` (maximum 100
+characters) as the user-managed reason for the temporary capacity change. The
+frontend presents it as the list-item title, with date range and daily capacity
+as secondary information.
+
+The shared calendar popover chooses an above placement only when the complete
+calendar fits there. When neither side has sufficient viewport space, it opens
+below with a constrained, scrollable body so its header is not clipped.
+The selected placement remains stable for the complete open interaction and is
+recalculated only on the next open.
+
 Detailed contracts remain authoritative in the applicable user story and root
 developer README.
 

@@ -37,7 +37,12 @@ export function CapacityOverridesPanel({
     [effectiveDate, setEffectiveDate] = useState(""),
     [listError, setListError] = useState(""),
     [editing, setEditing] = useState<CapacityOverride | null | undefined>(),
-    [form, setForm] = useState({ startDate: "", endDate: "", capacity: "" }),
+    [form, setForm] = useState({
+      description: "",
+      startDate: "",
+      endDate: "",
+      capacity: "",
+    }),
     [errors, setErrors] = useState<Record<string, string>>({}),
     [operationError, setOperationError] = useState(""),
     [saving, setSaving] = useState(false),
@@ -84,7 +89,7 @@ export function CapacityOverridesPanel({
     setSuccess("");
     if (!value) {
       setEditing(null);
-      setForm({ startDate: "", endDate: "", capacity: "" });
+      setForm({ description: "", startDate: "", endDate: "", capacity: "" });
       return;
     }
     setOpeningID(value.id);
@@ -92,6 +97,7 @@ export function CapacityOverridesPanel({
       const detail = await gateway.get(member.id, value.id);
       setEditing(detail);
       setForm({
+        description: detail.description,
         startDate: detail.startDate,
         endDate: detail.endDate,
         capacity: String(detail.capacity),
@@ -112,6 +118,7 @@ export function CapacityOverridesPanel({
     const normalizedCapacity = roundToHalfDraft(form.capacity);
     setForm((current) => ({ ...current, capacity: normalizedCapacity }));
     const input = {
+      description: form.description,
       startDate: form.startDate,
       endDate: form.endDate,
       capacity: parseDecimalDraft(normalizedCapacity),
@@ -289,12 +296,10 @@ export function CapacityOverridesPanel({
                     className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:justify-between"
                   >
                     <div>
-                      <strong>
-                        {formatDate(value.startDate)} —{" "}
-                        {formatDate(value.endDate)}
-                      </strong>
+                      <strong>{value.description}</strong>
                       <p className="text-sm text-muted">
-                        {value.capacity} hours/day
+                        {formatDate(value.startDate)} —{" "}
+                        {formatDate(value.endDate)} · {value.capacity} hours/day
                       </p>
                     </div>
                     <div className="flex gap-2">
@@ -339,6 +344,18 @@ export function CapacityOverridesPanel({
             {editing ? "Edit override" : "Add override"}
           </h3>
           <div className="mt-4 grid gap-4 sm:grid-cols-2">
+            <Field label="Description" error={errors.description}>
+              <input
+                required
+                maxLength={100}
+                className="ui-input mt-2"
+                value={form.description}
+                onChange={(event) =>
+                  setForm({ ...form, description: event.target.value })
+                }
+              />
+            </Field>
+            <div className="hidden sm:block" aria-hidden="true" />
             <DateRangePicker
               startDate={form.startDate}
               endDate={form.endDate}
@@ -457,8 +474,8 @@ function DeleteOverrideDialog({
         Delete capacity override?
       </h3>
       <p className="mt-3 text-muted">
-        Delete {formatDate(value.startDate)} — {formatDate(value.endDate)} at{" "}
-        {value.capacity} hours/day permanently.
+        Delete {value.description}, {formatDate(value.startDate)} —{" "}
+        {formatDate(value.endDate)} at {value.capacity} hours/day permanently.
       </p>
       <div className="form-actions">
         <Button data-autofocus disabled={saving} onClick={onCancel}>

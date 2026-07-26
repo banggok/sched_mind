@@ -56,13 +56,13 @@ func TestServiceCreateUpdateDelete(t *testing.T) {
 	now := time.Date(2026, 7, 26, 0, 0, 0, 0, time.UTC)
 	service := NewServiceWithDependencies(repo, func() time.Time { return now }, func() (string, error) { return "override", nil })
 	capacity := 4.0
-	value, err := service.Create(context.Background(), "member", WriteInput{StartDate: now, EndDate: now, Capacity: &capacity})
+	value, err := service.Create(context.Background(), "member", WriteInput{Description: "Training", StartDate: now, EndDate: now, Capacity: &capacity})
 	if err != nil || value == nil {
 		t.Fatalf("create: %v", err)
 	}
 	zero := 0.0
-	value, err = service.Update(context.Background(), "member", "override", WriteInput{StartDate: now, EndDate: now, Capacity: &zero})
-	if err != nil || value.Capacity.Hours() != 0 {
+	value, err = service.Update(context.Background(), "member", "override", WriteInput{Description: "Support", StartDate: now, EndDate: now, Capacity: &zero})
+	if err != nil || value.Capacity.Hours() != 0 || value.Description != "Support" {
 		t.Fatalf("update: %v", err)
 	}
 	if err := service.Delete(context.Background(), "member", "override"); err != nil {

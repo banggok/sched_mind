@@ -45,7 +45,7 @@ Engineering Lead dapat:
 1. Melihat daftar Capacity Override milik satu Team Member.
 2. Membuka detail Capacity Override.
 3. Menambahkan Capacity Override.
-4. Mengubah Start Date, End Date, dan Capacity.
+4. Mengubah Description, Start Date, End Date, dan Capacity.
 5. Menghapus Capacity Override secara permanen.
 6. Berpindah halaman pada daftar Capacity Override.
 
@@ -77,6 +77,7 @@ User story ini tidak mencakup:
 | ----------------- | --------------------------- | -------: | ------ | ------------------------------------------------- |
 | ID                | System-generated identifier |       Ya | System | Dibuat otomatis dan tidak dapat diubah            |
 | Team Member ID    | Identifier                  |       Ya | Context | Pemilik Capacity Override dan tidak dapat diubah |
+| Description       | String                      |       Ya | User   | Alasan override, trimmed, maksimum 100 karakter |
 | Start Date        | Date                        |       Ya | User   | Date-only dan inklusif                            |
 | End Date          | Date                        |       Ya | User   | Date-only, inklusif, dan tidak sebelum Start Date|
 | Capacity          | Decimal hours               |       Ya | User   | `0` sampai `24`, dalam increment `0.5` jam       |
@@ -89,6 +90,16 @@ field yang harus dipilih pada form. Nilainya berasal dari konteks Members.
 ---
 
 # Business Rules
+
+## Description Rules
+
+* Description wajib diisi dan menjelaskan alasan kapasitas diubah, misalnya
+  cuti, training, atau support.
+* Leading dan trailing whitespace di-trim sebelum persistence.
+* Description tidak boleh kosong atau hanya whitespace setelah trim.
+* Panjang maksimum adalah `100` karakter setelah trim, mengikuti konvensi
+  master-data repository.
+* Internal casing, punctuation, dan wording pengguna dipertahankan.
 
 ## Date Rules
 
@@ -113,6 +124,12 @@ field yang harus dipilih pada form. Nilainya berasal dari konteks Members.
   tanggal yang sama sehingga range berlangsung satu hari.
 * Calendar ditampilkan di bawah field ketika ruang viewport mencukupi dan
   otomatis berpindah ke atas ketika posisi bawah akan terpotong.
+* Calendar hanya berpindah ke atas jika seluruh popup muat di ruang atas. Jika
+  ruang atas dan bawah sama-sama tidak cukup, calendar ditampilkan ke bawah
+  dengan content yang dapat di-scroll agar bagian atas popup tidak terpotong.
+* Keputusan placement dan scroll dikunci selama calendar masih terbuka agar
+  popup tidak berpindah saat user melakukan scroll atau memilih tanggal.
+  Placement dihitung ulang setelah calendar ditutup dan dibuka kembali.
 * Posisi calendar dihitung ulang ketika viewport atau posisi scroll berubah.
 
 ## Capacity Rules
@@ -245,6 +262,8 @@ oleh Scheduling Engine pada eksekusi berikutnya.
 * Data yang masih berguna tetap terlihat selama background refresh jika aman.
 * List diurutkan berdasarkan Start Date secara ascending, kemudian End Date
   secara ascending, kemudian ID secara ascending.
+* Setiap list item menampilkan Description sebagai title.
+* Date range dan Capacity ditampilkan sebagai subtitle.
 
 ## Effective Date Rules
 
@@ -282,7 +301,8 @@ oleh Scheduling Engine pada eksekusi berikutnya.
 **Given** Team Member memiliki Capacity Override
 **When** list berhasil dimuat
 **Then** hanya Capacity Override milik Team Member tersebut yang ditampilkan
-**And** setiap item menampilkan Start Date, End Date, dan Capacity dalam jam
+**And** setiap item menampilkan Description sebagai title
+**And** Start Date, End Date, dan Capacity dalam jam sebagai subtitle
 **And** list diurutkan berdasarkan Start Date ascending, lalu End Date ascending
 **And** pagination menampilkan page, visible range, dan total.
 
@@ -313,7 +333,7 @@ oleh Scheduling Engine pada eksekusi berikutnya.
 ## AC-7 — Membuat Capacity Override valid
 
 **Given** Team Member tersedia
-**When** Engineering Lead menyimpan Start Date, End Date, dan Capacity yang valid
+**When** Engineering Lead menyimpan Description, Start Date, End Date, dan Capacity yang valid
 **Then** sistem membuat Capacity Override untuk Team Member dari konteks
 **And** list yang terlihat diperbarui tanpa hard refresh
 **And** sistem menampilkan konfirmasi keberhasilan
@@ -428,7 +448,7 @@ oleh Scheduling Engine pada eksekusi berikutnya.
 ## AC-20 — Mengubah Capacity Override
 
 **Given** Capacity Override tersedia untuk Team Member
-**When** Start Date, End Date, atau Capacity diubah menggunakan nilai valid
+**When** Description, Start Date, End Date, atau Capacity diubah menggunakan nilai valid
 **Then** sistem menyimpan perubahan
 **And** ID dan Team Member ID tetap sama
 **And** list diperbarui tanpa hard refresh
@@ -675,6 +695,18 @@ tidak ditampilkan dan tidak dapat dioperasikan
 **Then** form ditutup
 **And** list ditampilkan kembali dengan filter dan pagination state sebelumnya.
 
+## AC-48 — Description wajib dan dinormalisasi
+
+**Given** form Add atau Edit dibuka
+**When** Description kosong, hanya whitespace, atau lebih dari `100` karakter
+setelah trim
+**Then** penyimpanan ditolak dengan field error yang sesuai
+**And** tidak ada data yang dibuat atau diubah.
+
+**When** Description valid memiliki leading atau trailing whitespace
+**Then** whitespace tersebut di-trim sebelum persistence
+**And** internal casing, punctuation, serta wording dipertahankan.
+
 ---
 
 # API Contract
@@ -695,6 +727,7 @@ GET /api/team-members/{teamMemberId}/capacity-overrides?effectiveDate=2026-07-27
     {
       "id": "capacity-override-id",
       "teamMemberId": "member-id",
+      "description": "Training",
       "startDate": "2026-07-03",
       "endDate": "2026-07-04",
       "capacity": 4,
@@ -731,6 +764,7 @@ GET /api/team-members/{teamMemberId}/capacity-overrides/{capacityOverrideId}
   "data": {
     "id": "capacity-override-id",
     "teamMemberId": "member-id",
+    "description": "Training",
     "startDate": "2026-07-03",
     "endDate": "2026-07-04",
     "capacity": 4,
@@ -751,6 +785,7 @@ Content-Type: application/json
 
 ```json
 {
+  "description": "Training",
   "startDate": "2026-07-03",
   "endDate": "2026-07-04",
   "capacity": 4
@@ -770,6 +805,7 @@ Content-Type: application/json
 
 ```json
 {
+  "description": "Production support",
   "startDate": "2026-07-05",
   "endDate": "2026-07-06",
   "capacity": 6.5
@@ -826,6 +862,8 @@ Seluruh API error menggunakan format konsisten:
 | `CAPACITY_OVERRIDE_CAPACITY_NEGATIVE`           | `capacity`  | Capacity lebih kecil dari `0`          |
 | `CAPACITY_OVERRIDE_CAPACITY_EXCEEDS_LIMIT`      | `capacity`  | Capacity lebih besar dari `24`         |
 | `CAPACITY_OVERRIDE_CAPACITY_INVALID_INCREMENT`  | `capacity`  | Capacity bukan kelipatan `0.5`         |
+| `CAPACITY_OVERRIDE_DESCRIPTION_REQUIRED`        | `description` | Description kosong setelah trim       |
+| `CAPACITY_OVERRIDE_DESCRIPTION_TOO_LONG`        | `description` | Description melebihi 100 karakter     |
 | `CAPACITY_OVERRIDE_OVERLAPS`                    | —           | Periode overlap untuk Team Member sama |
 | `CAPACITY_OVERRIDE_NOT_FOUND`                   | —           | Capacity Override tidak ditemukan      |
 | `TEAM_MEMBER_NOT_FOUND`                         | —           | Parent Team Member tidak ditemukan     |
@@ -1233,6 +1271,15 @@ accessible serta usable.
 **Expected:** Selama Add atau Edit, hanya form workflow yang dapat dioperasikan;
 Cancel mengembalikan list dengan filter dan pagination state sebelumnya.
 
+## TC-52 — Description validation dan presentation
+
+1. Uji Description kosong, whitespace-only, 100 karakter, dan 101 karakter.
+2. Simpan `  Training  ` dan buka list serta Edit.
+
+**Expected:** Nilai kosong/whitespace dan 101 karakter ditolak; 100 karakter
+diterima; outer whitespace di-trim; list menampilkan `Training` sebagai title
+serta date range dan Capacity sebagai subtitle; Edit memuat Description terbaru.
+
 ## Acceptance Criteria Traceability
 
 | Acceptance Criteria | Corresponding Test Case(s) |
@@ -1257,6 +1304,7 @@ Cancel mengembalikan list dengan filter dan pagination state sebelumnya.
 | AC-45               | TC-49                      |
 | AC-46               | TC-50                      |
 | AC-47               | TC-51                      |
+| AC-48               | TC-52                      |
 
 TC-38 memverifikasi state consistency lintas create, update, dan delete yang
 diwajibkan oleh AC-7, AC-20, serta AC-29.
@@ -1270,6 +1318,7 @@ diwajibkan oleh AC-7, AC-20, serta AC-29.
 Wajib menguji:
 
 * Required Start Date dan End Date.
+* Required, trim, dan batas panjang Description `100` karakter.
 * Validasi date-only `YYYY-MM-DD`, termasuk tanggal kalender yang tidak valid.
 * Inclusive date range dan same-day period.
 * End Date sebelum Start Date.
@@ -1327,6 +1376,7 @@ Wajib menguji:
 
 * Seluruh nested HTTP method dan path.
 * Request dan response field mapping.
+* Required, trimmed, dan maximum-length Description.
 * Date-only serialization.
 * Invalid date-only value menghasilkan `CAPACITY_OVERRIDE_INVALID_DATE` dan field
   yang tepat.
@@ -1348,6 +1398,7 @@ Wajib menguji:
 * Capacity Override diakses dari Members tanpa standalone sidebar menu.
 * Initial skeleton atau loader lokal.
 * Scoped list success.
+* Description sebagai list title serta Date dan Capacity sebagai subtitle.
 * Empty state dan Add action.
 * List error dan Retry.
 * Pagination default, visible range, serta previous/next navigation.
@@ -1360,6 +1411,7 @@ Wajib menguji:
 * Pilihan kedua yang sama menghasilkan range satu hari.
 * Calendar berpindah ke atas ketika ruang viewport di bawah field tidak cukup.
 * Seluruh field validation dan boundary Capacity.
+* Description required, trim, maximum length, dan draft preservation.
 * Capacity draft tidak berubah saat diketik, dibulatkan ke increment `0.5` saat
   blur, dan dinormalisasi ulang saat submit.
 * Capacity input menolak karakter selain digit dan satu titik desimal tanpa
@@ -1433,3 +1485,7 @@ User story dianggap selesai jika:
     menginvalidasi seluruh filtered dan unfiltered list cache.
 25. Unfiltered list tetap backward compatible dan filtered no-results tidak
     menggantikan normal empty state.
+26. Description tersimpan sebagai required `VARCHAR(100)`, divalidasi pada
+    domain/backend boundary, dan dimapping melalui API serta frontend feature.
+27. Existing Capacity Override mendapat migration fallback yang aman sebelum
+    constraint `NOT NULL` diterapkan.

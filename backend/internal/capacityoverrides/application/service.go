@@ -12,6 +12,7 @@ import (
 )
 
 type WriteInput struct {
+	Description        string
 	StartDate, EndDate time.Time
 	Capacity           *float64
 }
@@ -54,7 +55,7 @@ func (s *Service) Create(ctx context.Context, memberID string, input WriteInput)
 	if err != nil {
 		return nil, fmt.Errorf("create capacity override ID: %w", err)
 	}
-	override, err := domain.New(id, memberID, input.StartDate, input.EndDate, capacity, s.now())
+	override, err := domain.New(id, memberID, input.Description, input.StartDate, input.EndDate, capacity, s.now())
 	if err != nil {
 		return nil, err
 	}
@@ -78,7 +79,7 @@ func (s *Service) Update(ctx context.Context, memberID, id string, input WriteIn
 	if override == nil {
 		return nil, errors.New("update capacity override: repository returned nil without error")
 	}
-	if err := override.Update(input.StartDate, input.EndDate, capacity, s.now()); err != nil {
+	if err := override.Update(input.Description, input.StartDate, input.EndDate, capacity, s.now()); err != nil {
 		return nil, err
 	}
 	if err := s.repository.Update(ctx, *override); err != nil {

@@ -88,7 +88,7 @@ func (r *Repository) Update(ctx context.Context, value domain.CapacityOverride) 
 		if err := ensureNoOverlap(tx, value); err != nil {
 			return err
 		}
-		result := tx.Model(&capacityOverrideModel{}).Where("id = ? AND team_member_id = ?", value.ID, value.TeamMemberID).Updates(map[string]any{"start_date": value.StartDate, "end_date": value.EndDate, "capacity": value.Capacity.Decimal(), "updated_at": value.UpdatedAt})
+		result := tx.Model(&capacityOverrideModel{}).Where("id = ? AND team_member_id = ?", value.ID, value.TeamMemberID).Updates(map[string]any{"description": value.Description, "start_date": value.StartDate, "end_date": value.EndDate, "capacity": value.Capacity.Decimal(), "updated_at": value.UpdatedAt})
 		if result.Error != nil {
 			return fmt.Errorf("update capacity override model: %w", result.Error)
 		}
@@ -138,7 +138,7 @@ func ensureNoOverlap(tx *gorm.DB, value domain.CapacityOverride) error {
 	return nil
 }
 func fromDomain(value domain.CapacityOverride) *capacityOverrideModel {
-	return &capacityOverrideModel{ID: value.ID, TeamMemberID: value.TeamMemberID, StartDate: value.StartDate, EndDate: value.EndDate, Capacity: value.Capacity.Decimal(), CreatedAt: value.CreatedAt, UpdatedAt: value.UpdatedAt}
+	return &capacityOverrideModel{ID: value.ID, TeamMemberID: value.TeamMemberID, Description: value.Description, StartDate: value.StartDate, EndDate: value.EndDate, Capacity: value.Capacity.Decimal(), CreatedAt: value.CreatedAt, UpdatedAt: value.UpdatedAt}
 }
 func toDomain(model capacityOverrideModel) (*domain.CapacityOverride, error) {
 	hours, err := strconv.ParseFloat(model.Capacity, 64)
@@ -149,7 +149,7 @@ func toDomain(model capacityOverrideModel) (*domain.CapacityOverride, error) {
 	if err != nil {
 		return nil, fmt.Errorf("rehydrate capacity override capacity: %w", err)
 	}
-	value, err := domain.Rehydrate(model.ID, model.TeamMemberID, model.StartDate, model.EndDate, capacity, model.CreatedAt, model.UpdatedAt)
+	value, err := domain.Rehydrate(model.ID, model.TeamMemberID, model.Description, model.StartDate, model.EndDate, capacity, model.CreatedAt, model.UpdatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("rehydrate capacity override: %w", err)
 	}

@@ -28,7 +28,7 @@ func (s *stub) Get(context.Context, string, string) (*domain.CapacityOverride, e
 func (s *stub) Create(_ context.Context, member string, input application.WriteInput) (*domain.CapacityOverride, error) {
 	s.created = input
 	capacity, _ := domain.NewCapacity(*input.Capacity)
-	return domain.New("id", member, input.StartDate, input.EndDate, capacity, time.Now())
+	return domain.New("id", member, input.Description, input.StartDate, input.EndDate, capacity, time.Now())
 }
 func (s *stub) Update(context.Context, string, string, application.WriteInput) (*domain.CapacityOverride, error) {
 	return nil, domain.ErrNotFound
@@ -38,13 +38,22 @@ func TestHandlerCreateAndValidation(t *testing.T) {
 	service := &stub{}
 	mux := http.NewServeMux()
 	New(service).Register(mux)
-	request := httptest.NewRequest("POST", "/api/team-members/member/capacity-overrides", strings.NewReader(`{"startDate":"2026-07-03","endDate":"2026-07-03","capacity":0}`))
+	request := httptest.NewRequest("POST", "/api/team-members/member/capacity-overrides", strings.NewReader(`{"description":"Training","startDate":"2026-07-03","endDate":"2026-07-03","capacity":0}`))
 	response := httptest.NewRecorder()
 	mux.ServeHTTP(response, request)
 	if response.Code != 201 {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 	}
-	request = httptest.NewRequest("POST", "/api/team-members/member/capacity-overrides", strings.NewReader(`{"startDate":"2026-02-30","endDate":"2026-07-03","capacity":4}`))
+	if service.created.Description != "Training" || !strings.Contains(response.Body.String(), `"description":"Training"`) {
+		t.Fatalf("created=%+v body=%s", service.created, response.Body.String())
+	}
+	request = httptest.NewRequest("POST", "/api/team-members/member/capacity-overrides", strings.NewReader(`{"description":" ","startDate":"2026-07-03","endDate":"2026-07-03","capacity":4}`))
+	response = httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+	if response.Code != 400 || !strings.Contains(response.Body.String(), "CAPACITY_OVERRIDE_DESCRIPTION_REQUIRED") {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	request = httptest.NewRequest("POST", "/api/team-members/member/capacity-overrides", strings.NewReader(`{"description":"Training","startDate":"2026-02-30","endDate":"2026-07-03","capacity":4}`))
 	response = httptest.NewRecorder()
 	mux.ServeHTTP(response, request)
 	var payload errorResponse
