@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	capacityoverrideapplication "github.com/banggok/sched_mind/backend/internal/capacityoverrides/application"
+	capacityoverridegormrepo "github.com/banggok/sched_mind/backend/internal/capacityoverrides/infrastructure/gormrepo"
 	"log"
 	"net/http"
 	"os"
@@ -116,10 +118,12 @@ func run(config *configuration) (runError error) {
 	roleService := roleapplication.NewService(roleRepository)
 	teamMemberRepository := teammembergormrepo.New(database)
 	teamMemberService := teammemberapplication.NewService(teamMemberRepository)
+	capacityOverrideRepository := capacityoverridegormrepo.New(database)
+	capacityOverrideService := capacityoverrideapplication.NewService(capacityOverrideRepository)
 
 	server := &http.Server{
 		Addr:    config.address,
-		Handler: httpapi.NewRouter(roleService, teamMemberService),
+		Handler: httpapi.NewRouter(roleService, teamMemberService, capacityOverrideService),
 	}
 
 	signalContext, stopSignals := signal.NotifyContext(

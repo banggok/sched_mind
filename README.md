@@ -62,6 +62,26 @@ docker compose stop postgres
 The API listens on `http://localhost:8080`. Its health endpoints are available
 at `GET /health` and `GET /api/health`.
 
+Capacity Override endpoints are nested under Members:
+
+```text
+GET    /api/team-members/{teamMemberId}/capacity-overrides
+GET    /api/team-members/{teamMemberId}/capacity-overrides/{capacityOverrideId}
+POST   /api/team-members/{teamMemberId}/capacity-overrides
+PUT    /api/team-members/{teamMemberId}/capacity-overrides/{capacityOverrideId}
+DELETE /api/team-members/{teamMemberId}/capacity-overrides/{capacityOverrideId}
+```
+
+The list accepts `page`, `pageSize`, and an optional date-only `effectiveDate`:
+
+```text
+GET /api/team-members/{teamMemberId}/capacity-overrides?effectiveDate=2026-07-27&page=1&pageSize=5
+```
+
+Filtering is inclusive (`startDate <= effectiveDate <= endDate`). The default
+page size is `5`; invalid Effective Date values return
+`400 INVALID_EFFECTIVE_DATE`.
+
 ## Run the frontend
 
 Install frontend dependencies once:
@@ -100,7 +120,9 @@ go test -race ./...
 
 ```sh
 cd frontend
-npm test
+npm run format:check
 npm run lint
+npm run typecheck
+npm test
 npm run build
 ```

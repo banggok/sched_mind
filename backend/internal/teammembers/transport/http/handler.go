@@ -259,10 +259,6 @@ func writeError(response http.ResponseWriter, err error) {
 		writeJSON(response, http.StatusConflict, errorResponse{
 			Code: "TEAM_MEMBER_ASSIGNED_TO_TASK", Message: domain.ErrAssignedToTask.Error(),
 		})
-	case errors.Is(err, domain.ErrHasCapacityOverride):
-		writeJSON(response, http.StatusConflict, errorResponse{
-			Code: "TEAM_MEMBER_HAS_CAPACITY_OVERRIDE", Message: domain.ErrHasCapacityOverride.Error(),
-		})
 	default:
 		writeJSON(response, http.StatusInternalServerError, errorResponse{
 			Code: "INTERNAL_ERROR", Message: "An internal error occurred",

@@ -1,6 +1,10 @@
 package gormrepo
 
-import "time"
+import (
+	"time"
+
+	"gorm.io/gorm"
+)
 
 type roleModel struct {
 	ID        string    `gorm:"type:uuid;primaryKey"`
@@ -14,9 +18,10 @@ func (roleModel) TableName() string {
 }
 
 type teamMemberModel struct {
-	ID     string    `gorm:"type:uuid;primaryKey"`
-	RoleID string    `gorm:"type:uuid;not null;index"`
-	Role   roleModel `gorm:"foreignKey:RoleID;references:ID;constraint:OnDelete:RESTRICT"`
+	ID        string         `gorm:"type:uuid;primaryKey"`
+	RoleID    string         `gorm:"type:uuid;not null;index"`
+	Role      roleModel      `gorm:"foreignKey:RoleID;references:ID;constraint:OnDelete:RESTRICT"`
+	DeletedAt gorm.DeletedAt `gorm:"index"`
 }
 
 func (teamMemberModel) TableName() string {

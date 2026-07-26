@@ -136,21 +136,7 @@ func (service *Service) Delete(ctx context.Context, id string) error {
 	if record == nil {
 		return errors.New("delete team member: repository returned nil without error")
 	}
-	assigned, err := service.repository.IsAssignedToTask(ctx, id)
-	if err != nil {
-		return fmt.Errorf("check team member task assignments: %w", err)
-	}
-	if assigned {
-		return domain.ErrAssignedToTask
-	}
-	hasOverride, err := service.repository.HasCapacityOverride(ctx, id)
-	if err != nil {
-		return fmt.Errorf("check team member capacity overrides: %w", err)
-	}
-	if hasOverride {
-		return domain.ErrHasCapacityOverride
-	}
-	if err := service.repository.Delete(ctx, id); err != nil {
+	if err := service.repository.DeleteIfNoActiveTask(ctx, id); err != nil {
 		return fmt.Errorf("delete team member: %w", err)
 	}
 	return nil

@@ -1,16 +1,21 @@
 package gormrepo
 
-import "time"
+import (
+	"time"
+
+	"gorm.io/gorm"
+)
 
 type teamMemberModel struct {
-	ID               string    `gorm:"type:uuid;primaryKey"`
-	Name             string    `gorm:"size:100;not null"`
-	RoleID           string    `gorm:"type:uuid;not null;index"`
-	Role             roleModel `gorm:"foreignKey:RoleID;references:ID"`
-	DailyCapacity    string    `gorm:"type:numeric(4,1);not null"`
-	BufferPercentage string    `gorm:"type:numeric(5,2);not null"`
-	CreatedAt        time.Time `gorm:"not null"`
-	UpdatedAt        time.Time `gorm:"not null"`
+	ID               string         `gorm:"type:uuid;primaryKey"`
+	Name             string         `gorm:"size:100;not null"`
+	RoleID           string         `gorm:"type:uuid;not null;index"`
+	Role             roleModel      `gorm:"foreignKey:RoleID;references:ID"`
+	DailyCapacity    string         `gorm:"type:numeric(4,1);not null"`
+	BufferPercentage string         `gorm:"type:numeric(5,2);not null"`
+	CreatedAt        time.Time      `gorm:"not null"`
+	UpdatedAt        time.Time      `gorm:"not null"`
+	DeletedAt        gorm.DeletedAt `gorm:"index"`
 }
 
 func (teamMemberModel) TableName() string {
@@ -36,8 +41,9 @@ func (executableLeafModel) TableName() string {
 }
 
 type capacityOverrideModel struct {
-	ID           string `gorm:"type:uuid;primaryKey"`
-	TeamMemberID string `gorm:"type:uuid;not null;index"`
+	ID           string         `gorm:"type:uuid;primaryKey"`
+	TeamMemberID string         `gorm:"type:uuid;not null;index"`
+	DeletedAt    gorm.DeletedAt `gorm:"index"`
 }
 
 func (capacityOverrideModel) TableName() string {

@@ -1,9 +1,9 @@
 export function isHealthyResponse(value: unknown): boolean {
-  if (typeof value !== 'object' || value === null) {
-    return false
+  if (typeof value !== "object" || value === null) {
+    return false;
   }
 
-  return 'status' in value && value.status === 'ok'
+  return "status" in value && value.status === "ok";
 }
 
 export function createBackendHealthChecker(
@@ -11,12 +11,12 @@ export function createBackendHealthChecker(
   fetcher: typeof fetch = fetch,
 ): (signal?: AbortSignal) => Promise<boolean> {
   return async (signal?: AbortSignal) => {
-    const response = await fetcher(`${apiBaseURL}/health`, { signal })
+    const response = await fetcher(`${apiBaseURL}/health`, { signal });
 
     if (!response.ok) {
-      return false
+      return false;
     }
 
-    return isHealthyResponse(await response.json())
-  }
+    return isHealthyResponse(await response.json());
+  };
 }

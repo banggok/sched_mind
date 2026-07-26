@@ -1,0 +1,205 @@
+# Current Project Architecture
+
+This document records technical decisions specific to this repository. It
+applies the reusable [architecture baseline](../architecture.md) and is not safe
+to copy unchanged into another project.
+
+## Repository layout
+
+```text
+backend/       Go API
+frontend/      React web application
+docs/          reusable and project-specific documentation
+scripts/       local run scripts
+user_story/    authoritative approved feature requirements
+```
+
+## Backend stack and composition
+
+The backend uses Go 1.24, GORM, PostgreSQL for local/runtime persistence, and
+SQLite only for isolated automated tests. The executable entry point is
+`backend/cmd/api/main.go`; `backend/internal/httpapi` composes feature HTTP
+transports.
+
+Business features are organized under `backend/internal/<feature>/` with
+`domain`, `application`, `transport`, and `infrastructure` packages when those
+responsibilities exist. Technical health handling intentionally has only a
+transport package because it has no business model or application workflow.
+Shared pagination types live under `internal/shared/listing`.
+
+The API performs graceful shutdown for interrupt and termination signals using
+the environment-configured timeout. It stops HTTP work before closing the owned
+database connection.
+
+## Persistence decisions
+
+- PostgreSQL 16 runs through Docker Compose for local development.
+- SQLite is limited to isolated automated-test repositories so tests do not
+  modify developer PostgreSQL data.
+- GORM APIs are required for runtime `SELECT`, `INSERT`, `UPDATE`, and `DELETE`.
+  Handwritten SQL is allowed only for version-controlled DDL migrations and
+  isolated test DDL that the ORM cannot express.
+- Runtime configuration comes from `DATABASE_URL`, `HTTP_ADDRESS`, and
+  `HTTP_SHUTDOWN_TIMEOUT`.
+- Migrations run when the API starts.
+
+Name-list queries use case-insensitive prefix search with deterministic ordering
+and backend pagination. PostgreSQL functional `LOWER(name) text_pattern_ops`
+indexes support those queries. A future MySQL adapter must provide an equivalent
+indexed path appropriate to its supported version without changing domain or
+application contracts.
+
+Every production query change is reviewed with its effective GORM scope,
+filters, ordering, pagination, locking, expected cardinality, and supporting
+index. Non-trivial PostgreSQL paths are checked with `EXPLAIN`. Indexes without
+a confirmed query are removed rather than retained speculatively.
+
+Capacity Override writes lock the parent Member row before checking overlap and
+persisting within a transaction. Parent-scoped list and inclusive effective-date
+queries use the `(team_member_id, start_date, end_date, id)` index. The filter is
+applied before count, limit, and offset.
+
+Member deletion soft-deletes the Member and all owned Capacity Overrides in one
+transaction. Direct Capacity Override deletion remains a hard delete. Default
+GORM scopes exclude deleted records; historical readers must opt in explicitly.
+Active Member name search uses a PostgreSQL partial prefix index; names remain
+non-unique and can also be reused after deletion. Until Project Management defines root lifecycle tables,
+`executable_leaves` is a provisional active-assignment projection: any row for
+a Member blocks deletion. This projection contract must be revisited when WBS
+level `0` and Project `Closed` status are implemented.
+
+## Backend API conventions
+
+Business transports expose JSON APIs below `/api`. List endpoints accept backend
+search/filter and pagination as applicable and return `page`, `pageSize`, and
+`total`. The default page size is `5`; transport caps page size at `100`.
+Structured errors expose stable codes and safe field information without
+database details.
+
+Capacity Override is a nested Member resource rather than a top-level resource:
+
+```text
+/api/team-members/{teamMemberId}/capacity-overrides
+```
+
+Detailed contracts remain authoritative in the applicable user story and root
+developer README.
+
+## Frontend stack and structure
+
+The frontend uses React 19, TypeScript, Vite, Tailwind CSS 4, Vitest, jsdom, and
+Testing Library. ESLint performs static analysis, Prettier owns formatting, and
+axe-core provides automated accessibility assertions in component tests. Its
+structure is:
+
+```text
+frontend/src/
+├── app/
+├── features/<feature>/{domain,application,infrastructure,presentation}
+└── shared/{application,infrastructure,presentation}
+```
+
+Layers are created only when the feature has the corresponding responsibility.
+The application composition root is `src/app/App.tsx`. `AppShell` owns stable
+global chrome; `ApplicationSidebar`, `TopBar`, and page content remain mounted
+across feature navigation. `src/app/navigation.ts` is the source of truth for
+page identifiers, labels, hashes, ordering, and breadcrumb/sidebar metadata.
+
+The Role, Member, and Capacity Override features separate domain/application
+models from HTTP DTOs. Capacity Overrides are presented inside the Member
+workflow rather than as standalone navigation.
+
+## Frontend state and shared infrastructure
+
+HTTP gateways use `src/shared/infrastructure/RequestCache.ts` to deduplicate
+identical list loads and reuse confirmed results. Consumer cancellation does not
+cancel shared work. Versioned invalidation prevents stale in-flight responses
+from repopulating a cache after mutation.
+
+The composition root invalidates the Member list after a successful Role
+mutation because Member projections embed the Role name. Capacity Override
+mutations invalidate filtered and unfiltered entries while preserving the active
+effective-date filter and confirmed visible data during safe refresh.
+
+Shared list search, pagination, skeleton, focus management, and calendar
+mechanics live in `src/shared/presentation`. Shared primitives also own the
+application's button, field, dialog, alert, empty-state, and list-surface
+contracts. Feature code retains business selection and result-state decisions.
+
+When Member presentation needs Role options, the Member feature consumes its
+own minimal `RoleOptionsGateway` contract. `App.tsx` connects that contract to
+the existing Role adapter and composes Capacity Overrides into the selected
+Member workflow. Feature presentation modules therefore do not import one
+another's internals.
+
+## Project theme and design tokens
+
+Tailwind theme configuration in `frontend/src/app/styles.css` is the authoritative
+token-value source. It defines the current brand, semantic text and surfaces,
+feedback colors, status indicators, typography, spacing, sizing, layout,
+radii, elevations, motion, and named layer levels. Those exact values are
+SchedMind theme choices; the semantic contracts follow the reusable
+[design-system standard](../frontend-design-system.md).
+
+The shared calendar owns month navigation, accessibility mechanics, and
+viewport-aware placement. Capacity Override presentation supplies either its
+single-date filtering rule or two-step date-range rule.
+
+## Configuration and local topology
+
+The root `.env.example` documents safe local configuration. Integration values
+must remain environment-driven. The frontend consumes `VITE_API_BASE_URL` and
+the Vite development server uses `VITE_BACKEND_PROXY_TARGET`.
+
+Local PostgreSQL is started with:
+
+```sh
+docker compose up -d postgres
+```
+
+The stack can be started with:
+
+```sh
+./scripts/run-all.sh
+```
+
+Individual entry commands are `./scripts/run-backend.sh` and
+`./scripts/run-frontend.sh`.
+
+## Validation commands
+
+Backend:
+
+```sh
+cd backend
+go fmt ./...
+go vet ./...
+go test ./...
+go test -race ./...
+```
+
+Frontend:
+
+```sh
+cd frontend
+npm run format:check
+npm run lint
+npm run typecheck
+npm test
+npm run build
+```
+
+After backend source, configuration, dependency, or migration changes, restart
+the backend and smoke-test an affected endpoint. Documentation-only changes do
+not require an application restart.
+
+## Deliberate project constraints
+
+- PostgreSQL is the current supported runtime dialect; MySQL compatibility is a
+  query/index design consideration, not an enabled runtime.
+- Raw runtime DML is prohibited by project decision, while version-controlled
+  raw DDL is permitted.
+- Default production-list page size `5` is a product/project UX decision, not a
+  reusable universal constant.
+- Current hash-based navigation and custom request cache are implementation
+  choices, not requirements of the reusable frontend architecture.
