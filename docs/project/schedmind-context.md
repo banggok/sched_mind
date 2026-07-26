@@ -25,6 +25,7 @@ The current product manages:
 - date-bounded Capacity Overrides scoped to one Member;
 - Public Holidays used as global zero-capacity dates;
 - Projects with priority and Open, Locked, or Closed lifecycle;
+- Project-specific Automatic Scheduling and Project Buffer settings;
 - a technical backend health indicator.
 
 Detailed rules are owned by:
@@ -34,6 +35,7 @@ Detailed rules are owned by:
 - [US-2.1 Manage Capacity Override](../../user_story/US-2.1-manage-capacity-override.md)
 - [US-2.2 Manage Public Holiday](../../user_story/US-2.2-manage-public-holiday.md)
 - [US-3.1 Create Project](../../user_story/US-3.1-create-project.md)
+- [US-3.3 Configure Project Settings](../../user_story/US-3.3-configure-project-settings.md)
 
 The primary product actor in these stories is the Engineering Lead.
 
@@ -82,6 +84,12 @@ lifecycle. Locked protects Execution and Commitment baselines while Forecast
 remains dynamic. Closed Projects are historical, read-only, and excluded from
 scheduling and Gantt. Exact transitions, ordering, deletion, and downstream
 contracts belong to US-3.1.
+
+Project Settings control whether future Execution and Commitment scheduling is
+automatic and retain a Project Buffer percentage. Only Open Projects are
+editable. The integration contract exists, but concrete timeline recalculation
+remains deferred to Epic 6; a successful settings update must not be interpreted
+as proof that timelines were recalculated. Exact rules belong to US-3.3.
 
 ## Future scheduling context
 

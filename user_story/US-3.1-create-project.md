@@ -981,8 +981,10 @@ this requirement.
 - Project is WBS level 0; creation does not create a separate root WBS record.
 - Project without children can be hard-deleted; Project with children cannot be
   deleted and must use Closed for historical retention.
-- Initial creation accepts Name only; Name follows trimmed, required, maximum
-  100, case-insensitive unique BAU rules. System assigns lowest Priority.
+- Initial creation accepts Name together with the Project Settings defined by
+  US-3.3; Name follows trimmed, required, maximum 100, case-insensitive unique
+  BAU rules. Status is not accepted and remains system/lifecycle-command owned.
+  System assigns lowest Priority.
 - Priority is a unique positive integer position; a smaller value is higher.
   Create assigns global `MAX(priority)+1`; Move Up/Down atomically swaps with
   the active neighbour.

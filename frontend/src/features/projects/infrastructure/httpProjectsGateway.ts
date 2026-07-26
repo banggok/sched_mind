@@ -14,6 +14,8 @@ interface ProjectDTO {
   endDate: string | null;
   autoCalculateDate: boolean;
   autoDependencyByAssignee: boolean;
+  automaticScheduling: boolean;
+  projectBuffer: number;
   projectPriority: number;
   closedAt: string | null;
   createdAt: string;
@@ -85,11 +87,19 @@ export function createHTTPProjectsGateway(apiBaseURL: string): ProjectsGateway {
         ).data,
       );
     },
-    create(name) {
-      return mutation("/projects", "POST", { name });
+    create(name, automaticScheduling, projectBuffer) {
+      return mutation("/projects", "POST", {
+        name,
+        automaticScheduling,
+        projectBuffer,
+      });
     },
-    update(id, name) {
-      return mutation(`/projects/${encodeURIComponent(id)}`, "PUT", { name });
+    update(id, name, automaticScheduling, projectBuffer) {
+      return mutation(`/projects/${encodeURIComponent(id)}`, "PUT", {
+        name,
+        automaticScheduling,
+        projectBuffer,
+      });
     },
     changeStatus(id, status) {
       return mutation(`/projects/${encodeURIComponent(id)}/status`, "POST", {
@@ -99,6 +109,12 @@ export function createHTTPProjectsGateway(apiBaseURL: string): ProjectsGateway {
     movePriority(id, direction) {
       return mutation(`/projects/${encodeURIComponent(id)}/priority`, "POST", {
         direction,
+      });
+    },
+    updateSettings(id, automaticScheduling, projectBuffer) {
+      return mutation(`/projects/${encodeURIComponent(id)}/settings`, "PATCH", {
+        automaticScheduling,
+        projectBuffer,
       });
     },
     async delete(id) {
@@ -141,6 +157,8 @@ function mapProject(dto: ProjectDTO): Project {
     endDate: dto.endDate ?? undefined,
     autoCalculateDate: dto.autoCalculateDate,
     autoDependencyByAssignee: dto.autoDependencyByAssignee,
+    automaticScheduling: dto.automaticScheduling,
+    projectBuffer: dto.projectBuffer,
     priority: dto.projectPriority,
     closedAt: dto.closedAt ? new Date(dto.closedAt) : undefined,
     createdAt: new Date(dto.createdAt),

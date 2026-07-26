@@ -11,6 +11,8 @@ type projectModel struct {
 	EndDate                  *time.Time `gorm:"type:date"`
 	AutoCalculateDate        bool       `gorm:"not null"`
 	AutoDependencyByAssignee bool       `gorm:"not null"`
+	AutomaticScheduling      bool       `gorm:"not null;default:true"`
+	ProjectBuffer            int        `gorm:"not null;default:20"`
 	Priority                 int        `gorm:"not null;uniqueIndex"`
 	ClosedAt                 *time.Time
 	LockedExecutionSnapshot  *string

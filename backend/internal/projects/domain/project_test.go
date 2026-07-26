@@ -13,7 +13,7 @@ func TestProjectLifecycleAndValidation(t *testing.T) {
 	if err != nil || project == nil {
 		t.Fatalf("create: %#v %v", project, err)
 	}
-	if project.Name != "Alpha" || project.Status != StatusOpen || !project.AutoCalculateDate || !project.AutoDependencyByAssignee {
+	if project.Name != "Alpha" || project.Status != StatusOpen || !project.AutoCalculateDate || !project.AutoDependencyByAssignee || !project.AutomaticScheduling || project.ProjectBuffer != 20 {
 		t.Fatalf("unexpected defaults: %#v", project)
 	}
 	if _, err := NewProject("id", " ", 1, now); !errors.Is(err, ErrNameRequired) {
@@ -51,6 +51,24 @@ func TestProjectLifecycleAndValidation(t *testing.T) {
 	}
 	if project.LockedExecutionSnapshot != nil || project.LockedCommitmentSnapshot != nil {
 		t.Fatal("reopen must retain nullable snapshots")
+	}
+}
+
+func TestProjectSettingsValidationAndStatusRules(t *testing.T) {
+	project, _ := NewProject("id", "Alpha", 1, time.Now())
+	if err := project.UpdateSettings(false, 0, time.Now()); err != nil || project.AutomaticScheduling || project.ProjectBuffer != 0 {
+		t.Fatalf("valid settings: %#v %v", project, err)
+	}
+	if err := project.UpdateSettings(true, 101, time.Now()); !errors.Is(err, ErrProjectBufferInvalid) {
+		t.Fatalf("buffer: %v", err)
+	}
+	project.Status = StatusLocked
+	if err := project.UpdateSettings(true, 20, time.Now()); !errors.Is(err, ErrSettingsReadOnly) {
+		t.Fatalf("locked: %v", err)
+	}
+	project.Status = StatusClosed
+	if err := project.UpdateSettings(true, 20, time.Now()); !errors.Is(err, ErrSettingsReadOnly) {
+		t.Fatalf("closed: %v", err)
 	}
 }
 

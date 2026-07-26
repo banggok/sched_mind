@@ -13,6 +13,8 @@ var (
 	ErrCannotLockWithoutTasks     = errors.New("project cannot lock without tasks")
 	ErrCannotCloseWithActiveTasks = errors.New("project cannot close while tasks are unfinished")
 	ErrCannotCloseWithoutTasks    = errors.New("project cannot close without tasks")
+	ErrSettingsReadOnly           = errors.New("project settings can only be changed while the project is open")
+	ErrProjectBufferInvalid       = errors.New("project buffer must be between 0 and 100")
 	ErrHasChildren                = errors.New("project with children cannot be deleted")
 	ErrPriorityInvalid            = errors.New("project priority must be a positive integer")
 	ErrPriorityDirectionInvalid   = errors.New("project priority direction must be up or down")

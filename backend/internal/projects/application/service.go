@@ -48,15 +48,18 @@ func (s *Service) Get(ctx context.Context, id string) (*domain.Project, error) {
 	return value, nil
 }
 
-func (s *Service) Create(ctx context.Context, name string) (*domain.Project, error) {
+func (s *Service) Create(ctx context.Context, name string, automaticScheduling bool, projectBuffer int) (*domain.Project, error) {
 	if _, err := domain.NormalizeName(name); err != nil {
+		return nil, err
+	}
+	if err := domain.ValidateProjectBuffer(projectBuffer); err != nil {
 		return nil, err
 	}
 	id, err := s.newID()
 	if err != nil {
 		return nil, fmt.Errorf("generate project ID: %w", err)
 	}
-	value, err := s.store.CreateNext(ctx, id, name, s.now())
+	value, err := s.store.CreateNext(ctx, id, name, automaticScheduling, projectBuffer, s.now())
 	if err != nil {
 		return nil, fmt.Errorf("create project: %w", err)
 	}
@@ -66,19 +69,19 @@ func (s *Service) Create(ctx context.Context, name string) (*domain.Project, err
 	return value, nil
 }
 
-func (s *Service) Update(ctx context.Context, id, name string) (*domain.Project, error) {
-	value, err := s.Get(ctx, id)
-	if err != nil {
+func (s *Service) Update(ctx context.Context, id, name string, automaticScheduling bool, projectBuffer int) (*domain.Project, error) {
+	if _, err := domain.NormalizeName(name); err != nil {
 		return nil, err
+	}
+	if err := domain.ValidateProjectBuffer(projectBuffer); err != nil {
+		return nil, err
+	}
+	value, err := s.store.UpdateDetails(ctx, id, name, automaticScheduling, projectBuffer, s.now(), s.scheduler.RecalculateProjectSchedule)
+	if err != nil {
+		return nil, fmt.Errorf("update project: %w", err)
 	}
 	if value == nil {
-		return nil, errors.New("update project: get returned nil")
-	}
-	if err := value.Rename(name, s.now()); err != nil {
-		return nil, err
-	}
-	if err := s.store.Update(ctx, *value); err != nil {
-		return nil, fmt.Errorf("update project: %w", err)
+		return nil, errors.New("update project: store returned nil without error")
 	}
 	return value, nil
 }
@@ -104,6 +107,20 @@ func (s *Service) MovePriority(ctx context.Context, id string, direction domain.
 	}
 	if value == nil {
 		return nil, errors.New("move project priority: store returned nil without error")
+	}
+	return value, nil
+}
+
+func (s *Service) UpdateSettings(ctx context.Context, id string, automaticScheduling bool, projectBuffer int) (*domain.Project, error) {
+	if err := domain.ValidateProjectBuffer(projectBuffer); err != nil {
+		return nil, err
+	}
+	value, err := s.store.UpdateSettings(ctx, id, automaticScheduling, projectBuffer, s.now(), s.scheduler.RecalculateProjectSchedule)
+	if err != nil {
+		return nil, fmt.Errorf("update project settings: %w", err)
+	}
+	if value == nil {
+		return nil, errors.New("update project settings: store returned nil without error")
 	}
 	return value, nil
 }

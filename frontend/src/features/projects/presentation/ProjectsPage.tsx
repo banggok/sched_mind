@@ -25,6 +25,8 @@ import {
 } from "../application/projectsGateway";
 import {
   ProjectNameError,
+  ProjectSettingsError,
+  validateProjectBuffer,
   type PriorityDirection,
   type Project,
   type ProjectStatus,
@@ -47,7 +49,11 @@ export function ProjectsPage({ gateway }: { gateway: ProjectsGateway }) {
   const [form, setForm] = useState<FormState>();
   const [command, setCommand] = useState<CommandState>();
   const [name, setName] = useState("");
+  const [automaticScheduling, setAutomaticScheduling] = useState(true);
+  const [projectBuffer, setProjectBuffer] = useState("20");
+  const [confirmingEnable, setConfirmingEnable] = useState(false);
   const [fieldError, setFieldError] = useState("");
+  const [bufferError, setBufferError] = useState("");
   const [operationError, setOperationError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [notification, setNotification] = useState("");
@@ -86,28 +92,74 @@ export function ProjectsPage({ gateway }: { gateway: ProjectsGateway }) {
   function openCreate() {
     setForm({ mode: "create" });
     setName("");
+    setAutomaticScheduling(true);
+    setProjectBuffer("20");
+    setConfirmingEnable(false);
     setFieldError("");
+    setBufferError("");
     setOperationError("");
   }
   function openEdit(project: Project) {
     setForm({ mode: "edit", project });
     setName(project.name);
+    setAutomaticScheduling(project.automaticScheduling);
+    setProjectBuffer(String(project.projectBuffer));
+    setConfirmingEnable(false);
     setFieldError("");
+    setBufferError("");
     setOperationError("");
   }
   async function submitForm() {
     if (!form || submitting) return;
+    if (projectBuffer.trim() === "") {
+      setBufferError("Project buffer is required");
+      return;
+    }
+    try {
+      validateProjectBuffer(Number(projectBuffer));
+    } catch (reason: unknown) {
+      setBufferError(userMessage(reason));
+      return;
+    }
+    if (
+      form.project &&
+      !form.project.automaticScheduling &&
+      automaticScheduling &&
+      !confirmingEnable
+    ) {
+      setConfirmingEnable(true);
+      return;
+    }
     setSubmitting(true);
     setFieldError("");
+    setBufferError("");
     setOperationError("");
     try {
-      if (form.mode === "create") await createProject(gateway, name);
+      if (form.mode === "create")
+        await createProject(
+          gateway,
+          name,
+          automaticScheduling,
+          Number(projectBuffer),
+        );
       else if (form.project)
-        await updateProject(gateway, form.project.id, name);
+        await updateProject(
+          gateway,
+          form.project.id,
+          name,
+          automaticScheduling,
+          Number(projectBuffer),
+        );
       setForm(undefined);
       refresh(form.mode === "create" ? "Project added." : "Project updated.");
     } catch (reason: unknown) {
       if (
+        reason instanceof ProjectSettingsError ||
+        (reason instanceof ProjectOperationError &&
+          reason.field === "projectBuffer")
+      )
+        setBufferError(userMessage(reason));
+      else if (
         reason instanceof ProjectNameError ||
         (reason instanceof ProjectOperationError && reason.field === "name")
       )
@@ -159,7 +211,6 @@ export function ProjectsPage({ gateway }: { gateway: ProjectsGateway }) {
       setSubmitting(false);
     }
   }
-
   return (
     <>
       <PageContent>
@@ -257,10 +308,17 @@ export function ProjectsPage({ gateway }: { gateway: ProjectsGateway }) {
         <ProjectForm
           form={form}
           name={name}
+          automaticScheduling={automaticScheduling}
+          projectBuffer={projectBuffer}
+          confirmingEnable={confirmingEnable}
           fieldError={fieldError}
+          bufferError={bufferError}
           operationError={operationError}
           submitting={submitting}
           onName={setName}
+          onAutomaticScheduling={setAutomaticScheduling}
+          onProjectBuffer={setProjectBuffer}
+          onConfirmingEnable={setConfirmingEnable}
           onClose={() => !submitting && setForm(undefined)}
           onSubmit={() => void submitForm()}
         />
@@ -328,11 +386,11 @@ function ProjectRow({
             >
               ↓
             </Button>
-            <Button compact disabled={busy} onClick={onEdit}>
-              Edit
-            </Button>
           </>
         ) : null}
+        <Button compact disabled={busy} onClick={onEdit}>
+          Edit
+        </Button>
         {project.status === "open" ? (
           <Button compact disabled={busy} onClick={() => onCommand("lock")}>
             Lock
@@ -365,63 +423,171 @@ function ProjectRow({
 function ProjectForm({
   form,
   name,
+  automaticScheduling,
+  projectBuffer,
+  confirmingEnable,
   fieldError,
+  bufferError,
   operationError,
   submitting,
   onName,
+  onAutomaticScheduling,
+  onProjectBuffer,
+  onConfirmingEnable,
   onClose,
   onSubmit,
 }: {
   form: FormState;
   name: string;
+  automaticScheduling: boolean;
+  projectBuffer: string;
+  confirmingEnable: boolean;
   fieldError: string;
+  bufferError: string;
   operationError: string;
   submitting: boolean;
   onName(value: string): void;
+  onAutomaticScheduling(value: boolean): void;
+  onProjectBuffer(value: string): void;
+  onConfirmingEnable(value: boolean): void;
   onClose(): void;
   onSubmit(): void;
 }) {
+  const closed = form.project?.status === "closed";
+  const settingsEditable =
+    form.mode === "create" || form.project?.status === "open";
   function submit(event: FormEvent) {
     event.preventDefault();
     onSubmit();
   }
   return (
-    <Dialog titleID="project-form-title" onClose={onClose}>
-      <h2 id="project-form-title" className="text-dialog-title font-black">
-        {form.mode === "create" ? "Add project" : `Edit ${form.project?.name}`}
-      </h2>
-      <form className="mt-7" noValidate onSubmit={submit}>
-        <FormField
-          id="project-name"
-          name="name"
-          label="Project name"
-          required
-          data-autofocus
-          value={name}
-          error={fieldError}
-          help={
-            form.mode === "create"
-              ? "The project starts Open at the lowest priority."
-              : "Up to 100 characters."
-          }
-          maxLength={101}
-          onChange={(event) => onName(event.target.value)}
-        />
-        {operationError ? (
-          <p className="mt-4 text-sm font-semibold text-danger" role="alert">
-            {operationError}
+    <>
+      <Dialog titleID="project-form-title" onClose={onClose}>
+        <h2 id="project-form-title" className="text-dialog-title font-black">
+          {form.mode === "create"
+            ? "Add project"
+            : `Edit ${form.project?.name}`}
+        </h2>
+        <form className="mt-7" noValidate onSubmit={submit}>
+          <FormField
+            id="project-name"
+            name="name"
+            label="Project name"
+            required
+            data-autofocus
+            disabled={closed || submitting}
+            value={name}
+            error={fieldError}
+            help={
+              form.mode === "create"
+                ? "The project starts Open at the lowest priority."
+                : "Up to 100 characters."
+            }
+            maxLength={101}
+            onChange={(event) => onName(event.target.value)}
+          />
+          {!settingsEditable && form.project ? (
+            <p className="mt-4 text-sm text-muted">
+              Scheduling settings are read-only while this project is{" "}
+              {form.project.status}.
+            </p>
+          ) : null}
+          <div className="mt-5 rounded-panel border border-border-subtle p-4">
+            <div className="flex items-center justify-between gap-4 font-bold">
+              <span>
+                Automatic scheduling
+                <span className="mt-1 block text-xs font-normal text-muted">
+                  Scheduler manages Execution and Commitment timelines.
+                </span>
+              </span>
+              <Button
+                type="button"
+                role="switch"
+                aria-label="Automatic scheduling"
+                aria-checked={automaticScheduling}
+                className="ui-switch"
+                compact
+                disabled={!settingsEditable || submitting}
+                onClick={() => onAutomaticScheduling(!automaticScheduling)}
+              >
+                {automaticScheduling ? "ON" : "OFF"}
+              </Button>
+            </div>
+          </div>
+          <FormField
+            className="mt-5"
+            id="project-buffer"
+            name="projectBuffer"
+            label="Project buffer (%)"
+            type="number"
+            min={0}
+            max={100}
+            step={1}
+            value={projectBuffer}
+            disabled={!settingsEditable || !automaticScheduling || submitting}
+            error={bufferError}
+            help={
+              !automaticScheduling
+                ? "Stored value is preserved and becomes active when automatic scheduling is enabled."
+                : "Whole number from 0 to 100."
+            }
+            onChange={(event) => onProjectBuffer(event.target.value)}
+          />
+          {operationError ? (
+            <p className="mt-4 text-sm font-semibold text-danger" role="alert">
+              {operationError}
+            </p>
+          ) : null}
+          <div className="form-actions">
+            <Button type="button" disabled={submitting} onClick={onClose}>
+              {closed ? "Close" : "Cancel"}
+            </Button>
+            {!closed ? (
+              <Button type="submit" variant="primary" loading={submitting}>
+                {submitting ? "Saving…" : "Save"}
+              </Button>
+            ) : null}
+          </div>
+        </form>
+      </Dialog>
+      {confirmingEnable ? (
+        <Dialog
+          titleID="enable-scheduling-title"
+          kind="alertdialog"
+          nested
+          closeOnBackdrop={false}
+          onClose={() => !submitting && onConfirmingEnable(false)}
+        >
+          <h2
+            id="enable-scheduling-title"
+            className="text-dialog-title font-black"
+          >
+            Enable automatic scheduling?
+          </h2>
+          <p className="mt-3 leading-7 text-muted">
+            The scheduler will recalculate unfinished tasks and replace their
+            manual Execution and Commitment timelines. Completed tasks with
+            Actual End remain unchanged.
           </p>
-        ) : null}
-        <div className="form-actions">
-          <Button type="button" disabled={submitting} onClick={onClose}>
-            Cancel
-          </Button>
-          <Button type="submit" variant="primary" loading={submitting}>
-            {submitting ? "Saving…" : "Save"}
-          </Button>
-        </div>
-      </form>
-    </Dialog>
+          <div className="form-actions">
+            <Button
+              disabled={submitting}
+              onClick={() => onConfirmingEnable(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              data-autofocus
+              variant="primary"
+              loading={submitting}
+              onClick={onSubmit}
+            >
+              {submitting ? "Saving…" : "Enable and save"}
+            </Button>
+          </div>
+        </Dialog>
+      ) : null}
+    </>
   );
 }
 
@@ -507,6 +673,7 @@ function commandCopy(command: CommandState) {
 }
 function userMessage(reason: unknown): string {
   if (reason instanceof ProjectNameError) return reason.message;
+  if (reason instanceof ProjectSettingsError) return reason.message;
   if (reason instanceof ProjectOperationError) {
     const messages: Record<string, string> = {
       PROJECT_NAME_ALREADY_EXISTS: "Project name already exists",
@@ -520,6 +687,10 @@ function userMessage(reason: unknown): string {
         "This project has planning children and cannot be deleted. Complete its work and close it instead.",
       PROJECT_PRIORITY_MOVE_NOT_ALLOWED:
         "This project cannot move further in that direction.",
+      PROJECT_SETTINGS_READ_ONLY:
+        "Project settings can only be changed while the project is open.",
+      PROJECT_BUFFER_INVALID:
+        "Project buffer must be a whole number between 0 and 100",
     };
     return (
       messages[reason.code] ??

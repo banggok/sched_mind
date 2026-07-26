@@ -2,6 +2,7 @@ package projecthttp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -23,7 +24,7 @@ func testHandler(t *testing.T) http.Handler {
 		t.Fatal(err)
 	}
 	// Isolated test schema is intentionally ORM-owned; production uses migration DDL.
-	if err := database.Exec("CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, name_key TEXT NOT NULL UNIQUE, status TEXT NOT NULL, start_date DATETIME, end_date DATETIME, auto_calculate_date NUMERIC NOT NULL, auto_dependency_by_assignee NUMERIC NOT NULL, priority INTEGER NOT NULL UNIQUE, closed_at DATETIME, locked_execution_snapshot TEXT, locked_commitment_snapshot TEXT, created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL)").Error; err != nil {
+	if err := database.Exec("CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, name_key TEXT NOT NULL UNIQUE, status TEXT NOT NULL, start_date DATETIME, end_date DATETIME, auto_calculate_date NUMERIC NOT NULL, auto_dependency_by_assignee NUMERIC NOT NULL, automatic_scheduling NUMERIC NOT NULL DEFAULT 1, project_buffer INTEGER NOT NULL DEFAULT 20, priority INTEGER NOT NULL UNIQUE, closed_at DATETIME, locked_execution_snapshot TEXT, locked_commitment_snapshot TEXT, created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL)").Error; err != nil {
 		t.Fatal(err)
 	}
 	service := application.NewService(gormrepo.New(database), application.NoopScheduler{})
@@ -43,6 +44,23 @@ func TestProjectHTTPFlowAndValidation(t *testing.T) {
 	if response := request(handler, "GET", "/api/projects?search=al&page=1&pageSize=5", ""); response.Code != 200 || !strings.Contains(response.Body.String(), `"total":1`) {
 		t.Fatalf("list: %d %s", response.Code, response.Body.String())
 	}
+	if response := request(handler, "PATCH", "/api/projects/"+projectID(responseBody(request(handler, "GET", "/api/projects?search=al&page=1&pageSize=5", "")))+"/settings", `{"automaticScheduling":false,"projectBuffer":35}`); response.Code != 200 || !strings.Contains(response.Body.String(), `"projectBuffer":35`) {
+		t.Fatalf("settings: %d %s", response.Code, response.Body.String())
+	}
+}
+
+func responseBody(recorder *httptest.ResponseRecorder) string { return recorder.Body.String() }
+func projectID(body string) string {
+	var payload struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	_ = json.Unmarshal([]byte(body), &payload)
+	if len(payload.Data) == 0 {
+		return ""
+	}
+	return payload.Data[0].ID
 }
 func TestProjectHTTPErrorMapping(t *testing.T) {
 	service := &errorService{}
@@ -53,6 +71,9 @@ func TestProjectHTTPErrorMapping(t *testing.T) {
 	}
 	if response := request(mux, "POST", "/api/projects/id/priority", `{"direction":"left"}`); response.Code != 400 || !strings.Contains(response.Body.String(), "PROJECT_PRIORITY_DIRECTION_INVALID") {
 		t.Fatalf("priority: %d %s", response.Code, response.Body.String())
+	}
+	if response := request(mux, "PATCH", "/api/projects/id/settings", `{"automaticScheduling":true,"projectBuffer":20}`); response.Code != 409 || !strings.Contains(response.Body.String(), "PROJECT_SETTINGS_READ_ONLY") {
+		t.Fatalf("read-only settings: %d %s", response.Code, response.Body.String())
 	}
 	recorder := httptest.NewRecorder()
 	writeError(recorder, domain.ErrCannotLockWithoutTasks)
@@ -75,10 +96,10 @@ func (*errorService) List(context.Context, listing.Query) (listing.Page[domain.P
 func (*errorService) Get(context.Context, string) (*domain.Project, error) {
 	return nil, domain.ErrNotFound
 }
-func (*errorService) Create(context.Context, string) (*domain.Project, error) {
+func (*errorService) Create(context.Context, string, bool, int) (*domain.Project, error) {
 	return nil, errors.New("unused")
 }
-func (*errorService) Update(context.Context, string, string) (*domain.Project, error) {
+func (*errorService) Update(context.Context, string, string, bool, int) (*domain.Project, error) {
 	return nil, errors.New("unused")
 }
 func (*errorService) ChangeStatus(context.Context, string, domain.Status) (*domain.Project, error) {
@@ -88,3 +109,6 @@ func (*errorService) MovePriority(context.Context, string, domain.PriorityDirect
 	return nil, errors.New("unused")
 }
 func (*errorService) Delete(context.Context, string) error { return errors.New("unused") }
+func (*errorService) UpdateSettings(context.Context, string, bool, int) (*domain.Project, error) {
+	return nil, domain.ErrSettingsReadOnly
+}

@@ -16,11 +16,12 @@ import (
 type Service interface {
 	List(context.Context, listing.Query) (listing.Page[domain.Project], error)
 	Get(context.Context, string) (*domain.Project, error)
-	Create(context.Context, string) (*domain.Project, error)
-	Update(context.Context, string, string) (*domain.Project, error)
+	Create(context.Context, string, bool, int) (*domain.Project, error)
+	Update(context.Context, string, string, bool, int) (*domain.Project, error)
 	ChangeStatus(context.Context, string, domain.Status) (*domain.Project, error)
 	MovePriority(context.Context, string, domain.PriorityDirection) (*domain.Project, error)
 	Delete(context.Context, string) error
+	UpdateSettings(context.Context, string, bool, int) (*domain.Project, error)
 }
 
 type Handler struct{ service Service }
@@ -33,17 +34,24 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/projects/{projectId}", h.update)
 	mux.HandleFunc("POST /api/projects/{projectId}/status", h.changeStatus)
 	mux.HandleFunc("POST /api/projects/{projectId}/priority", h.movePriority)
+	mux.HandleFunc("PATCH /api/projects/{projectId}/settings", h.updateSettings)
 	mux.HandleFunc("DELETE /api/projects/{projectId}", h.delete)
 }
 
 type nameRequest struct {
-	Name string `json:"name"`
+	Name                string `json:"name"`
+	AutomaticScheduling *bool  `json:"automaticScheduling,omitempty"`
+	ProjectBuffer       *int   `json:"projectBuffer,omitempty"`
 }
 type statusRequest struct {
 	Status string `json:"status"`
 }
 type priorityRequest struct {
 	Direction string `json:"direction"`
+}
+type settingsRequest struct {
+	AutomaticScheduling *bool `json:"automaticScheduling"`
+	ProjectBuffer       *int  `json:"projectBuffer"`
 }
 type item struct {
 	ID                       string     `json:"id"`
@@ -53,6 +61,8 @@ type item struct {
 	EndDate                  *string    `json:"endDate"`
 	AutoCalculateDate        bool       `json:"autoCalculateDate"`
 	AutoDependencyByAssignee bool       `json:"autoDependencyByAssignee"`
+	AutomaticScheduling      bool       `json:"automaticScheduling"`
+	ProjectBuffer            int        `json:"projectBuffer"`
 	ProjectPriority          int        `json:"projectPriority"`
 	ClosedAt                 *time.Time `json:"closedAt"`
 	CreatedAt                time.Time  `json:"createdAt"`
@@ -99,7 +109,8 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &payload) {
 		return
 	}
-	value, err := h.service.Create(r.Context(), payload.Name)
+	automatic, buffer := settingsOrDefaults(payload.AutomaticScheduling, payload.ProjectBuffer)
+	value, err := h.service.Create(r.Context(), payload.Name, automatic, buffer)
 	h.writeProject(w, value, err, 201)
 }
 func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
@@ -107,8 +118,22 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &payload) {
 		return
 	}
-	value, err := h.service.Update(r.Context(), r.PathValue("projectId"), payload.Name)
+	if payload.AutomaticScheduling == nil || payload.ProjectBuffer == nil {
+		writeJSON(w, 400, errorResponse{"INVALID_REQUEST", "automaticScheduling and projectBuffer are required", ""})
+		return
+	}
+	value, err := h.service.Update(r.Context(), r.PathValue("projectId"), payload.Name, *payload.AutomaticScheduling, *payload.ProjectBuffer)
 	h.writeProject(w, value, err, 200)
+}
+func settingsOrDefaults(automatic *bool, buffer *int) (bool, int) {
+	automaticValue, bufferValue := true, domain.DefaultProjectBuffer
+	if automatic != nil {
+		automaticValue = *automatic
+	}
+	if buffer != nil {
+		bufferValue = *buffer
+	}
+	return automaticValue, bufferValue
 }
 func (h *Handler) changeStatus(w http.ResponseWriter, r *http.Request) {
 	var payload statusRequest
@@ -134,6 +159,18 @@ func (h *Handler) movePriority(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	value, err := h.service.MovePriority(r.Context(), r.PathValue("projectId"), direction)
+	h.writeProject(w, value, err, 200)
+}
+func (h *Handler) updateSettings(w http.ResponseWriter, r *http.Request) {
+	var payload settingsRequest
+	if !decode(w, r, &payload) {
+		return
+	}
+	if payload.AutomaticScheduling == nil || payload.ProjectBuffer == nil {
+		writeJSON(w, 400, errorResponse{"INVALID_REQUEST", "automaticScheduling and projectBuffer are required", ""})
+		return
+	}
+	value, err := h.service.UpdateSettings(r.Context(), r.PathValue("projectId"), *payload.AutomaticScheduling, *payload.ProjectBuffer)
 	h.writeProject(w, value, err, 200)
 }
 func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
@@ -191,7 +228,7 @@ func mapItem(value domain.Project) item {
 		utc := value.ClosedAt.UTC()
 		closedAt = &utc
 	}
-	return item{value.ID, value.Name, string(value.Status), dateString(value.StartDate), dateString(value.EndDate), value.AutoCalculateDate, value.AutoDependencyByAssignee, value.Priority, closedAt, value.CreatedAt.UTC(), value.UpdatedAt.UTC()}
+	return item{value.ID, value.Name, string(value.Status), dateString(value.StartDate), dateString(value.EndDate), value.AutoCalculateDate, value.AutoDependencyByAssignee, value.AutomaticScheduling, value.ProjectBuffer, value.Priority, closedAt, value.CreatedAt.UTC(), value.UpdatedAt.UTC()}
 }
 func dateString(value *time.Time) *string {
 	if value == nil {
@@ -229,6 +266,10 @@ func writeError(w http.ResponseWriter, err error) {
 		status, code, message, field = 400, "PROJECT_PRIORITY_DIRECTION_INVALID", domain.ErrPriorityDirectionInvalid.Error(), "direction"
 	case errors.Is(err, domain.ErrPriorityMoveNotAllowed):
 		status, code, message, field = 409, "PROJECT_PRIORITY_MOVE_NOT_ALLOWED", domain.ErrPriorityMoveNotAllowed.Error(), "direction"
+	case errors.Is(err, domain.ErrSettingsReadOnly):
+		status, code, message = 409, "PROJECT_SETTINGS_READ_ONLY", domain.ErrSettingsReadOnly.Error()
+	case errors.Is(err, domain.ErrProjectBufferInvalid):
+		status, code, message, field = 400, "PROJECT_BUFFER_INVALID", domain.ErrProjectBufferInvalid.Error(), "projectBuffer"
 	}
 	writeJSON(w, status, errorResponse{code, message, field})
 }

@@ -18,6 +18,8 @@ describe("HTTP projects gateway", () => {
               endDate: null,
               autoCalculateDate: true,
               autoDependencyByAssignee: true,
+              automaticScheduling: true,
+              projectBuffer: 20,
               projectPriority: 1,
               closedAt: null,
               createdAt: "2026-07-26T00:00:00Z",
