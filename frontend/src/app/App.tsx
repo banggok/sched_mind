@@ -8,6 +8,8 @@ import type { ApplicationPage } from "./navigation";
 import { createHTTPCapacityOverridesGateway } from "../features/capacity-overrides/infrastructure/httpCapacityOverridesGateway";
 import { CapacityOverridesPanel } from "../features/capacity-overrides/presentation/CapacityOverridesPanel";
 import type { TeamMember } from "../features/team-members/domain/teamMember";
+import { createHTTPPublicHolidaysGateway } from "../features/public-holidays/infrastructure/httpPublicHolidaysGateway";
+import { PublicHolidaysPage } from "../features/public-holidays/presentation/PublicHolidaysPage";
 
 const apiBaseURL = requiredEnvironment(
   "VITE_API_BASE_URL",
@@ -15,6 +17,7 @@ const apiBaseURL = requiredEnvironment(
 );
 const teamMembersGateway = createHTTPTeamMembersGateway(apiBaseURL);
 const capacityOverridesGateway = createHTTPCapacityOverridesGateway(apiBaseURL);
+const publicHolidaysGateway = createHTTPPublicHolidaysGateway(apiBaseURL);
 const rolesGateway = createHTTPRolesGateway(
   apiBaseURL,
   teamMembersGateway.invalidateListCache,
@@ -33,7 +36,11 @@ export function App() {
     };
   }, []);
   const activePage: ApplicationPage =
-    route === "#team-members" ? "team-members" : "roles";
+    route === "#team-members"
+      ? "team-members"
+      : route === "#public-holidays"
+        ? "public-holidays"
+        : "roles";
 
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0, behavior: "auto" });
@@ -41,7 +48,9 @@ export function App() {
 
   return (
     <AppShell activePage={activePage}>
-      {activePage === "team-members" ? (
+      {activePage === "public-holidays" ? (
+        <PublicHolidaysPage gateway={publicHolidaysGateway} />
+      ) : activePage === "team-members" ? (
         <TeamMembersDashboardPage
           gateway={teamMembersGateway}
           roleOptionsGateway={rolesGateway}
@@ -54,6 +63,7 @@ export function App() {
         <CapacityOverridesPanel
           member={capacityMember}
           gateway={capacityOverridesGateway}
+          loadPublicHolidayDates={publicHolidaysGateway.calendar}
           onClose={() => setCapacityMember(undefined)}
         />
       ) : null}

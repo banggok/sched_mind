@@ -3,15 +3,22 @@ export const navigationItems = [
     id: "roles",
     label: "Roles",
     href: "#roles",
-    group: "team-management",
-    groupLabel: "Team",
+    group: "team-configuration",
+    groupLabel: "Team Configuration",
   },
   {
     id: "team-members",
     label: "Members",
     href: "#team-members",
-    group: "team-management",
-    groupLabel: "Team",
+    group: "team-configuration",
+    groupLabel: "Team Configuration",
+  },
+  {
+    id: "public-holidays",
+    label: "Public Holidays",
+    href: "#public-holidays",
+    group: "team-configuration",
+    groupLabel: "Team Configuration",
   },
 ] as const;
 

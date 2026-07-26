@@ -16,6 +16,7 @@ func TestLoadConfig(t *testing.T) {
 		"HTTP_ADDRESS":          ":8080",
 		"DATABASE_URL":          "postgres://example",
 		"HTTP_SHUTDOWN_TIMEOUT": "5s",
+		"APP_TIMEZONE":          "Asia/Jakarta",
 	}
 
 	config, err := loadConfig(func(name string) string { return values[name] })
@@ -58,6 +59,7 @@ func TestLoadConfigRejectsMissingAndInvalidShutdownTimeout(t *testing.T) {
 				"HTTP_ADDRESS":          ":8080",
 				"DATABASE_URL":          "postgres://example",
 				"HTTP_SHUTDOWN_TIMEOUT": "forever",
+				"APP_TIMEZONE":          "Asia/Jakarta",
 			},
 		},
 		{
@@ -66,6 +68,7 @@ func TestLoadConfigRejectsMissingAndInvalidShutdownTimeout(t *testing.T) {
 				"HTTP_ADDRESS":          ":8080",
 				"DATABASE_URL":          "postgres://example",
 				"HTTP_SHUTDOWN_TIMEOUT": "0s",
+				"APP_TIMEZONE":          "Asia/Jakarta",
 			},
 		},
 	}

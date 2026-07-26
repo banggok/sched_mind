@@ -93,8 +93,42 @@ below with a constrained, scrollable body so its header is not clipped.
 The selected placement remains stable for the complete open interaction and is
 recalculated only on the next open.
 
+Transient success feedback uses the shared `Toast` presentation primitive.
+The primitive owns consistent notification layering, status semantics, manual
+dismissal, timer cleanup, and the default five-second auto-dismiss lifecycle;
+features own only the message and confirmed operation state.
+
 Detailed contracts remain authoritative in the applicable user story and root
 developer README.
+
+Public Holiday is a global scheduling feature with independent backend and
+frontend feature boundaries. Roles, Members, and Public Holidays share the
+**Team Configuration** navigation group, while Public Holiday remains a
+standalone page and is not owned by Member or Project. A Public Holiday is an
+aggregate: `public_holidays` stores its description and inclusive range, while
+`public_holiday_dates` stores one row for every weekday in that range. Weekend
+dates are omitted because Saturday and Sunday are holidays by default. The
+unique child-date index enforces one Public Holiday per weekday and supports
+exact scheduler/calendar lookups without expanding ranges at read time.
+Mutations replace the aggregate atomically, so a conflict on any date rolls
+back the complete range. Lists place ranges whose `end_date` is on or after
+today first, followed by expired ranges; each segment orders by `start_date`,
+`end_date`, then `id` ascending. Today is evaluated in `APP_TIMEZONE`.
+
+The Public Holidays frontend request-cache identity includes `holidayDate`,
+`page`, and `pageSize`. Confirmed mutations invalidate every filtered and
+unfiltered Public Holiday cache entry, using versioned invalidation so older
+in-flight responses cannot repopulate stale data. The application exposes an
+exact-date and bounded calendar consumers for capacity resolution and shared
+calendar markings. Public Holiday
+has precedence over Capacity Override and Daily Capacity, but holiday mutations
+do not trigger schedule recalculation.
+
+Public Holiday endpoints are top-level global resources:
+
+```text
+/api/public-holidays
+```
 
 ## Frontend stack and structure
 

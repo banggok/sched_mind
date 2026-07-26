@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { CalendarPopover } from "./CalendarPopover";
@@ -76,6 +76,71 @@ describe("CalendarPopover", () => {
     expect(calendar.getAttribute("data-placement")).toBe("below");
     expect(calendar.getAttribute("data-scrollable")).toBe("true");
     rectangle.mockRestore();
+  });
+
+  it("aligns to the right when left alignment would cross the viewport", async () => {
+    const user = userEvent.setup();
+    const rectangle = vi
+      .spyOn(HTMLElement.prototype, "getBoundingClientRect")
+      .mockImplementation(function (this: HTMLElement) {
+        if (this.getAttribute("role") === "dialog")
+          return rectangleValue(800, 200, 352, 400);
+        if (this.getAttribute("aria-haspopup") === "dialog")
+          return rectangleValue(800, 140, 200, 50);
+        return rectangleValue(0, 0, 0, 0);
+      });
+    Object.defineProperty(window, "innerWidth", {
+      configurable: true,
+      value: 1000,
+    });
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: 900,
+    });
+    render(
+      <CalendarPopover
+        label="Holiday Date"
+        buttonLabel="Select date"
+        instruction="Select a date."
+        selectedDates={[]}
+        onSelect={vi.fn(() => true)}
+      />,
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Holiday Date: Select date" }),
+    );
+    const calendar = screen.getByRole("dialog");
+    expect(calendar.getAttribute("data-alignment")).toBe("right");
+    expect(calendar.classList.contains("layer-dialog-popover")).toBe(true);
+    rectangle.mockRestore();
+  });
+
+  it("marks weekends and configured holidays without disabling selection", async () => {
+    const user = userEvent.setup();
+    const select = vi.fn(() => true);
+    render(
+      <CalendarPopover
+        label="Date"
+        buttonLabel="Select date"
+        initialDate="2026-07-01"
+        instruction="Select a date."
+        selectedDates={[]}
+        loadPublicHolidayDates={vi.fn().mockResolvedValue(["2026-07-03"])}
+        onSelect={select}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Date: Select date" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "2026-07-03" }).title).toBe(
+        "Holiday",
+      ),
+    );
+    expect(screen.getByRole("button", { name: "2026-07-04" }).title).toBe(
+      "Holiday",
+    );
+    expect(screen.queryByLabelText("Calendar legend")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "2026-07-03" }));
+    expect(select).toHaveBeenCalledWith("2026-07-03");
   });
 });
 

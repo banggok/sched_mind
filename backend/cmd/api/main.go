@@ -6,6 +6,8 @@ import (
 	"fmt"
 	capacityoverrideapplication "github.com/banggok/sched_mind/backend/internal/capacityoverrides/application"
 	capacityoverridegormrepo "github.com/banggok/sched_mind/backend/internal/capacityoverrides/infrastructure/gormrepo"
+	publicholidayapplication "github.com/banggok/sched_mind/backend/internal/publicholidays/application"
+	publicholidaygormrepo "github.com/banggok/sched_mind/backend/internal/publicholidays/infrastructure/gormrepo"
 	"log"
 	"net/http"
 	"os"
@@ -36,6 +38,7 @@ type configuration struct {
 	address         string
 	databaseURL     string
 	shutdownTimeout time.Duration
+	location        *time.Location
 }
 
 func loadConfig(environment func(string) string) (*configuration, error) {
@@ -60,11 +63,20 @@ func loadConfig(environment func(string) string) (*configuration, error) {
 			"HTTP_SHUTDOWN_TIMEOUT must be a positive duration",
 		)
 	}
+	rawTimezone, err := requiredEnvironment(environment, "APP_TIMEZONE")
+	if err != nil {
+		return nil, err
+	}
+	location, err := time.LoadLocation(rawTimezone)
+	if err != nil {
+		return nil, fmt.Errorf("APP_TIMEZONE must be a valid IANA timezone: %w", err)
+	}
 
 	return &configuration{
 		address:         address,
 		databaseURL:     databaseURL,
 		shutdownTimeout: shutdownTimeout,
+		location:        location,
 	}, nil
 }
 
@@ -120,10 +132,18 @@ func run(config *configuration) (runError error) {
 	teamMemberService := teammemberapplication.NewService(teamMemberRepository)
 	capacityOverrideRepository := capacityoverridegormrepo.New(database)
 	capacityOverrideService := capacityoverrideapplication.NewService(capacityOverrideRepository)
+	publicHolidayRepository := publicholidaygormrepo.New(database)
+	if config.location == nil {
+		return errors.New("application timezone is nil")
+	}
+	publicHolidayService := publicholidayapplication.NewServiceWithClock(
+		publicHolidayRepository,
+		func() time.Time { return time.Now().In(config.location) },
+	)
 
 	server := &http.Server{
 		Addr:    config.address,
-		Handler: httpapi.NewRouter(roleService, teamMemberService, capacityOverrideService),
+		Handler: httpapi.NewRouter(roleService, teamMemberService, capacityOverrideService, publicHolidayService),
 	}
 
 	signalContext, stopSignals := signal.NotifyContext(
