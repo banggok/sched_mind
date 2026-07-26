@@ -41,6 +41,12 @@ documents. Do not guess answers or copy another product's project documents.
 - Preserve observable behavior during refactoring and avoid unrelated changes.
 - Do not add dependencies or change public contracts without approval.
 - Never manually edit generated code.
+- Before adding a local technical helper, search the repository for an existing
+  equivalent. Promote confirmed identical, context-free technical behavior to
+  a narrowly named shared package instead of duplicating it across features.
+  Do not merge business rules, domain validation, DTO mapping, or error mapping
+  merely because their current implementations look similar; bounded-context
+  meaning takes precedence over superficial deduplication.
 - TypeScript source and tests owned by the project must not use explicit or
   implicit `any`. Define the actual type when it is known. At untrusted or
   dynamically typed boundaries, accept `unknown` and narrow or validate it

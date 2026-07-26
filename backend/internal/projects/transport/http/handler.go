@@ -6,10 +6,10 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/banggok/sched_mind/backend/internal/projects/domain"
+	"github.com/banggok/sched_mind/backend/internal/shared/httpjson"
 	"github.com/banggok/sched_mind/backend/internal/shared/listing"
 )
 
@@ -84,9 +84,9 @@ type errorResponse struct {
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
-	query, err := parseListQuery(r)
+	query, err := listing.ParseHTTPQuery(r)
 	if err != nil {
-		writeJSON(w, 400, errorResponse{"INVALID_REQUEST", err.Error(), ""})
+		httpjson.Write(w, 400, errorResponse{"INVALID_REQUEST", err.Error(), ""})
 		return
 	}
 	result, err := h.service.List(r.Context(), query)
@@ -98,7 +98,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	for _, value := range result.Items {
 		data = append(data, mapItem(value))
 	}
-	writeJSON(w, 200, listResponse{data, result.Page, result.PageSize, result.Total})
+	httpjson.Write(w, 200, listResponse{data, result.Page, result.PageSize, result.Total})
 }
 func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 	value, err := h.service.Get(r.Context(), r.PathValue("projectId"))
@@ -119,7 +119,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if payload.AutomaticScheduling == nil || payload.ProjectBuffer == nil {
-		writeJSON(w, 400, errorResponse{"INVALID_REQUEST", "automaticScheduling and projectBuffer are required", ""})
+		httpjson.Write(w, 400, errorResponse{"INVALID_REQUEST", "automaticScheduling and projectBuffer are required", ""})
 		return
 	}
 	value, err := h.service.Update(r.Context(), r.PathValue("projectId"), payload.Name, *payload.AutomaticScheduling, *payload.ProjectBuffer)
@@ -167,7 +167,7 @@ func (h *Handler) updateSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if payload.AutomaticScheduling == nil || payload.ProjectBuffer == nil {
-		writeJSON(w, 400, errorResponse{"INVALID_REQUEST", "automaticScheduling and projectBuffer are required", ""})
+		httpjson.Write(w, 400, errorResponse{"INVALID_REQUEST", "automaticScheduling and projectBuffer are required", ""})
 		return
 	}
 	value, err := h.service.UpdateSettings(r.Context(), r.PathValue("projectId"), *payload.AutomaticScheduling, *payload.ProjectBuffer)
@@ -189,38 +189,21 @@ func (h *Handler) writeProject(w http.ResponseWriter, value *domain.Project, err
 		writeError(w, errors.New("project service returned nil without error"))
 		return
 	}
-	writeJSON(w, status, itemResponse{mapItem(*value)})
+	httpjson.Write(w, status, itemResponse{mapItem(*value)})
 }
 func decode(w http.ResponseWriter, r *http.Request, target interface{}) bool {
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
-		writeJSON(w, 400, errorResponse{"INVALID_REQUEST", "Request body is invalid", ""})
+		httpjson.Write(w, 400, errorResponse{"INVALID_REQUEST", "Request body is invalid", ""})
 		return false
 	}
 	var extra interface{}
 	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
-		writeJSON(w, 400, errorResponse{"INVALID_REQUEST", "Request body is invalid", ""})
+		httpjson.Write(w, 400, errorResponse{"INVALID_REQUEST", "Request body is invalid", ""})
 		return false
 	}
 	return true
-}
-func parseListQuery(r *http.Request) (listing.Query, error) {
-	query := listing.Query{Search: r.URL.Query().Get("search"), Page: 1, PageSize: 5}
-	var err error
-	if value := r.URL.Query().Get("page"); value != "" {
-		query.Page, err = strconv.Atoi(value)
-		if err != nil || query.Page < 1 {
-			return listing.Query{}, errors.New("page must be a positive integer")
-		}
-	}
-	if value := r.URL.Query().Get("pageSize"); value != "" {
-		query.PageSize, err = strconv.Atoi(value)
-		if err != nil || query.PageSize < 1 || query.PageSize > 100 {
-			return listing.Query{}, errors.New("pageSize must be between 1 and 100")
-		}
-	}
-	return query, nil
 }
 func mapItem(value domain.Project) item {
 	var closedAt *time.Time
@@ -271,10 +254,5 @@ func writeError(w http.ResponseWriter, err error) {
 	case errors.Is(err, domain.ErrProjectBufferInvalid):
 		status, code, message, field = 400, "PROJECT_BUFFER_INVALID", domain.ErrProjectBufferInvalid.Error(), "projectBuffer"
 	}
-	writeJSON(w, status, errorResponse{code, message, field})
-}
-func writeJSON(w http.ResponseWriter, status int, payload interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(payload)
+	httpjson.Write(w, status, errorResponse{code, message, field})
 }

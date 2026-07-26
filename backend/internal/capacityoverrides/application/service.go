@@ -2,12 +2,12 @@ package application
 
 import (
 	"context"
-	"crypto/rand"
 	"errors"
 	"fmt"
 	"time"
 
 	"github.com/banggok/sched_mind/backend/internal/capacityoverrides/domain"
+	"github.com/banggok/sched_mind/backend/internal/shared/identity"
 	"github.com/banggok/sched_mind/backend/internal/shared/listing"
 )
 
@@ -23,7 +23,7 @@ type Service struct {
 }
 
 func NewService(repository Repository) *Service {
-	return &Service{repository: repository, now: time.Now, newID: newUUID}
+	return &Service{repository: repository, now: time.Now, newID: identity.NewUUID}
 }
 func NewServiceWithDependencies(repository Repository, now func() time.Time, newID func() (string, error)) *Service {
 	return &Service{repository: repository, now: now, newID: newID}
@@ -98,13 +98,4 @@ func capacityFrom(value *float64) (domain.Capacity, error) {
 		return domain.Capacity{}, domain.ErrCapacityRequired
 	}
 	return domain.NewCapacity(*value)
-}
-func newUUID() (string, error) {
-	var value [16]byte
-	if _, err := rand.Read(value[:]); err != nil {
-		return "", fmt.Errorf("generate UUID: %w", err)
-	}
-	value[6] = (value[6] & 0x0f) | 0x40
-	value[8] = (value[8] & 0x3f) | 0x80
-	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", value[0:4], value[4:6], value[6:8], value[8:10], value[10:16]), nil
 }

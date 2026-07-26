@@ -25,7 +25,14 @@ Business features are organized under `backend/internal/<feature>/` with
 `domain`, `application`, `transport`, and `infrastructure` packages when those
 responsibilities exist. Technical health handling intentionally has only a
 transport package because it has no business model or application workflow.
-Shared pagination types live under `internal/shared/listing`.
+Shared pagination types and standard HTTP list-query parsing live under
+`internal/shared/listing`. Other context-free technical helpers live in
+narrowly scoped packages: `internal/shared/identity` owns UUID v4 generation,
+`internal/shared/persistence` owns SQL `LIKE` pattern escaping, and
+`internal/shared/httpjson` owns JSON response serialization. Feature handlers
+retain request/response DTOs and error mapping. Application services continue
+to receive ID generator functions so tests remain deterministic; feature
+domains do not depend on the generator implementation.
 
 The API performs graceful shutdown for interrupt and termination signals using
 the environment-configured timeout. It stops HTTP work before closing the owned

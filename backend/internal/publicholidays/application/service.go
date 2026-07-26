@@ -2,12 +2,12 @@ package application
 
 import (
 	"context"
-	"crypto/rand"
 	"errors"
 	"fmt"
 	"time"
 
 	"github.com/banggok/sched_mind/backend/internal/publicholidays/domain"
+	"github.com/banggok/sched_mind/backend/internal/shared/identity"
 	"github.com/banggok/sched_mind/backend/internal/shared/listing"
 )
 
@@ -23,10 +23,10 @@ type Service struct {
 }
 
 func NewService(repository Repository) *Service {
-	return &Service{repository: repository, now: time.Now, newID: newUUID}
+	return &Service{repository: repository, now: time.Now, newID: identity.NewUUID}
 }
 func NewServiceWithClock(repository Repository, now func() time.Time) *Service {
-	return &Service{repository: repository, now: now, newID: newUUID}
+	return &Service{repository: repository, now: now, newID: identity.NewUUID}
 }
 func NewServiceWithDependencies(repository Repository, now func() time.Time, newID func() (string, error)) *Service {
 	return &Service{repository: repository, now: now, newID: newID}
@@ -112,13 +112,4 @@ func (s *Service) CalendarDates(ctx context.Context, startDate, endDate time.Tim
 func dateOnly(value time.Time) time.Time {
 	year, month, day := value.Date()
 	return time.Date(year, month, day, 0, 0, 0, 0, value.Location())
-}
-func newUUID() (string, error) {
-	var value [16]byte
-	if _, err := rand.Read(value[:]); err != nil {
-		return "", fmt.Errorf("generate UUID: %w", err)
-	}
-	value[6] = (value[6] & 0x0f) | 0x40
-	value[8] = (value[8] & 0x3f) | 0x80
-	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", value[0:4], value[4:6], value[6:8], value[8:10], value[10:16]), nil
 }

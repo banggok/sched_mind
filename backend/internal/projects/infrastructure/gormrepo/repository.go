@@ -11,6 +11,7 @@ import (
 	"github.com/banggok/sched_mind/backend/internal/projects/application"
 	"github.com/banggok/sched_mind/backend/internal/projects/domain"
 	"github.com/banggok/sched_mind/backend/internal/shared/listing"
+	sharedpersistence "github.com/banggok/sched_mind/backend/internal/shared/persistence"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -63,7 +64,7 @@ func (r *Repository) List(ctx context.Context, query listing.Query) (listing.Pag
 
 func (r *Repository) listBase(ctx context.Context, search string) *gorm.DB {
 	base := r.database.WithContext(ctx).Model(&projectModel{})
-	if value := escapeLike(domain.NormalizedNameKey(search)); value != "" {
+	if value := sharedpersistence.EscapeLike(domain.NormalizedNameKey(search)); value != "" {
 		base = base.Where("name_key LIKE ?", value+"%")
 	}
 	return base
@@ -339,9 +340,6 @@ func toDomain(model projectModel) (*domain.Project, error) {
 }
 func statusUpdates(value domain.Project) map[string]interface{} {
 	return map[string]interface{}{"status": value.Status, "closed_at": value.ClosedAt, "locked_execution_snapshot": value.LockedExecutionSnapshot, "locked_commitment_snapshot": value.LockedCommitmentSnapshot, "updated_at": value.UpdatedAt}
-}
-func escapeLike(value string) string {
-	return strings.NewReplacer("\\", "\\\\", "%", "\\%", "_", "\\_").Replace(value)
 }
 
 var _ application.Store = (*Repository)(nil)
