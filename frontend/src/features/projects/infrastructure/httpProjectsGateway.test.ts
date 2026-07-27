@@ -19,6 +19,7 @@ describe("HTTP projects gateway", () => {
               autoCalculateDate: true,
               autoDependencyByAssignee: true,
               automaticScheduling: true,
+              schedulingStartDate: "2026-08-03",
               projectBuffer: 20,
               projectPriority: 1,
               closedAt: null,
@@ -42,7 +43,11 @@ describe("HTTP projects gateway", () => {
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/projects?search=al&page=1&pageSize=5",
     );
-    expect(result.items[0]).toMatchObject({ name: "Alpha", priority: 1 });
+    expect(result.items[0]).toMatchObject({
+      name: "Alpha",
+      priority: 1,
+      schedulingStartDate: "2026-08-03",
+    });
   });
 
   it("maps structured mutation errors", async () => {

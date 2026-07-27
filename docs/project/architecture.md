@@ -170,12 +170,25 @@ PATCH  /api/projects/{projectId}/settings
 DELETE /api/projects/{projectId}
 ```
 
-Project Settings persist `automatic_scheduling` (default `true`) and integer
-`project_buffer` (default `20`, constrained to `0..100`). Only Open Projects may
+Project Settings persist `automatic_scheduling` (default `true`), nullable
+`scheduling_start_date` as SQL `DATE`, and integer `project_buffer` (default
+`20`, constrained to `0..100`). The API represents the anchor as `YYYY-MM-DD`.
+Only Open Projects may
 change settings; Locked and Closed settings are read-only. Re-enabling
 Automatic Scheduling invokes the project-scoped `RecalculateProjectSchedule`
-application port inside the settings transaction, so dependency failure rolls
-back the settings update. Disabling preserves existing timeline data.
+application port inside the settings transaction only when Scheduling Start
+Date exists, so dependency failure rolls back the settings update. Without the
+anchor, the setting is retained but scheduling is not invoked. Disabling
+preserves existing timeline data.
+
+Scheduling Start Date is the only Project scheduling anchor. Automatic
+Scheduling may be configured without it, but no adapter may invent task dates;
+generated Execution and Commitment timelines remain empty and clients expose a
+validation warning. Executable WBS contains no Earliest Start, Start Constraint,
+or Task Anchor. Epic 6 will combine the Project anchor with predecessor
+readiness, availability, capacity, holidays, and lag. This foundation adds no
+scheduling calculation. Reads and writes continue to use the Project primary
+key, so the nullable non-filtered date column needs no index.
 
 The production scheduling adapter remains no-op until Epic 6 implements task
 timelines and the concrete Scheduling Engine. Persistence and coordination are
@@ -207,6 +220,17 @@ page identifiers, labels, hashes, ordering, and breadcrumb/sidebar metadata.
 The Role, Member, and Capacity Override features separate domain/application
 models from HTTP DTOs. Capacity Overrides are presented inside the Member
 workflow rather than as standalone navigation.
+
+The WBS domain remains the only work-item model. Its frontend presents the
+feature as **Project Structure**, an Executable WBS as **Task**, and a Grouping
+WBS as **Group**. These labels are derived from child existence and never create
+or persist a separate type field.
+
+Task name and executable fields share one Edit Task dialog and one atomic
+`PUT .../executable` operation. The repository locks and updates the Task by its
+indexed primary key; sibling-name uniqueness remains protected by the existing
+parent/name unique index. Group rename stays on the structural rename endpoint.
+No additional query or index is required for the combined Task update.
 
 Projects use the same feature-layer boundaries and shared list, search,
 pagination, dialog, loading, and Toast primitives. Their list cache identity is

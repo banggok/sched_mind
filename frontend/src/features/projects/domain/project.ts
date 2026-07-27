@@ -10,6 +10,7 @@ export interface Project {
   autoCalculateDate: boolean;
   autoDependencyByAssignee: boolean;
   automaticScheduling: boolean;
+  schedulingStartDate?: string;
   projectBuffer: number;
   priority: number;
   closedAt?: Date;

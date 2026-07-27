@@ -56,18 +56,22 @@ func TestProjectLifecycleAndValidation(t *testing.T) {
 
 func TestProjectSettingsValidationAndStatusRules(t *testing.T) {
 	project, _ := NewProject("id", "Alpha", 1, time.Now())
-	if err := project.UpdateSettings(false, 0, time.Now()); err != nil || project.AutomaticScheduling || project.ProjectBuffer != 0 {
+	anchor := time.Date(2026, 8, 3, 15, 30, 0, 0, time.FixedZone("test", 7*60*60))
+	if err := project.UpdateSettings(false, &anchor, 0, time.Now()); err != nil || project.AutomaticScheduling || project.ProjectBuffer != 0 {
 		t.Fatalf("valid settings: %#v %v", project, err)
 	}
-	if err := project.UpdateSettings(true, 101, time.Now()); !errors.Is(err, ErrProjectBufferInvalid) {
+	if project.SchedulingStartDate == nil || project.SchedulingStartDate.Format("2006-01-02T15:04:05Z07:00") != "2026-08-03T00:00:00Z" {
+		t.Fatalf("date-only scheduling anchor: %#v", project.SchedulingStartDate)
+	}
+	if err := project.UpdateSettings(true, nil, 101, time.Now()); !errors.Is(err, ErrProjectBufferInvalid) {
 		t.Fatalf("buffer: %v", err)
 	}
 	project.Status = StatusLocked
-	if err := project.UpdateSettings(true, 20, time.Now()); !errors.Is(err, ErrSettingsReadOnly) {
+	if err := project.UpdateSettings(true, nil, 20, time.Now()); !errors.Is(err, ErrSettingsReadOnly) {
 		t.Fatalf("locked: %v", err)
 	}
 	project.Status = StatusClosed
-	if err := project.UpdateSettings(true, 20, time.Now()); !errors.Is(err, ErrSettingsReadOnly) {
+	if err := project.UpdateSettings(true, nil, 20, time.Now()); !errors.Is(err, ErrSettingsReadOnly) {
 		t.Fatalf("closed: %v", err)
 	}
 }

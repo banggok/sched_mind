@@ -4,6 +4,7 @@ import (
 	capacityoverridehttp "github.com/banggok/sched_mind/backend/internal/capacityoverrides/transport/http"
 	projecthttp "github.com/banggok/sched_mind/backend/internal/projects/transport/http"
 	publicholidayhttp "github.com/banggok/sched_mind/backend/internal/publicholidays/transport/http"
+	wbshttp "github.com/banggok/sched_mind/backend/internal/wbs/transport/http"
 	"net/http"
 
 	rolehttp "github.com/banggok/sched_mind/backend/internal/roles/transport/http"
@@ -17,6 +18,7 @@ func NewRouter(
 	capacityOverrideService capacityoverridehttp.Service,
 	publicHolidayService publicholidayhttp.Service,
 	projectService projecthttp.Service,
+	wbsService wbshttp.Service,
 ) http.Handler {
 	mux := http.NewServeMux()
 	systemhealthhttp.Register(mux)
@@ -25,6 +27,7 @@ func NewRouter(
 	capacityoverridehttp.New(capacityOverrideService).Register(mux)
 	publicholidayhttp.New(publicHolidayService).Register(mux)
 	projecthttp.New(projectService).Register(mux)
+	wbshttp.New(wbsService).Register(mux)
 
 	return mux
 }

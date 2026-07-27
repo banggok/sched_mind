@@ -5,6 +5,7 @@ import { Button } from "./Button";
 export function CalendarPopover({
   label,
   buttonLabel,
+  disabled = false,
   initialDate,
   instruction,
   selectedDates,
@@ -14,6 +15,7 @@ export function CalendarPopover({
 }: {
   label: string;
   buttonLabel: string;
+  disabled?: boolean;
   initialDate?: string;
   instruction: string;
   selectedDates: string[];
@@ -133,8 +135,9 @@ export function CalendarPopover({
         aria-label={`${label}: ${buttonLabel}`}
         aria-haspopup="dialog"
         aria-expanded={open}
+        disabled={disabled}
         className="mt-2 w-full rounded-control border border-border-strong bg-surface p-3 text-left"
-        onClick={() => setCalendarOpen(!open)}
+        onClick={() => !disabled && setCalendarOpen(!open)}
       >
         {buttonLabel}
       </button>

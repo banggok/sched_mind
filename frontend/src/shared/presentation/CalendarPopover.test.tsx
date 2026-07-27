@@ -4,6 +4,27 @@ import { describe, expect, it, vi } from "vitest";
 import { CalendarPopover } from "./CalendarPopover";
 
 describe("CalendarPopover", () => {
+  it("does not open when the date control is read-only", async () => {
+    const user = userEvent.setup();
+    render(
+      <CalendarPopover
+        label="Scheduling Start Date"
+        buttonLabel="Select date"
+        disabled
+        instruction="Select a date."
+        selectedDates={[]}
+        onSelect={vi.fn(() => true)}
+      />,
+    );
+
+    const trigger = screen.getByRole("button", {
+      name: "Scheduling Start Date: Select date",
+    });
+    expect(trigger.hasAttribute("disabled")).toBe(true);
+    await user.click(trigger);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
   it("closes when the user clicks outside without moving focus back", async () => {
     const user = userEvent.setup();
     render(

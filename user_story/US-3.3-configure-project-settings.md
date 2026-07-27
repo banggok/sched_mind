@@ -23,6 +23,7 @@ This story does **not** change project lifecycle (`Open`, `Locked`, `Closed`), W
 ## In Scope
 
 - Configure Automatic Scheduling.
+- Configure the Project Scheduling Start Date.
 - Configure Project Buffer (%).
 - Validation rules.
 - UI behaviour.
@@ -59,6 +60,23 @@ Default: Enabled.
 - Commitment Timeline becomes manual.
 - Forecast remains automatic.
 - Engineering Lead manually maintains Execution and Commitment dates.
+
+## Scheduling Start Date
+
+- Scheduling Start Date is the single Project-level anchor for Automatic Scheduling.
+- It is nullable and stored as SQL `DATE`; its API format is `YYYY-MM-DD`.
+- It is optional while Automatic Scheduling is disabled.
+- Automatic Scheduling may remain enabled without an anchor, but must keep the
+  Execution and Commitment timelines empty and expose the warning
+  `Automatic Scheduling requires a Project Scheduling Start Date.`
+- The Scheduling Engine must not invent the first execution date. Epic 6 starts
+  the first executable tasks without predecessors at the earliest working date
+  allowed by this anchor and the other approved scheduling constraints.
+- Scheduling Start Date belongs to Project, never to an Executable WBS.
+- The Project form uses the shared calendar behaviour used by other date
+  features: single-date selection, selected-date state, weekend/public-holiday
+  marking, viewport-aware placement, scroll fallback, Escape, and outside-click
+  dismissal. The calendar is disabled whenever Project settings are read-only.
 
 ## Project Buffer
 
@@ -169,13 +187,17 @@ Rules:
 13. Closed projects reject Project Settings updates.
 14. Project Name and Project Settings share one Add/Edit form; there is no separate Settings action.
 15. Locked settings remain visible and read-only while Name retains its existing edit contract; Closed projects show the combined form entirely read-only without Save.
-16. OFF→ON requires confirmation before Save and scheduler failure rolls back the settings change.
+16. OFF→ON requires confirmation before Save. With Scheduling Start Date
+    configured, scheduler failure rolls back the settings change; without it,
+    the setting is saved, scheduling is not invoked, and the approved warning is shown.
+17. Scheduling Start Date is visible and editable in the combined Project form whenever Project settings are editable.
+18. Automatic Scheduling without Scheduling Start Date shows the approved warning and does not produce Execution or Commitment dates.
 
 ---
 
 # API
 
-Project create and update accept `automaticScheduling` and `projectBuffer`
+Project create and update accept `automaticScheduling`, nullable `schedulingStartDate`, and `projectBuffer`
 beside Name so the combined form is persisted atomically. Status remains absent
 from those payloads and changes only through the lifecycle command endpoint.
 
@@ -186,6 +208,7 @@ Body
 ```json
 {
   "automaticScheduling": true,
+  "schedulingStartDate": "2026-08-03",
   "projectBuffer": 20
 }
 ```
@@ -210,6 +233,8 @@ Body
 - Locked project update.
 - Closed project update.
 - Unsaved changes.
+- Invalid Scheduling Start Date API format.
+- Automatic Scheduling enabled with no Scheduling Start Date shows a warning and retains empty generated timelines.
 
 ## Regression
 

@@ -15,6 +15,12 @@ import {
 } from "../domain/capacityOverride";
 import { CapacityOverridesAPIError } from "../infrastructure/httpCapacityOverridesGateway";
 import { CalendarPopover } from "../../../shared/presentation/CalendarPopover";
+import { formatDateOnly } from "../../../shared/presentation/formatDateOnly";
+import {
+  isDecimalDraft,
+  parseDecimalDraft,
+  roundToHalfDraft,
+} from "../../../shared/presentation/decimalDraft";
 import { Alert } from "../../../shared/presentation/Alert";
 import { Button } from "../../../shared/presentation/Button";
 import { Dialog } from "../../../shared/presentation/Dialog";
@@ -212,7 +218,9 @@ export function CapacityOverridesPanel({
                 <CalendarPopover
                   label="Effective Date"
                   buttonLabel={
-                    effectiveDate ? formatDate(effectiveDate) : "Select date"
+                    effectiveDate
+                      ? formatDateOnly(effectiveDate)
+                      : "Select date"
                   }
                   initialDate={effectiveDate}
                   instruction="Select the date to check."
@@ -271,7 +279,7 @@ export function CapacityOverridesPanel({
             ) : items.length === 0 && effectiveDate ? (
               <EmptyState
                 title="No matching capacity override"
-                description={`No capacity override applies on ${formatDate(effectiveDate)}.`}
+                description={`No capacity override applies on ${formatDateOnly(effectiveDate)}.`}
                 action={
                   <Button
                     variant="quiet"
@@ -304,8 +312,9 @@ export function CapacityOverridesPanel({
                     <div>
                       <strong>{value.description}</strong>
                       <p className="text-sm text-muted">
-                        {formatDate(value.startDate)} —{" "}
-                        {formatDate(value.endDate)} · {value.capacity} hours/day
+                        {formatDateOnly(value.startDate)} —{" "}
+                        {formatDateOnly(value.endDate)} · {value.capacity}{" "}
+                        hours/day
                       </p>
                     </div>
                     <div className="flex gap-2">
@@ -438,12 +447,6 @@ function Field({
     </label>
   );
 }
-function formatDate(value: string) {
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeZone: "UTC",
-  }).format(new Date(`${value}T00:00:00Z`));
-}
 function errorMessage(error: unknown) {
   if (typeof error === "object" && error && "code" in error) {
     const code = String(error.code);
@@ -481,8 +484,9 @@ function DeleteOverrideDialog({
         Delete capacity override?
       </h3>
       <p className="mt-3 text-muted">
-        Delete {value.description}, {formatDate(value.startDate)} —{" "}
-        {formatDate(value.endDate)} at {value.capacity} hours/day permanently.
+        Delete {value.description}, {formatDateOnly(value.startDate)} —{" "}
+        {formatDateOnly(value.endDate)} at {value.capacity} hours/day
+        permanently.
       </p>
       <div className="form-actions">
         <Button data-autofocus disabled={saving} onClick={onCancel}>
@@ -529,8 +533,8 @@ function DateRangePicker({
   }
   const label = startDate
     ? endDate
-      ? `${formatDate(startDate)} — ${formatDate(endDate)}`
-      : `${formatDate(startDate)} — Select end date`
+      ? `${formatDateOnly(startDate)} — ${formatDateOnly(endDate)}`
+      : `${formatDateOnly(startDate)} — Select end date`
     : "Select start and end date";
   return (
     <div>
@@ -557,18 +561,4 @@ function DateRangePicker({
       )}
     </div>
   );
-}
-function parseDecimalDraft(value: string): number | undefined {
-  const normalized = value.trim();
-  if (!normalized) return undefined;
-  const parsed = Number(normalized);
-  return Number.isFinite(parsed) ? parsed : Number.NaN;
-}
-function roundToHalfDraft(value: string): string {
-  const parsed = parseDecimalDraft(value);
-  if (parsed === undefined || !Number.isFinite(parsed)) return value;
-  return String(Math.round(parsed * 2) / 2);
-}
-function isDecimalDraft(value: string): boolean {
-  return /^\d*(?:\.\d*)?$/.test(value);
 }

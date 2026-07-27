@@ -14,12 +14,14 @@ export interface ProjectsGateway {
   create(
     name: string,
     automaticScheduling: boolean,
+    schedulingStartDate: string | undefined,
     projectBuffer: number,
   ): Promise<Project>;
   update(
     id: string,
     name: string,
     automaticScheduling: boolean,
+    schedulingStartDate: string | undefined,
     projectBuffer: number,
   ): Promise<Project>;
   changeStatus(id: string, status: ProjectStatus): Promise<Project>;
@@ -27,6 +29,7 @@ export interface ProjectsGateway {
   updateSettings(
     id: string,
     automaticScheduling: boolean,
+    schedulingStartDate: string | undefined,
     projectBuffer: number,
   ): Promise<Project>;
   delete(id: string): Promise<void>;

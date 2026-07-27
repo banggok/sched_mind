@@ -16,12 +16,12 @@ import (
 type Service interface {
 	List(context.Context, listing.Query) (listing.Page[domain.Project], error)
 	Get(context.Context, string) (*domain.Project, error)
-	Create(context.Context, string, bool, int) (*domain.Project, error)
-	Update(context.Context, string, string, bool, int) (*domain.Project, error)
+	Create(context.Context, string, bool, *time.Time, int) (*domain.Project, error)
+	Update(context.Context, string, string, bool, *time.Time, int) (*domain.Project, error)
 	ChangeStatus(context.Context, string, domain.Status) (*domain.Project, error)
 	MovePriority(context.Context, string, domain.PriorityDirection) (*domain.Project, error)
 	Delete(context.Context, string) error
-	UpdateSettings(context.Context, string, bool, int) (*domain.Project, error)
+	UpdateSettings(context.Context, string, bool, *time.Time, int) (*domain.Project, error)
 }
 
 type Handler struct{ service Service }
@@ -39,9 +39,10 @@ func (h *Handler) Register(mux *http.ServeMux) {
 }
 
 type nameRequest struct {
-	Name                string `json:"name"`
-	AutomaticScheduling *bool  `json:"automaticScheduling,omitempty"`
-	ProjectBuffer       *int   `json:"projectBuffer,omitempty"`
+	Name                string  `json:"name"`
+	AutomaticScheduling *bool   `json:"automaticScheduling,omitempty"`
+	SchedulingStartDate *string `json:"schedulingStartDate"`
+	ProjectBuffer       *int    `json:"projectBuffer,omitempty"`
 }
 type statusRequest struct {
 	Status string `json:"status"`
@@ -50,8 +51,9 @@ type priorityRequest struct {
 	Direction string `json:"direction"`
 }
 type settingsRequest struct {
-	AutomaticScheduling *bool `json:"automaticScheduling"`
-	ProjectBuffer       *int  `json:"projectBuffer"`
+	AutomaticScheduling *bool   `json:"automaticScheduling"`
+	SchedulingStartDate *string `json:"schedulingStartDate"`
+	ProjectBuffer       *int    `json:"projectBuffer"`
 }
 type item struct {
 	ID                       string     `json:"id"`
@@ -62,6 +64,7 @@ type item struct {
 	AutoCalculateDate        bool       `json:"autoCalculateDate"`
 	AutoDependencyByAssignee bool       `json:"autoDependencyByAssignee"`
 	AutomaticScheduling      bool       `json:"automaticScheduling"`
+	SchedulingStartDate      *string    `json:"schedulingStartDate"`
 	ProjectBuffer            int        `json:"projectBuffer"`
 	ProjectPriority          int        `json:"projectPriority"`
 	ClosedAt                 *time.Time `json:"closedAt"`
@@ -110,7 +113,11 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	automatic, buffer := settingsOrDefaults(payload.AutomaticScheduling, payload.ProjectBuffer)
-	value, err := h.service.Create(r.Context(), payload.Name, automatic, buffer)
+	anchor, ok := parseDate(w, payload.SchedulingStartDate)
+	if !ok {
+		return
+	}
+	value, err := h.service.Create(r.Context(), payload.Name, automatic, anchor, buffer)
 	h.writeProject(w, value, err, 201)
 }
 func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
@@ -122,7 +129,11 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		httpjson.Write(w, 400, errorResponse{"INVALID_REQUEST", "automaticScheduling and projectBuffer are required", ""})
 		return
 	}
-	value, err := h.service.Update(r.Context(), r.PathValue("projectId"), payload.Name, *payload.AutomaticScheduling, *payload.ProjectBuffer)
+	anchor, ok := parseDate(w, payload.SchedulingStartDate)
+	if !ok {
+		return
+	}
+	value, err := h.service.Update(r.Context(), r.PathValue("projectId"), payload.Name, *payload.AutomaticScheduling, anchor, *payload.ProjectBuffer)
 	h.writeProject(w, value, err, 200)
 }
 func settingsOrDefaults(automatic *bool, buffer *int) (bool, int) {
@@ -170,7 +181,11 @@ func (h *Handler) updateSettings(w http.ResponseWriter, r *http.Request) {
 		httpjson.Write(w, 400, errorResponse{"INVALID_REQUEST", "automaticScheduling and projectBuffer are required", ""})
 		return
 	}
-	value, err := h.service.UpdateSettings(r.Context(), r.PathValue("projectId"), *payload.AutomaticScheduling, *payload.ProjectBuffer)
+	anchor, ok := parseDate(w, payload.SchedulingStartDate)
+	if !ok {
+		return
+	}
+	value, err := h.service.UpdateSettings(r.Context(), r.PathValue("projectId"), *payload.AutomaticScheduling, anchor, *payload.ProjectBuffer)
 	h.writeProject(w, value, err, 200)
 }
 func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
@@ -211,7 +226,19 @@ func mapItem(value domain.Project) item {
 		utc := value.ClosedAt.UTC()
 		closedAt = &utc
 	}
-	return item{value.ID, value.Name, string(value.Status), dateString(value.StartDate), dateString(value.EndDate), value.AutoCalculateDate, value.AutoDependencyByAssignee, value.AutomaticScheduling, value.ProjectBuffer, value.Priority, closedAt, value.CreatedAt.UTC(), value.UpdatedAt.UTC()}
+	return item{value.ID, value.Name, string(value.Status), dateString(value.StartDate), dateString(value.EndDate), value.AutoCalculateDate, value.AutoDependencyByAssignee, value.AutomaticScheduling, dateString(value.SchedulingStartDate), value.ProjectBuffer, value.Priority, closedAt, value.CreatedAt.UTC(), value.UpdatedAt.UTC()}
+}
+
+func parseDate(w http.ResponseWriter, value *string) (*time.Time, bool) {
+	if value == nil || *value == "" {
+		return nil, true
+	}
+	parsed, err := time.Parse("2006-01-02", *value)
+	if err != nil {
+		httpjson.Write(w, 400, errorResponse{"PROJECT_SCHEDULING_START_DATE_INVALID", "Scheduling Start Date must use YYYY-MM-DD", "schedulingStartDate"})
+		return nil, false
+	}
+	return &parsed, true
 }
 func dateString(value *time.Time) *string {
 	if value == nil {

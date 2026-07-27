@@ -22,11 +22,13 @@ export function createProject(
   gateway: ProjectsGateway,
   name: string,
   automaticScheduling: boolean,
+  schedulingStartDate: string | undefined,
   projectBuffer: number,
 ): Promise<Project> {
   return gateway.create(
     normalizeProjectName(name),
     automaticScheduling,
+    schedulingStartDate,
     validateProjectBuffer(projectBuffer),
   );
 }
@@ -35,12 +37,14 @@ export function updateProject(
   id: string,
   name: string,
   automaticScheduling: boolean,
+  schedulingStartDate: string | undefined,
   projectBuffer: number,
 ): Promise<Project> {
   return gateway.update(
     id,
     normalizeProjectName(name),
     automaticScheduling,
+    schedulingStartDate,
     validateProjectBuffer(projectBuffer),
   );
 }
@@ -68,11 +72,13 @@ export function updateProjectSettings(
   gateway: ProjectsGateway,
   id: string,
   automaticScheduling: boolean,
+  schedulingStartDate: string | undefined,
   projectBuffer: number,
 ): Promise<Project> {
   return gateway.updateSettings(
     id,
     automaticScheduling,
+    schedulingStartDate,
     validateProjectBuffer(projectBuffer),
   );
 }

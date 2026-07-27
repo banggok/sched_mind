@@ -1,5 +1,13 @@
 # US-3.1 — Create Project
 
+> Product decision update: Project includes a nullable `Scheduling Start Date`
+> (`SQL DATE`, API `YYYY-MM-DD`). It is the only initial anchor for future
+> Automatic Scheduling and is configured in the combined Add/Edit Project form.
+> Automatic Scheduling may be saved without it, but generated timelines must
+> remain empty and the UI must warn: `Automatic Scheduling requires a Project
+> Scheduling Start Date.` No task-level Earliest Start or equivalent anchor is
+> permitted. Scheduling calculation remains outside this story.
+
 ## 1. User Story
 
 **Sebagai** Engineering Lead,

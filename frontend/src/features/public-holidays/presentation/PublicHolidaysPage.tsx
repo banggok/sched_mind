@@ -4,6 +4,7 @@ import { PageContent } from "../../../app/PageContent";
 import { Alert } from "../../../shared/presentation/Alert";
 import { Button } from "../../../shared/presentation/Button";
 import { CalendarPopover } from "../../../shared/presentation/CalendarPopover";
+import { formatDateOnly } from "../../../shared/presentation/formatDateOnly";
 import { Dialog } from "../../../shared/presentation/Dialog";
 import { EmptyState } from "../../../shared/presentation/EmptyState";
 import { ListSkeleton } from "../../../shared/presentation/ListSkeleton";
@@ -178,7 +179,7 @@ export function PublicHolidaysPage({
                   <CalendarPopover
                     label="Holiday Date"
                     buttonLabel={
-                      holidayDate ? formatDate(holidayDate) : "Select date"
+                      holidayDate ? formatDateOnly(holidayDate) : "Select date"
                     }
                     initialDate={holidayDate}
                     instruction="Select the holiday date to check."
@@ -242,7 +243,7 @@ export function PublicHolidaysPage({
             ) : items.length === 0 && holidayDate ? (
               <EmptyState
                 title="No public holiday is configured"
-                description={`No public holiday is configured for ${formatDate(holidayDate)}.`}
+                description={`No public holiday is configured for ${formatDateOnly(holidayDate)}.`}
                 action={
                   <Button
                     variant="quiet"
@@ -506,15 +507,9 @@ function DeleteDialog({
     </Dialog>
   );
 }
-function formatDate(value: string) {
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeZone: "UTC",
-  }).format(new Date(`${value}T00:00:00Z`));
-}
 function formatRange(start: string, end: string) {
-  if (!end || start === end) return formatDate(start);
-  return `${formatDate(start)} – ${formatDate(end)}`;
+  if (!end || start === end) return formatDateOnly(start);
+  return `${formatDateOnly(start)} – ${formatDateOnly(end)}`;
 }
 function errorMessage(error: unknown) {
   if (error instanceof PublicHolidaysAPIError) {
