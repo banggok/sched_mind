@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Breadcrumb } from "../../../app/Breadcrumb";
 import { PageContent } from "../../../app/PageContent";
 import { Button } from "../../../shared/presentation/Button";
+import { CalendarPopover } from "../../../shared/presentation/CalendarPopover";
 import { Dialog } from "../../../shared/presentation/Dialog";
 import { EmptyState } from "../../../shared/presentation/EmptyState";
 import { FormField } from "../../../shared/presentation/FormField";
@@ -10,6 +11,7 @@ import { ListSurface } from "../../../shared/presentation/ListSurface";
 import { PaginationControls } from "../../../shared/presentation/PaginationControls";
 import { SearchField } from "../../../shared/presentation/SearchField";
 import { Toast } from "../../../shared/presentation/Toast";
+import { formatDateOnly } from "../../../shared/presentation/formatDateOnly";
 import { useDebouncedValue } from "../../../shared/presentation/useDebouncedValue";
 import {
   changeProjectStatus,
@@ -38,7 +40,18 @@ type CommandState = {
   project: Project;
 };
 
-export function ProjectsPage({ gateway }: { gateway: ProjectsGateway }) {
+export function ProjectsPage({
+  gateway,
+  loadPublicHolidayDates,
+  onManageWBS,
+}: {
+  gateway: ProjectsGateway;
+  loadPublicHolidayDates?(
+    startDate: string,
+    endDate: string,
+  ): Promise<string[]>;
+  onManageWBS?(project: Project): void;
+}) {
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
   const [items, setItems] = useState<Project[]>([]);
@@ -50,6 +63,7 @@ export function ProjectsPage({ gateway }: { gateway: ProjectsGateway }) {
   const [command, setCommand] = useState<CommandState>();
   const [name, setName] = useState("");
   const [automaticScheduling, setAutomaticScheduling] = useState(true);
+  const [schedulingStartDate, setSchedulingStartDate] = useState("");
   const [projectBuffer, setProjectBuffer] = useState("20");
   const [confirmingEnable, setConfirmingEnable] = useState(false);
   const [fieldError, setFieldError] = useState("");
@@ -93,6 +107,7 @@ export function ProjectsPage({ gateway }: { gateway: ProjectsGateway }) {
     setForm({ mode: "create" });
     setName("");
     setAutomaticScheduling(true);
+    setSchedulingStartDate("");
     setProjectBuffer("20");
     setConfirmingEnable(false);
     setFieldError("");
@@ -103,6 +118,7 @@ export function ProjectsPage({ gateway }: { gateway: ProjectsGateway }) {
     setForm({ mode: "edit", project });
     setName(project.name);
     setAutomaticScheduling(project.automaticScheduling);
+    setSchedulingStartDate(project.schedulingStartDate ?? "");
     setProjectBuffer(String(project.projectBuffer));
     setConfirmingEnable(false);
     setFieldError("");
@@ -140,6 +156,7 @@ export function ProjectsPage({ gateway }: { gateway: ProjectsGateway }) {
           gateway,
           name,
           automaticScheduling,
+          schedulingStartDate || undefined,
           Number(projectBuffer),
         );
       else if (form.project)
@@ -148,6 +165,7 @@ export function ProjectsPage({ gateway }: { gateway: ProjectsGateway }) {
           form.project.id,
           name,
           automaticScheduling,
+          schedulingStartDate || undefined,
           Number(projectBuffer),
         );
       setForm(undefined);
@@ -289,6 +307,7 @@ export function ProjectsPage({ gateway }: { gateway: ProjectsGateway }) {
                       setCommand({ kind, project });
                     }}
                     onMove={(direction) => void move(project, direction)}
+                    onManageWBS={() => onManageWBS?.(project)}
                   />
                 ))}
               </ul>
@@ -309,6 +328,7 @@ export function ProjectsPage({ gateway }: { gateway: ProjectsGateway }) {
           form={form}
           name={name}
           automaticScheduling={automaticScheduling}
+          schedulingStartDate={schedulingStartDate}
           projectBuffer={projectBuffer}
           confirmingEnable={confirmingEnable}
           fieldError={fieldError}
@@ -317,6 +337,8 @@ export function ProjectsPage({ gateway }: { gateway: ProjectsGateway }) {
           submitting={submitting}
           onName={setName}
           onAutomaticScheduling={setAutomaticScheduling}
+          onSchedulingStartDate={setSchedulingStartDate}
+          loadPublicHolidayDates={loadPublicHolidayDates}
           onProjectBuffer={setProjectBuffer}
           onConfirmingEnable={setConfirmingEnable}
           onClose={() => !submitting && setForm(undefined)}
@@ -344,6 +366,7 @@ function ProjectRow({
   onEdit,
   onCommand,
   onMove,
+  onManageWBS,
 }: {
   project: Project;
   first: boolean;
@@ -351,6 +374,7 @@ function ProjectRow({
   onEdit(): void;
   onCommand(kind: CommandState["kind"]): void;
   onMove(direction: PriorityDirection): void;
+  onManageWBS(): void;
 }) {
   const active = project.status !== "closed";
   return (
@@ -368,6 +392,9 @@ function ProjectRow({
         </p>
       </div>
       <div className="flex flex-wrap justify-end gap-2">
+        <Button compact disabled={busy} onClick={onManageWBS}>
+          Project Structure
+        </Button>
         {active ? (
           <>
             <Button
@@ -424,6 +451,7 @@ function ProjectForm({
   form,
   name,
   automaticScheduling,
+  schedulingStartDate,
   projectBuffer,
   confirmingEnable,
   fieldError,
@@ -432,6 +460,8 @@ function ProjectForm({
   submitting,
   onName,
   onAutomaticScheduling,
+  onSchedulingStartDate,
+  loadPublicHolidayDates,
   onProjectBuffer,
   onConfirmingEnable,
   onClose,
@@ -440,6 +470,7 @@ function ProjectForm({
   form: FormState;
   name: string;
   automaticScheduling: boolean;
+  schedulingStartDate: string;
   projectBuffer: string;
   confirmingEnable: boolean;
   fieldError: string;
@@ -448,6 +479,11 @@ function ProjectForm({
   submitting: boolean;
   onName(value: string): void;
   onAutomaticScheduling(value: boolean): void;
+  onSchedulingStartDate(value: string): void;
+  loadPublicHolidayDates?(
+    startDate: string,
+    endDate: string,
+  ): Promise<string[]>;
   onProjectBuffer(value: string): void;
   onConfirmingEnable(value: boolean): void;
   onClose(): void;
@@ -514,6 +550,33 @@ function ProjectForm({
               </Button>
             </div>
           </div>
+          <div className="mt-5">
+            <CalendarPopover
+              label="Scheduling Start Date"
+              buttonLabel={
+                schedulingStartDate
+                  ? formatDateOnly(schedulingStartDate)
+                  : "Select date"
+              }
+              disabled={!settingsEditable || submitting}
+              initialDate={schedulingStartDate}
+              instruction="Select the earliest scheduling date."
+              selectedDates={schedulingStartDate ? [schedulingStartDate] : []}
+              loadPublicHolidayDates={loadPublicHolidayDates}
+              onSelect={(date) => {
+                onSchedulingStartDate(date);
+                return true;
+              }}
+            />
+            <p className="mt-2 text-xs text-muted">
+              Earliest working date allowed for the first executable task.
+            </p>
+          </div>
+          {automaticScheduling && !schedulingStartDate ? (
+            <p className="mt-3 text-sm font-semibold text-danger" role="status">
+              Automatic Scheduling requires a Project Scheduling Start Date.
+            </p>
+          ) : null}
           <FormField
             className="mt-5"
             id="project-buffer"
@@ -565,9 +628,9 @@ function ProjectForm({
             Enable automatic scheduling?
           </h2>
           <p className="mt-3 leading-7 text-muted">
-            The scheduler will recalculate unfinished tasks and replace their
-            manual Execution and Commitment timelines. Completed tasks with
-            Actual End remain unchanged.
+            {schedulingStartDate
+              ? "The scheduler will recalculate unfinished tasks and replace their manual Execution and Commitment timelines. Completed tasks with Actual End remain unchanged."
+              : "Automatic scheduling will be enabled, but no dates will be produced until a Project Scheduling Start Date is configured."}
           </p>
           <div className="form-actions">
             <Button

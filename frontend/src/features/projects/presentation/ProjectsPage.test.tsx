@@ -50,10 +50,23 @@ describe("Projects page", () => {
     await screen.findByText("No projects yet");
     await user.click(screen.getByRole("button", { name: "Add Project" }));
     expect(screen.queryByLabelText(/status/i)).toBeNull();
+    expect(
+      screen.getByText(
+        "Automatic Scheduling requires a Project Scheduling Start Date.",
+      ),
+    ).toBeTruthy();
     await user.type(screen.getByLabelText("Project name"), "  Alpha  ");
+    await user.click(
+      screen.getByRole("button", {
+        name: "Scheduling Start Date: Select date",
+      }),
+    );
+    const current = new Date();
+    const selectedDate = `${current.getUTCFullYear()}-${String(current.getUTCMonth() + 1).padStart(2, "0")}-15`;
+    await user.click(screen.getByRole("button", { name: selectedDate }));
     await user.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() =>
-      expect(api.create).toHaveBeenCalledWith("Alpha", true, 20),
+      expect(api.create).toHaveBeenCalledWith("Alpha", true, selectedDate, 20),
     );
   });
 
@@ -113,6 +126,7 @@ describe("Projects page", () => {
     const disabled = {
       ...alpha,
       automaticScheduling: false,
+      schedulingStartDate: "2026-08-03",
       projectBuffer: 35,
     };
     const api = gateway([disabled]);
@@ -141,7 +155,13 @@ describe("Projects page", () => {
     );
     await user.click(screen.getByRole("button", { name: "Enable and save" }));
     await waitFor(() =>
-      expect(api.update).toHaveBeenCalledWith("p1", "Alpha", true, 40),
+      expect(api.update).toHaveBeenCalledWith(
+        "p1",
+        "Alpha",
+        true,
+        "2026-08-03",
+        40,
+      ),
     );
   });
 
@@ -152,6 +172,13 @@ describe("Projects page", () => {
     await screen.findByText("Alpha");
     await user.click(screen.getByRole("button", { name: "Edit" }));
     expect(screen.getByRole("switch").hasAttribute("disabled")).toBe(true);
+    expect(
+      screen
+        .getByRole("button", {
+          name: "Scheduling Start Date: Select date",
+        })
+        .hasAttribute("disabled"),
+    ).toBe(true);
     expect(screen.getByRole("button", { name: "Save" })).toBeTruthy();
     await user.click(
       within(screen.getByRole("dialog")).getByRole("button", {

@@ -13,7 +13,7 @@ import (
 type storeStub struct {
 	items    map[string]domain.Project
 	move     func(context.Context, string, domain.PriorityDirection, time.Time, func(context.Context) error) (*domain.Project, error)
-	settings func(context.Context, string, bool, int, time.Time, func(context.Context, string) error) (*domain.Project, error)
+	settings func(context.Context, string, bool, *time.Time, int, time.Time, func(context.Context, string) error) (*domain.Project, error)
 }
 
 func newStoreStub() *storeStub { return &storeStub{items: map[string]domain.Project{}} }
@@ -31,25 +31,25 @@ func (s *storeStub) Find(_ context.Context, id string) (*domain.Project, error) 
 	}
 	return &value, nil
 }
-func (s *storeStub) CreateNext(_ context.Context, id, name string, automatic bool, buffer int, now time.Time) (*domain.Project, error) {
+func (s *storeStub) CreateNext(_ context.Context, id, name string, automatic bool, anchor *time.Time, buffer int, now time.Time) (*domain.Project, error) {
 	value, err := domain.NewProject(id, name, len(s.items)+1, now)
 	if err != nil {
 		return nil, err
 	}
-	if err := value.UpdateSettings(automatic, buffer, now); err != nil {
+	if err := value.UpdateSettings(automatic, anchor, buffer, now); err != nil {
 		return nil, err
 	}
 	s.items[id] = *value
 	return value, nil
 }
-func (s *storeStub) UpdateDetails(ctx context.Context, id, name string, automatic bool, buffer int, now time.Time, schedule func(context.Context, string) error) (*domain.Project, error) {
+func (s *storeStub) UpdateDetails(ctx context.Context, id, name string, automatic bool, anchor *time.Time, buffer int, now time.Time, schedule func(context.Context, string) error) (*domain.Project, error) {
 	value := s.items[id]
 	wasAutomatic := value.AutomaticScheduling
 	if err := value.Rename(name, now); err != nil {
 		return nil, err
 	}
 	if value.AutomaticScheduling != automatic || value.ProjectBuffer != buffer {
-		if err := value.UpdateSettings(automatic, buffer, now); err != nil {
+		if err := value.UpdateSettings(automatic, anchor, buffer, now); err != nil {
 			return nil, err
 		}
 	}
@@ -82,12 +82,12 @@ func (s *storeStub) ChangeStatus(_ context.Context, id string, target domain.Sta
 func (s *storeStub) MovePriority(ctx context.Context, id string, direction domain.PriorityDirection, now time.Time, schedule func(context.Context) error) (*domain.Project, error) {
 	return s.move(ctx, id, direction, now, schedule)
 }
-func (s *storeStub) UpdateSettings(ctx context.Context, id string, automatic bool, buffer int, now time.Time, schedule func(context.Context, string) error) (*domain.Project, error) {
+func (s *storeStub) UpdateSettings(ctx context.Context, id string, automatic bool, anchor *time.Time, buffer int, now time.Time, schedule func(context.Context, string) error) (*domain.Project, error) {
 	if s.settings != nil {
-		return s.settings(ctx, id, automatic, buffer, now, schedule)
+		return s.settings(ctx, id, automatic, anchor, buffer, now, schedule)
 	}
 	value := s.items[id]
-	if err := value.UpdateSettings(automatic, buffer, now); err != nil {
+	if err := value.UpdateSettings(automatic, anchor, buffer, now); err != nil {
 		return nil, err
 	}
 	s.items[id] = value
@@ -114,7 +114,8 @@ func TestServiceSettingsCoordinatesProjectScheduler(t *testing.T) {
 	store.items[project.ID] = *project
 	scheduler := &schedulerStub{}
 	service := NewServiceWithDependencies(store, scheduler, time.Now, func() (string, error) { return "unused", nil })
-	value, err := service.Update(context.Background(), "p1", "Renamed", true, 35)
+	anchor := time.Date(2026, 8, 3, 0, 0, 0, 0, time.UTC)
+	value, err := service.Update(context.Background(), "p1", "Renamed", true, &anchor, 35)
 	if err != nil || value == nil || value.ProjectBuffer != 35 || scheduler.calls != 1 || scheduler.projectID != "p1" {
 		t.Fatalf("settings: %#v %v scheduler=%#v", value, err, scheduler)
 	}
@@ -124,7 +125,7 @@ func TestServiceCreateGetUpdateListDelete(t *testing.T) {
 	store := newStoreStub()
 	now := time.Date(2026, 7, 26, 10, 0, 0, 0, time.UTC)
 	service := NewServiceWithDependencies(store, &schedulerStub{}, func() time.Time { return now }, func() (string, error) { return "p1", nil })
-	created, err := service.Create(context.Background(), " Alpha ", true, 20)
+	created, err := service.Create(context.Background(), " Alpha ", true, nil, 20)
 	if err != nil || created == nil || created.Name != "Alpha" {
 		t.Fatalf("create: %#v %v", created, err)
 	}
@@ -132,7 +133,7 @@ func TestServiceCreateGetUpdateListDelete(t *testing.T) {
 	if err != nil || got == nil {
 		t.Fatalf("get: %#v %v", got, err)
 	}
-	updated, err := service.Update(context.Background(), "p1", "Beta", true, 20)
+	updated, err := service.Update(context.Background(), "p1", "Beta", true, nil, 20)
 	if err != nil || updated == nil || updated.Name != "Beta" {
 		t.Fatalf("update: %#v %v", updated, err)
 	}

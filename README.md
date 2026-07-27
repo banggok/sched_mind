@@ -106,8 +106,9 @@ configured `APP_TIMEZONE`.
 
 Project endpoints:
 
-Project create/update payloads contain `name`, `automaticScheduling`, and
-`projectBuffer`. Status changes only through the status command endpoint.
+Project create/update payloads contain `name`, `automaticScheduling`, nullable
+`schedulingStartDate` (`YYYY-MM-DD`), and `projectBuffer`. Status changes only
+through the status command endpoint.
 
 ```text
 GET    /api/projects?search=alpha&page=1&pageSize=5

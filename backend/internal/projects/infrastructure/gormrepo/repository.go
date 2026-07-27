@@ -92,7 +92,7 @@ func (r *Repository) Find(ctx context.Context, id string) (*domain.Project, erro
 	return find(r.database.WithContext(ctx), id, false)
 }
 
-func (r *Repository) CreateNext(ctx context.Context, id, name string, automaticScheduling bool, projectBuffer int, now time.Time) (*domain.Project, error) {
+func (r *Repository) CreateNext(ctx context.Context, id, name string, automaticScheduling bool, schedulingStartDate *time.Time, projectBuffer int, now time.Time) (*domain.Project, error) {
 	for attempt := 0; attempt < 5; attempt++ {
 		var created *domain.Project
 		err := r.database.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -114,7 +114,7 @@ func (r *Repository) CreateNext(ctx context.Context, id, name string, automaticS
 			if value == nil {
 				return errors.New("create project: domain returned nil")
 			}
-			if err := value.UpdateSettings(automaticScheduling, projectBuffer, now); err != nil {
+			if err := value.UpdateSettings(automaticScheduling, schedulingStartDate, projectBuffer, now); err != nil {
 				return err
 			}
 			if err := tx.Create(fromDomain(*value)).Error; err != nil {
@@ -136,7 +136,7 @@ func (r *Repository) CreateNext(ctx context.Context, id, name string, automaticS
 	return nil, errors.New("create project with next priority: concurrent allocation did not settle")
 }
 
-func (r *Repository) UpdateDetails(ctx context.Context, id, name string, automaticScheduling bool, projectBuffer int, now time.Time, schedule func(context.Context, string) error) (*domain.Project, error) {
+func (r *Repository) UpdateDetails(ctx context.Context, id, name string, automaticScheduling bool, schedulingStartDate *time.Time, projectBuffer int, now time.Time, schedule func(context.Context, string) error) (*domain.Project, error) {
 	var changed *domain.Project
 	err := r.database.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		value, err := find(tx, id, true)
@@ -150,19 +150,19 @@ func (r *Repository) UpdateDetails(ctx context.Context, id, name string, automat
 		if err := value.Rename(name, now); err != nil {
 			return err
 		}
-		if value.AutomaticScheduling != automaticScheduling || value.ProjectBuffer != projectBuffer {
-			if err := value.UpdateSettings(automaticScheduling, projectBuffer, now); err != nil {
+		if value.AutomaticScheduling != automaticScheduling || !datesEqual(value.SchedulingStartDate, schedulingStartDate) || value.ProjectBuffer != projectBuffer {
+			if err := value.UpdateSettings(automaticScheduling, schedulingStartDate, projectBuffer, now); err != nil {
 				return err
 			}
 		}
-		result := tx.Model(&projectModel{}).Where("id = ?", id).Updates(map[string]interface{}{"name": value.Name, "name_key": domain.NormalizedNameKey(value.Name), "automatic_scheduling": value.AutomaticScheduling, "project_buffer": value.ProjectBuffer, "updated_at": value.UpdatedAt})
+		result := tx.Model(&projectModel{}).Where("id = ?", id).Updates(map[string]interface{}{"name": value.Name, "name_key": domain.NormalizedNameKey(value.Name), "automatic_scheduling": value.AutomaticScheduling, "scheduling_start_date": value.SchedulingStartDate, "project_buffer": value.ProjectBuffer, "updated_at": value.UpdatedAt})
 		if errors.Is(result.Error, gorm.ErrDuplicatedKey) {
 			return domain.ErrNameExists
 		}
 		if result.Error != nil {
 			return result.Error
 		}
-		if !wasAutomatic && automaticScheduling {
+		if !wasAutomatic && automaticScheduling && value.SchedulingStartDate != nil {
 			if err := schedule(ctx, id); err != nil {
 				return fmt.Errorf("recalculate project schedule: %w", err)
 			}
@@ -262,7 +262,7 @@ func (r *Repository) MovePriority(ctx context.Context, id string, direction doma
 	return changed, nil
 }
 
-func (r *Repository) UpdateSettings(ctx context.Context, id string, automaticScheduling bool, projectBuffer int, now time.Time, schedule func(context.Context, string) error) (*domain.Project, error) {
+func (r *Repository) UpdateSettings(ctx context.Context, id string, automaticScheduling bool, schedulingStartDate *time.Time, projectBuffer int, now time.Time, schedule func(context.Context, string) error) (*domain.Project, error) {
 	var changed *domain.Project
 	err := r.database.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		value, err := find(tx, id, true)
@@ -273,13 +273,13 @@ func (r *Repository) UpdateSettings(ctx context.Context, id string, automaticSch
 			return errors.New("update settings: find returned nil")
 		}
 		wasAutomatic := value.AutomaticScheduling
-		if err := value.UpdateSettings(automaticScheduling, projectBuffer, now); err != nil {
+		if err := value.UpdateSettings(automaticScheduling, schedulingStartDate, projectBuffer, now); err != nil {
 			return err
 		}
-		if err := tx.Model(&projectModel{}).Where("id = ?", id).Updates(map[string]interface{}{"automatic_scheduling": value.AutomaticScheduling, "project_buffer": value.ProjectBuffer, "updated_at": value.UpdatedAt}).Error; err != nil {
+		if err := tx.Model(&projectModel{}).Where("id = ?", id).Updates(map[string]interface{}{"automatic_scheduling": value.AutomaticScheduling, "scheduling_start_date": value.SchedulingStartDate, "project_buffer": value.ProjectBuffer, "updated_at": value.UpdatedAt}).Error; err != nil {
 			return err
 		}
-		if !wasAutomatic && automaticScheduling {
+		if !wasAutomatic && automaticScheduling && value.SchedulingStartDate != nil {
 			if err := schedule(ctx, id); err != nil {
 				return fmt.Errorf("recalculate project schedule: %w", err)
 			}
@@ -333,10 +333,17 @@ func find(database *gorm.DB, id string, lock bool) (*domain.Project, error) {
 }
 
 func fromDomain(value domain.Project) *projectModel {
-	return &projectModel{ID: value.ID, Name: value.Name, NameKey: domain.NormalizedNameKey(value.Name), Status: string(value.Status), StartDate: value.StartDate, EndDate: value.EndDate, AutoCalculateDate: value.AutoCalculateDate, AutoDependencyByAssignee: value.AutoDependencyByAssignee, AutomaticScheduling: value.AutomaticScheduling, ProjectBuffer: value.ProjectBuffer, Priority: value.Priority, ClosedAt: value.ClosedAt, LockedExecutionSnapshot: value.LockedExecutionSnapshot, LockedCommitmentSnapshot: value.LockedCommitmentSnapshot, CreatedAt: value.CreatedAt, UpdatedAt: value.UpdatedAt}
+	return &projectModel{ID: value.ID, Name: value.Name, NameKey: domain.NormalizedNameKey(value.Name), Status: string(value.Status), StartDate: value.StartDate, EndDate: value.EndDate, AutoCalculateDate: value.AutoCalculateDate, AutoDependencyByAssignee: value.AutoDependencyByAssignee, AutomaticScheduling: value.AutomaticScheduling, SchedulingStartDate: value.SchedulingStartDate, ProjectBuffer: value.ProjectBuffer, Priority: value.Priority, ClosedAt: value.ClosedAt, LockedExecutionSnapshot: value.LockedExecutionSnapshot, LockedCommitmentSnapshot: value.LockedCommitmentSnapshot, CreatedAt: value.CreatedAt, UpdatedAt: value.UpdatedAt}
 }
 func toDomain(model projectModel) (*domain.Project, error) {
-	return domain.Rehydrate(model.ID, model.Name, domain.Status(model.Status), model.StartDate, model.EndDate, model.AutoCalculateDate, model.AutoDependencyByAssignee, model.AutomaticScheduling, model.ProjectBuffer, model.Priority, model.ClosedAt, model.LockedExecutionSnapshot, model.LockedCommitmentSnapshot, model.CreatedAt, model.UpdatedAt)
+	return domain.Rehydrate(model.ID, model.Name, domain.Status(model.Status), model.StartDate, model.EndDate, model.AutoCalculateDate, model.AutoDependencyByAssignee, model.AutomaticScheduling, model.SchedulingStartDate, model.ProjectBuffer, model.Priority, model.ClosedAt, model.LockedExecutionSnapshot, model.LockedCommitmentSnapshot, model.CreatedAt, model.UpdatedAt)
+}
+
+func datesEqual(left, right *time.Time) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return left.Year() == right.Year() && left.YearDay() == right.YearDay()
 }
 func statusUpdates(value domain.Project) map[string]interface{} {
 	return map[string]interface{}{"status": value.Status, "closed_at": value.ClosedAt, "locked_execution_snapshot": value.LockedExecutionSnapshot, "locked_commitment_snapshot": value.LockedCommitmentSnapshot, "updated_at": value.UpdatedAt}

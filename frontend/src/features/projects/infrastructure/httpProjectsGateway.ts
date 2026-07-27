@@ -15,6 +15,7 @@ interface ProjectDTO {
   autoCalculateDate: boolean;
   autoDependencyByAssignee: boolean;
   automaticScheduling: boolean;
+  schedulingStartDate: string | null;
   projectBuffer: number;
   projectPriority: number;
   closedAt: string | null;
@@ -87,17 +88,19 @@ export function createHTTPProjectsGateway(apiBaseURL: string): ProjectsGateway {
         ).data,
       );
     },
-    create(name, automaticScheduling, projectBuffer) {
+    create(name, automaticScheduling, schedulingStartDate, projectBuffer) {
       return mutation("/projects", "POST", {
         name,
         automaticScheduling,
+        schedulingStartDate: schedulingStartDate ?? null,
         projectBuffer,
       });
     },
-    update(id, name, automaticScheduling, projectBuffer) {
+    update(id, name, automaticScheduling, schedulingStartDate, projectBuffer) {
       return mutation(`/projects/${encodeURIComponent(id)}`, "PUT", {
         name,
         automaticScheduling,
+        schedulingStartDate: schedulingStartDate ?? null,
         projectBuffer,
       });
     },
@@ -111,9 +114,15 @@ export function createHTTPProjectsGateway(apiBaseURL: string): ProjectsGateway {
         direction,
       });
     },
-    updateSettings(id, automaticScheduling, projectBuffer) {
+    updateSettings(
+      id,
+      automaticScheduling,
+      schedulingStartDate,
+      projectBuffer,
+    ) {
       return mutation(`/projects/${encodeURIComponent(id)}/settings`, "PATCH", {
         automaticScheduling,
+        schedulingStartDate: schedulingStartDate ?? null,
         projectBuffer,
       });
     },
@@ -158,6 +167,7 @@ function mapProject(dto: ProjectDTO): Project {
     autoCalculateDate: dto.autoCalculateDate,
     autoDependencyByAssignee: dto.autoDependencyByAssignee,
     automaticScheduling: dto.automaticScheduling,
+    schedulingStartDate: dto.schedulingStartDate ?? undefined,
     projectBuffer: dto.projectBuffer,
     priority: dto.projectPriority,
     closedAt: dto.closedAt ? new Date(dto.closedAt) : undefined,

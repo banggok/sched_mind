@@ -27,6 +27,10 @@ import { EmptyState } from "../../../shared/presentation/EmptyState";
 import { ListSurface } from "../../../shared/presentation/ListSurface";
 import { Alert } from "../../../shared/presentation/Alert";
 import { FormField } from "../../../shared/presentation/FormField";
+import {
+  parseDecimalDraft,
+  roundToHalfDraft,
+} from "../../../shared/presentation/decimalDraft";
 
 export function TeamMembersDashboardPage({
   gateway,
@@ -503,12 +507,6 @@ function capitalizeWords(value: string): string {
   );
 }
 
-function roundToHalfDraft(value: string): string {
-  const parsed = parseDecimalDraft(value);
-  if (parsed === undefined || !Number.isFinite(parsed)) return value;
-  return String(Math.round(parsed * 2) / 2);
-}
-
 function filterRoles(
   roles: MemberRoleOption[],
   query: string,
@@ -518,13 +516,6 @@ function filterRoles(
   return roles.filter((role) =>
     role.name.toLocaleLowerCase().startsWith(normalized),
   );
-}
-
-function parseDecimalDraft(value: string): number | undefined {
-  const normalized = value.trim();
-  if (!normalized) return undefined;
-  const parsed = Number(normalized);
-  return Number.isFinite(parsed) ? parsed : Number.NaN;
 }
 
 function commitmentPreview(dailyDraft: string, bufferDraft: string): string {

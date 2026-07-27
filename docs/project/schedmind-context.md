@@ -86,7 +86,10 @@ scheduling and Gantt. Exact transitions, ordering, deletion, and downstream
 contracts belong to US-3.1.
 
 Project Settings control whether future Execution and Commitment scheduling is
-automatic and retain a Project Buffer percentage. Only Open Projects are
+automatic, retain a Project Buffer percentage, and optionally define the
+Project-level Scheduling Start Date. This date is the sole initial anchor for
+future automatic schedules; it is not a task field. Automatic Scheduling
+without an anchor must not invent timeline dates and must warn the user. Only Open Projects are
 editable. The integration contract exists, but concrete timeline recalculation
 remains deferred to Epic 6; a successful settings update must not be interpreted
 as proof that timelines were recalculated. Exact rules belong to US-3.3.
