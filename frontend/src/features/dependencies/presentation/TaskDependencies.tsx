@@ -27,39 +27,51 @@ export function TaskDependencies({
   const [error, setError] = useState("");
   const [version, setVersion] = useState(0);
   const [direction, setDirection] = useState<DependencyDirection>();
-  const [deleting, setDeleting] = useState<string>();
   const [mutationBusy, setMutationBusy] = useState(false);
+
   // React state disables the UI after render; the ref closes the same-tick event race.
   const mutationLock = useRef(false);
   const [success, setSuccess] = useState("");
+
   useEffect(() => {
     const controller = new AbortController();
+
     setLoading(true);
     setError("");
+
     void gateway
       .list(taskId, controller.signal)
       .then(setDetail)
       .catch((reason: unknown) => {
-        if (!(reason instanceof DOMException && reason.name === "AbortError"))
+        if (!(reason instanceof DOMException && reason.name === "AbortError")) {
           setError("Dependencies could not be loaded.");
+        }
       })
       .finally(() => {
-        if (!controller.signal.aborted) setLoading(false);
+        if (!controller.signal.aborted) {
+          setLoading(false);
+        }
       });
+
     return () => controller.abort();
   }, [gateway, taskId, version]);
+
   const changed = (message: string) => {
     setSuccess(message);
     gateway.invalidateTask(taskId);
     setDirection(undefined);
-    setDeleting(undefined);
     setVersion((value) => value + 1);
   };
+
   const remove = async (id: string) => {
-    if (mutationLock.current) return;
+    if (mutationLock.current) {
+      return;
+    }
+
     mutationLock.current = true;
     setMutationBusy(true);
     setError("");
+
     try {
       await gateway.remove(id);
       changed("Dependency removed.");
@@ -74,6 +86,7 @@ export function TaskDependencies({
       setMutationBusy(false);
     }
   };
+
   return (
     <section
       className="border-t border-border-subtle pt-5"
@@ -82,11 +95,13 @@ export function TaskDependencies({
       <h4 id="dependencies-title" className="font-extrabold">
         Dependencies
       </h4>
+
       {refreshing ? (
         <p className="mt-1 text-sm text-muted" role="status">
           Refreshing…
         </p>
       ) : null}
+
       {initialLoading ? (
         <ListSkeleton label="Loading dependencies" rows={2} />
       ) : error && !detail ? (
@@ -107,26 +122,23 @@ export function TaskDependencies({
             title="Blocked by"
             values={detail.blockedBy}
             readOnly={readOnly}
-            deleting={deleting}
             busy={mutationBusy}
-            onAskDelete={setDeleting}
-            onCancelDelete={() => setDeleting(undefined)}
             onDelete={(id) => void remove(id)}
             onAdd={() => setDirection("blockedBy")}
           />
+
           <RelationSection
             title="Blocks"
             values={detail.blocks}
             readOnly={readOnly}
-            deleting={deleting}
             busy={mutationBusy}
-            onAskDelete={setDeleting}
-            onCancelDelete={() => setDeleting(undefined)}
             onDelete={(id) => void remove(id)}
             onAdd={() => setDirection("blocks")}
           />
+
           {error ? <Alert tone="danger">{error}</Alert> : null}
           {success ? <Alert tone="success">{success}</Alert> : null}
+
           {direction ? (
             <CandidatePicker
               taskId={taskId}
@@ -155,24 +167,38 @@ function formatExpectedStart(value?: string): string {
   }).format(new Date(value));
 }
 
+function UnlinkIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      className="size-5"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M9 17H7a5 5 0 0 1 0-10h3" />
+      <path d="M15 7h2a5 5 0 0 1 0 10h-3" />
+      <line x1="8" y1="12" x2="16" y2="12" />
+      <line x1="4" y1="4" x2="20" y2="20" />
+    </svg>
+  );
+}
+
 function RelationSection({
   title,
   values,
   readOnly,
-  deleting,
   busy,
-  onAskDelete,
-  onCancelDelete,
   onDelete,
   onAdd,
 }: {
   title: string;
   values: DependencyDetail["blocks"];
   readOnly: boolean;
-  deleting?: string;
   busy: boolean;
-  onAskDelete(id: string): void;
-  onCancelDelete(): void;
   onDelete(id: string): void;
   onAdd(): void;
 }) {
@@ -180,64 +206,59 @@ function RelationSection({
     <div>
       <div className="flex items-center justify-between gap-3">
         <h5 className="font-bold">{title}</h5>
+
         {!readOnly ? (
           <Button type="button" compact disabled={busy} onClick={onAdd}>
             Add
           </Button>
         ) : null}
       </div>
+
       {values.length === 0 ? (
         <p className="mt-2 text-sm text-muted">No dependencies.</p>
       ) : (
         <ul className="mt-2 space-y-2">
-          {values.map(({ id, task }) => (
-            <li
-              key={id}
-              className="rounded-control border border-border-subtle p-3"
-            >
-              <div className="flex flex-wrap items-center gap-2">
-                <div className="mr-auto">
-                  <strong>{task.name}</strong>
-                  <p className="text-sm text-muted">
-                    {task.projectName}
-                    {task.completed ? " · Completed" : ""}
-                    {title === "Blocks"
-                      ? ` · ${formatExpectedStart(task.expectedStart)}`
-                      : ""}
-                  </p>
-                </div>
-                {deleting === id ? (
-                  <>
-                    <span className="text-sm">Remove?</span>
-                    <Button type="button" compact onClick={onCancelDelete}>
-                      Cancel
-                    </Button>
-                    <Button
+          {values.map(({ id, task }) => {
+            const historical = title === "Blocks" && task.completed;
+
+            return (
+              <li
+                key={id}
+                className="rounded-control border border-border-subtle p-3"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <strong className="block break-words">{task.name}</strong>
+
+                    <p className="mt-1 break-words text-sm text-muted">
+                      {task.projectName}
+                      {task.completed ? " · Completed" : ""}
+                      {title === "Blocks"
+                        ? ` · ${formatExpectedStart(task.expectedStart)}`
+                        : ""}
+                    </p>
+                  </div>
+
+                  {!readOnly && !historical ? (
+                    <button
                       type="button"
-                      compact
-                      variant="danger"
-                      loading={busy}
+                      className="grid size-9 shrink-0 place-items-center rounded-control text-danger transition-colors hover:bg-danger-soft disabled:opacity-50"
+                      aria-label={`Remove dependency for ${task.name}`}
+                      title="Remove dependency"
+                      disabled={busy}
                       onClick={() => onDelete(id)}
                     >
-                      Remove
-                    </Button>
-                  </>
-                ) : !readOnly && !(title === "Blocks" && task.completed) ? (
-                  <Button
-                    type="button"
-                    compact
-                    variant="danger"
-                    disabled={busy}
-                    onClick={() => onAskDelete(id)}
-                  >
-                    Remove
-                  </Button>
-                ) : title === "Blocks" && task.completed ? (
-                  <span className="text-sm text-muted">Historical</span>
-                ) : null}
-              </div>
-            </li>
-          ))}
+                      <UnlinkIcon />
+                    </button>
+                  ) : historical ? (
+                    <span className="shrink-0 text-sm text-muted">
+                      Historical
+                    </span>
+                  ) : null}
+                </div>
+              </li>
+            );
+          })}
         </ul>
       )}
     </div>
@@ -263,15 +284,19 @@ function CandidatePicker({
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+
   // React state disables the UI after render; the ref closes the same-tick event race.
   const mutationLock = useRef(false);
   const [error, setError] = useState("");
   const [version, setVersion] = useState(0);
+
   useEffect(() => {
     const controller = new AbortController();
+
     const timer = window.setTimeout(() => {
       setLoading(true);
       setError("");
+
       void gateway
         .candidates(
           taskId,
@@ -286,28 +311,40 @@ function CandidatePicker({
           setTotal(result.totalItems);
         })
         .catch((reason: unknown) => {
-          if (!(reason instanceof DOMException && reason.name === "AbortError"))
+          if (!(
+            reason instanceof DOMException && reason.name === "AbortError"
+          )) {
             setError("Tasks could not be loaded.");
+          }
         })
         .finally(() => {
-          if (!controller.signal.aborted) setLoading(false);
+          if (!controller.signal.aborted) {
+            setLoading(false);
+          }
         });
     }, 250);
+
     return () => {
       window.clearTimeout(timer);
       controller.abort();
     };
   }, [gateway, taskId, direction, search, page, version]);
+
   const add = async (candidateId: string) => {
-    if (mutationLock.current) return;
+    if (mutationLock.current) {
+      return;
+    }
+
     mutationLock.current = true;
     setBusy(true);
     setError("");
+
     try {
       await gateway.create(
         direction === "blockedBy" ? candidateId : taskId,
         direction === "blockedBy" ? taskId : candidateId,
       );
+
       onCreated();
     } catch (reason: unknown) {
       setError(
@@ -320,7 +357,9 @@ function CandidatePicker({
       setBusy(false);
     }
   };
+
   const pages = Math.max(1, Math.ceil(total / pageSize));
+
   return (
     <div
       className="rounded-control border border-border-subtle p-4"
@@ -332,6 +371,7 @@ function CandidatePicker({
       >
         Search tasks
       </label>
+
       <input
         id={`dependency-search-${direction}`}
         className="ui-input mt-2"
@@ -344,10 +384,14 @@ function CandidatePicker({
         onKeyDown={(event) => {
           if (event.key === "Enter") {
             event.preventDefault();
-            if (!loading && !busy && items[0]) void add(items[0].id);
+
+            if (!loading && !busy && items[0]) {
+              void add(items[0].id);
+            }
           }
         }}
       />
+
       {loading ? (
         <ListSkeleton label="Loading tasks" rows={3} />
       ) : error ? (
@@ -370,11 +414,13 @@ function CandidatePicker({
             <li key={task.id} className="flex items-center gap-3">
               <span className="mr-auto">
                 <strong>{task.name}</strong>
+
                 <span className="block text-sm text-muted">
                   {task.hierarchyPath}
                   {task.completed ? " · Completed" : ""}
                 </span>
               </span>
+
               <Button
                 type="button"
                 compact
@@ -389,10 +435,12 @@ function CandidatePicker({
           ))}
         </ul>
       )}
+
       <div className="mt-4 flex items-center justify-between gap-2">
         <Button type="button" compact onClick={onCancel}>
           Cancel
         </Button>
+
         <div className="flex items-center gap-2">
           <Button
             type="button"
@@ -402,9 +450,11 @@ function CandidatePicker({
           >
             Previous
           </Button>
+
           <span className="text-sm">
             Page {page} of {pages}
           </span>
+
           <Button
             type="button"
             compact

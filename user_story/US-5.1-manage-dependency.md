@@ -292,10 +292,21 @@ Dependency dapat dihapus selama penghapusan tidak melanggar completed-task histo
 Delete:
 
 - menggunakan hard delete untuk relation;
-- memerlukan confirmation bila current UX pattern mengharuskannya;
+- dipicu melalui explicit unlink action pada dependency row;
+- tidak memerlukan confirmation tambahan;
+- menggunakan icon-only action dengan accessible name yang menjelaskan Task
+  target, misalnya `Remove dependency for Task B`;
+- menampilkan pending state selama delete diproses;
+- mencegah duplicate delete submission;
+- menampilkan success atau recoverable error feedback;
+- tetap menampilkan confirmed dependency jika delete gagal;
 - tidak menghapus Task;
 - tidak membuat relation pengganti;
 - tidak melakukan auto-reconnect.
+
+Confirmation tidak digunakan karena operation hanya menghapus relation, bukan Task
+atau data Task. Selama relation masih valid, Engineering Lead dapat membuat
+kembali dependency melalui dependency creation flow yang sama.
 
 ### 7.12 Delete Task
 
@@ -543,17 +554,22 @@ NTB > Task 2 > Task 2
 ### AC-20 — Delete dependency
 
 **Given** dependency editable `A blocks B` tersedia  
-**When** Engineering Lead mengonfirmasi delete  
-**Then** relation dihapus  
+**When** Engineering Lead mengaktifkan action `Remove dependency`  
+**Then** hanya satu delete request dikirim  
+**And** relation dihapus  
 **And** Task A tidak lagi menampilkan B pada `Blocks`  
-**And** Task B tidak lagi menampilkan A pada `Blocked by`.
+**And** Task B tidak lagi menampilkan A pada `Blocked by`  
+**And** success feedback ditampilkan.
 
-### AC-21 — Delete dependency dibatalkan
+### AC-21 — Direct unlink interaction
 
-**Given** delete confirmation terbuka  
-**When** Engineering Lead memilih Cancel  
-**Then** tidak ada delete request  
-**And** relation tetap tersedia.
+**Given** dependency editable tersedia  
+**When** dependency row ditampilkan  
+**Then** UI menyediakan icon-only unlink action  
+**And** action mempunyai accessible name yang menyebut Task target  
+**And** action mempunyai touch target yang memadai  
+**And** tidak ada inline confirmation atau confirmation dialog tambahan  
+**And** action dinonaktifkan selama delete request masih diproses.
 
 ### AC-22 — Historical dependency completed blocked task tidak dapat dihapus
 
@@ -852,13 +868,14 @@ Tidak boleh mengekspos SQL, stack trace, atau infrastructure details.
 
 ### TC-21 — Delete dependency editable
 
-**Action:** Delete A → B.  
-**Expected:** Relation hilang dari dua sisi.
+**Action:** Aktifkan `Remove dependency` pada relation A → B.  
+**Expected:** Satu delete request dikirim, relation hilang dari kedua arah, dan success feedback ditampilkan.
 
-### TC-22 — Cancel delete
+### TC-22 — Accessible direct unlink action
 
-**Action:** Cancel confirmation.  
-**Expected:** Tidak ada request dan relation tetap.
+**Action:** Temukan dan aktifkan unlink action menggunakan accessible name.  
+**Expected:** Action dapat digunakan tanpa pointer-only interaction, tidak menampilkan confirmation tambahan, dan mempunyai accessible name yang
+menjelaskan Task target.
 
 ### TC-23 — Delete historical completed dependency
 
@@ -998,7 +1015,7 @@ Tidak boleh mengekspos SQL, stack trace, atau infrastructure details.
 - Create dari kedua arah.
 - Multiple selection if approved interaction supports it.
 - Cycle error path.
-- Delete confirmation/cancel/success.
+- Direct unlink action, accessible name, pending state, failure recovery, dan success feedback.
 - Read-only historical dependency.
 - Expected Start versus `Not scheduled`.
 - Duplicate submission prevention.

@@ -202,48 +202,68 @@ describe("TaskDependencies", () => {
     expect(await screen.findByText("Dependency added.")).not.toBeNull();
   });
 
-  it("requires confirmation before removal", async () => {
+  it("removes a dependency directly from the unlink action", async () => {
     const value = gateway();
+
     render(<TaskDependencies taskId="task" gateway={value} readOnly={false} />);
-    const remove = (
-      await screen.findAllByRole("button", { name: "Remove" })
-    )[0];
-    fireEvent.click(remove);
-    expect(value.remove).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    expect(value.remove).not.toHaveBeenCalled();
+
+    const taskName = await screen.findByText("API");
+    const relation = taskName.closest("li");
+
+    expect(relation).not.toBeNull();
+
+    fireEvent.click(
+      within(relation!).getByRole("button", {
+        name: "Remove dependency for API",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(value.remove).toHaveBeenCalledTimes(1);
+      expect(value.remove).toHaveBeenCalledWith("dependency-a");
+    });
+
+    expect(await screen.findByText("Dependency removed.")).not.toBeNull();
   });
 
-  it("sends only one delete mutation when confirmation is triggered twice before render", async () => {
+  it("sends only one delete mutation when unlink is triggered twice before render", async () => {
     let resolveRemove: (() => void) | undefined;
+
     const pendingRemove = new Promise<void>((resolve) => {
       resolveRemove = resolve;
     });
+
     const value = gateway();
+
     vi.mocked(value.remove).mockReturnValueOnce(pendingRemove);
 
     render(<TaskDependencies taskId="task" gateway={value} readOnly={false} />);
 
     const taskName = await screen.findByText("API");
     const relation = taskName.closest("li");
-    expect(relation).not.toBeNull();
-    if (!relation) return;
 
-    fireEvent.click(within(relation).getByRole("button", { name: "Remove" }));
-    const confirmRemove = within(relation).getByRole("button", {
-      name: "Remove",
+    expect(relation).not.toBeNull();
+
+    if (!relation) {
+      return;
+    }
+
+    const removeButton = within(relation).getByRole("button", {
+      name: "Remove dependency for API",
     });
 
     act(() => {
-      confirmRemove.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      confirmRemove.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      removeButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+      removeButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
     expect(value.remove).toHaveBeenCalledTimes(1);
     expect(value.remove).toHaveBeenCalledWith("dependency-a");
-    expect((confirmRemove as HTMLButtonElement).disabled).toBe(true);
+    expect((removeButton as HTMLButtonElement).disabled).toBe(true);
 
     resolveRemove?.();
+
     expect(await screen.findByText("Dependency removed.")).not.toBeNull();
   });
 
