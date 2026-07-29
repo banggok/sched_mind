@@ -56,6 +56,11 @@ indexes support those queries. A future MySQL adapter must provide an equivalent
 indexed path appropriate to its supported version without changing domain or
 application contracts.
 
+Dependency candidate search uses case-insensitive substring matching against
+Task Name and Project Name because users may search using any meaningful part
+of either name. Other list endpoints retain their existing prefix-search
+contract unless their product requirements explicitly require substring search.
+
 Every production query change is reviewed with its effective GORM scope,
 filters, ordering, pagination, locking, expected cardinality, and supporting
 index. Non-trivial PostgreSQL paths are checked with `EXPLAIN`. Indexes without
@@ -226,6 +231,64 @@ feature as **Project Structure**, an Executable WBS as **Task**, and a Grouping
 WBS as **Group**. These labels are derived from child existence and never create
 or persist a separate type field.
 
+The Dependency feature stores one directed Finish-to-Start relation between
+two executable WBS Tasks. Relations may cross active Projects, but Groups and
+Tasks belonging to Closed Projects cannot become new endpoints. Completed
+Tasks may be blockers; completed Tasks cannot become newly blocked, and an
+existing relation whose blocked Task is completed is historical read-only.
+Dependency editing in Phase 1 is composed into the contextual Edit Task dialog
+in Project Structure. Its feature contract is reusable by a future Task Grid;
+this implementation does not introduce a Gantt or scheduling algorithm.
+
+Dependency creation serializes active-portfolio graph mutations by locking
+active Project rows in deterministic ID order. It validates the complete graph
+inside the transaction, rejects direct and indirect cycles with a safe path,
+and relies on the composite unique constraint for concurrent duplicates.
+Successful create/delete invokes the portfolio invalidation port when an
+affected Project uses Automatic Scheduling. The adapter remains no-op until
+Epic 6.
+
+Task deletion explicitly hard-deletes incoming and outgoing relations in the
+owning WBS transaction; foreign-key cascade is intentionally not used. When an
+executable Task is converted to a Group, its executable data and dependency
+endpoints move to the deterministic conversion child in the same transaction.
+Any callback, persistence, or retarget failure rolls hierarchy and graph back
+together.
+
+Dependency APIs are:
+
+```text
+GET    /api/tasks/{taskId}/dependencies
+GET    /api/dependency-candidates?taskId=...&direction=blockedBy|blocks&search=...&page=1&pageSize=5
+POST   /api/dependencies
+DELETE /api/dependencies/{dependencyId}
+```
+
+Dependency candidate search is backend-owned, case-insensitive substring search
+against normalized Task Name and Project Name. Results are deterministically
+ordered, cycle-filtered, and paginated.
+
+Each candidate response includes a backend-generated `hierarchyPath`. The path
+starts with the Project as WBS level 0, includes every ancestor Group in order,
+and ends with the executable candidate Task. The frontend renders Task Name as
+the primary label and the full hierarchy path as supporting context; it does not
+reconstruct hierarchy from partial DTO fields.
+
+Example:
+
+```text
+Task 2
+NTB > Task 1 > Task 2
+```
+
+Leading-wildcard substring matching does not efficiently use the ordinary
+B-tree prefix index. This is an accepted MVP usability trade-off for dependency
+candidate search. If portfolio scale makes this query unacceptable, introduce a
+dialect-appropriate search index, such as PostgreSQL trigram indexing, without
+changing the domain or application contract. The relation table retains its
+unique endpoint pair and covering indexes in both directions. Runtime access
+uses GORM, not raw DML.
+
 Task name and executable fields share one Edit Task dialog and one atomic
 `PUT .../executable` operation. The repository locks and updates the Task by its
 indexed primary key; sibling-name uniqueness remains protected by the existing
@@ -252,6 +315,12 @@ HTTP gateways use `src/shared/infrastructure/RequestCache.ts` to deduplicate
 identical list loads and reuse confirmed results. Consumer cancellation does not
 cancel shared work. Versioned invalidation prevents stale in-flight responses
 from repopulating a cache after mutation.
+
+Dependency detail caches are keyed by Task ID. Dependency mutations invalidate
+both endpoints, while WBS conversion or Task deletion invalidates all cached
+dependency details because endpoint identity may change. Candidate requests
+include Task, direction, search, page, and page size in their identity, and
+consumer cancellation prevents stale UI restoration.
 
 The composition root invalidates the Member list after a successful Role
 mutation because Member projections embed the Role name. Capacity Override

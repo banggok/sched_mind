@@ -6,12 +6,14 @@ import (
 	"fmt"
 	capacityoverrideapplication "github.com/banggok/sched_mind/backend/internal/capacityoverrides/application"
 	capacityoverridegormrepo "github.com/banggok/sched_mind/backend/internal/capacityoverrides/infrastructure/gormrepo"
+	dependencyapplication "github.com/banggok/sched_mind/backend/internal/dependencies/application"
+	dependencygormrepo "github.com/banggok/sched_mind/backend/internal/dependencies/infrastructure/gormrepo"
 	projectapplication "github.com/banggok/sched_mind/backend/internal/projects/application"
 	projectgormrepo "github.com/banggok/sched_mind/backend/internal/projects/infrastructure/gormrepo"
-	wbsapplication "github.com/banggok/sched_mind/backend/internal/wbs/application"
-	wbsgormrepo "github.com/banggok/sched_mind/backend/internal/wbs/infrastructure/gormrepo"
 	publicholidayapplication "github.com/banggok/sched_mind/backend/internal/publicholidays/application"
 	publicholidaygormrepo "github.com/banggok/sched_mind/backend/internal/publicholidays/infrastructure/gormrepo"
+	wbsapplication "github.com/banggok/sched_mind/backend/internal/wbs/application"
+	wbsgormrepo "github.com/banggok/sched_mind/backend/internal/wbs/infrastructure/gormrepo"
 	"log"
 	"net/http"
 	"os"
@@ -148,10 +150,12 @@ func run(config *configuration) (runError error) {
 	projectService := projectapplication.NewService(projectRepository, projectapplication.NoopScheduler{})
 	wbsRepository := wbsgormrepo.New(database)
 	wbsService := wbsapplication.NewService(wbsRepository, wbsapplication.NoopScheduler{})
+	dependencyRepository := dependencygormrepo.New(database)
+	dependencyService := dependencyapplication.NewService(dependencyRepository, dependencyapplication.NoopScheduler{})
 
 	server := &http.Server{
 		Addr:    config.address,
-		Handler: httpapi.NewRouter(roleService, teamMemberService, capacityOverrideService, publicHolidayService, projectService, wbsService),
+		Handler: httpapi.NewRouter(roleService, teamMemberService, capacityOverrideService, publicHolidayService, projectService, wbsService, dependencyService),
 	}
 
 	signalContext, stopSignals := signal.NotifyContext(

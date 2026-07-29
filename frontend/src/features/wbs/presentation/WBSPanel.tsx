@@ -12,6 +12,7 @@ import { Toast } from "../../../shared/presentation/Toast";
 import type { RolesGateway } from "../../roles/application/rolesGateway";
 import type { TeamMembersGateway } from "../../team-members/application/teamMembersGateway";
 import { WBSDetailDialog } from "./WBSDetailDialog";
+import type { DependenciesGateway } from "../../dependencies/application/dependenciesGateway";
 
 type Draft = {
   mode: "create" | "rename" | "move";
@@ -21,6 +22,7 @@ type Draft = {
 export function WBSPanel({
   project,
   gateway,
+  dependenciesGateway,
   rolesGateway,
   membersGateway,
   loadPublicHolidayDates,
@@ -28,6 +30,7 @@ export function WBSPanel({
 }: {
   project: Project;
   gateway: WBSGateway;
+  dependenciesGateway?: DependenciesGateway;
   rolesGateway: RolesGateway;
   membersGateway: TeamMembersGateway;
   loadPublicHolidayDates?(
@@ -66,6 +69,7 @@ export function WBSPanel({
   }, [gateway, project.id, reload]);
   const all = flatten(tree);
   const refresh = (message: string) => {
+    dependenciesGateway?.invalidateAll();
     setToast(message);
     setDraft(undefined);
     setConversion(false);
@@ -336,6 +340,7 @@ export function WBSPanel({
           project={project}
           node={detail}
           gateway={gateway}
+          dependenciesGateway={dependenciesGateway}
           rolesGateway={rolesGateway}
           membersGateway={membersGateway}
           loadPublicHolidayDates={loadPublicHolidayDates}

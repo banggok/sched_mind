@@ -1,5 +1,12 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import type { DependenciesGateway } from "../../dependencies/application/dependenciesGateway";
 import type { Project } from "../../projects/domain/project";
 import type { RolesGateway } from "../../roles/application/rolesGateway";
 import type { TeamMembersGateway } from "../../team-members/application/teamMembersGateway";
@@ -59,6 +66,392 @@ function gateway(tree: WBSNode[]): WBSGateway {
 }
 
 describe("WBS presentation terminology", () => {
+  it("AC-1 shows one dependency from both directions through contextual Edit Task", async () => {
+    const dependencyId = "dependency-ab";
+    const taskA = node("a", "API");
+    const taskB = node("b", "Build");
+    const dependenciesGateway: DependenciesGateway = {
+      list: vi.fn(async (taskId: string) => {
+        if (taskId === taskA.id) {
+          return {
+            blockedBy: [],
+            blocks: [
+              {
+                id: dependencyId,
+                task: {
+                  id: taskB.id,
+                  name: taskB.name,
+                  projectId: project.id,
+                  projectName: project.name,
+                  hierarchyPath: `${project.name} > ${taskB.name}`,
+                  completed: false,
+                },
+              },
+            ],
+          };
+        }
+        if (taskId === taskB.id) {
+          return {
+            blockedBy: [
+              {
+                id: dependencyId,
+                task: {
+                  id: taskA.id,
+                  name: taskA.name,
+                  projectId: project.id,
+                  projectName: project.name,
+                  hierarchyPath: `${project.name} > ${taskA.name}`,
+                  completed: false,
+                },
+              },
+            ],
+            blocks: [],
+          };
+        }
+        throw new Error(`unexpected task ${taskId}`);
+      }),
+      candidates: vi.fn().mockResolvedValue({
+        items: [],
+        page: 1,
+        pageSize: 5,
+        totalItems: 0,
+      }),
+      create: vi.fn().mockResolvedValue(undefined),
+      remove: vi.fn().mockResolvedValue(undefined),
+      invalidateTask: vi.fn(),
+      invalidateAll: vi.fn(),
+    };
+
+    render(
+      <WBSPanel
+        project={project}
+        gateway={gateway([taskA, taskB])}
+        dependenciesGateway={dependenciesGateway}
+        {...options}
+        onClose={() => undefined}
+      />,
+    );
+
+    const tree = await screen.findByRole("tree");
+    const apiTreeItem = within(tree)
+      .getByText("API")
+      .closest<HTMLElement>('[role="treeitem"]');
+
+    expect(apiTreeItem).not.toBeNull();
+    if (!apiTreeItem) {
+      throw new Error("API tree item was not found");
+    }
+
+    fireEvent.click(
+      within(apiTreeItem).getByRole("button", { name: "Edit Task" }),
+    );
+
+    let detailDialog = await screen.findByRole("dialog", { name: "Edit Task" });
+    const blocksHeading = await within(detailDialog).findByRole("heading", {
+      name: "Blocks",
+    });
+    const blocksSection = blocksHeading.parentElement?.parentElement;
+    expect(blocksSection).not.toBeNull();
+    if (!blocksSection) return;
+    expect(within(blocksSection).getByText("Build")).not.toBeNull();
+
+    fireEvent.click(
+      within(detailDialog).getByRole("button", { name: "Close" }),
+    );
+
+    const buildTreeItem = within(tree)
+      .getByText("Build")
+      .closest<HTMLElement>('[role="treeitem"]');
+
+    expect(buildTreeItem).not.toBeNull();
+    if (!buildTreeItem) {
+      throw new Error("Build tree item was not found");
+    }
+
+    fireEvent.click(
+      within(buildTreeItem).getByRole("button", { name: "Edit Task" }),
+    );
+
+    detailDialog = await screen.findByRole("dialog", { name: "Edit Task" });
+    await waitFor(() => {
+      expect(dependenciesGateway.list).toHaveBeenCalledWith(
+        taskB.id,
+        expect.any(AbortSignal),
+      );
+    });
+    const blockedByHeading = await within(detailDialog).findByRole("heading", {
+      name: "Blocked by",
+    });
+    const blockedBySection = blockedByHeading.parentElement?.parentElement;
+    expect(blockedBySection).not.toBeNull();
+    if (!blockedBySection) return;
+    expect(within(blockedBySection).getByText("API")).not.toBeNull();
+  });
+
+  it("AC-2 keeps confirmed Task data visible while dependencies are loading", async () => {
+    let resolveDependencies:
+      | ((value: Awaited<ReturnType<DependenciesGateway["list"]>>) => void)
+      | undefined;
+    const pendingDependencies = new Promise<
+      Awaited<ReturnType<DependenciesGateway["list"]>>
+    >((resolve) => {
+      resolveDependencies = resolve;
+    });
+    const task = node("task", "Backend API");
+    const dependenciesGateway: DependenciesGateway = {
+      list: vi.fn().mockReturnValue(pendingDependencies),
+      candidates: vi.fn().mockResolvedValue({
+        items: [],
+        page: 1,
+        pageSize: 5,
+        totalItems: 0,
+      }),
+      create: vi.fn().mockResolvedValue(undefined),
+      remove: vi.fn().mockResolvedValue(undefined),
+      invalidateTask: vi.fn(),
+      invalidateAll: vi.fn(),
+    };
+
+    render(
+      <WBSPanel
+        project={project}
+        gateway={gateway([task])}
+        dependenciesGateway={dependenciesGateway}
+        {...options}
+        onClose={() => undefined}
+      />,
+    );
+
+    const tree = await screen.findByRole("tree");
+    const taskTreeItem = within(tree)
+      .getByText("Backend API")
+      .closest<HTMLElement>('[role="treeitem"]');
+
+    expect(taskTreeItem).not.toBeNull();
+    if (!taskTreeItem) {
+      throw new Error("Backend API tree item was not found");
+    }
+
+    fireEvent.click(
+      within(taskTreeItem).getByRole("button", { name: "Edit Task" }),
+    );
+
+    const detailDialog = await screen.findByRole("dialog", {
+      name: "Edit Task",
+    });
+
+    const nameInput = within(detailDialog).getByLabelText(
+      "Name",
+    ) as HTMLInputElement;
+    expect(nameInput.value).toBe("Backend API");
+    expect(
+      within(detailDialog).getByRole("status", {
+        name: "Loading dependencies",
+      }),
+    ).not.toBeNull();
+    expect(within(detailDialog).queryByText("No dependencies.")).toBeNull();
+
+    resolveDependencies?.({ blockedBy: [], blocks: [] });
+
+    await waitFor(() => {
+      expect(
+        within(detailDialog).getAllByText("No dependencies."),
+      ).toHaveLength(2);
+    });
+  });
+
+  it("AC-3 shows empty dependency states and Add actions through contextual Edit Task", async () => {
+    const task = node("task", "Backend API");
+    const dependenciesGateway: DependenciesGateway = {
+      list: vi.fn().mockResolvedValue({ blockedBy: [], blocks: [] }),
+      candidates: vi.fn().mockResolvedValue({
+        items: [],
+        page: 1,
+        pageSize: 5,
+        totalItems: 0,
+      }),
+      create: vi.fn().mockResolvedValue(undefined),
+      remove: vi.fn().mockResolvedValue(undefined),
+      invalidateTask: vi.fn(),
+      invalidateAll: vi.fn(),
+    };
+
+    render(
+      <WBSPanel
+        project={project}
+        gateway={gateway([task])}
+        dependenciesGateway={dependenciesGateway}
+        {...options}
+        onClose={() => undefined}
+      />,
+    );
+
+    const tree = await screen.findByRole("tree");
+    const taskTreeItem = within(tree)
+      .getByText("Backend API")
+      .closest<HTMLElement>('[role="treeitem"]');
+
+    expect(taskTreeItem).not.toBeNull();
+    if (!taskTreeItem) {
+      throw new Error("Backend API tree item was not found");
+    }
+
+    fireEvent.click(
+      within(taskTreeItem).getByRole("button", { name: "Edit Task" }),
+    );
+
+    const detailDialog = await screen.findByRole("dialog", {
+      name: "Edit Task",
+    });
+
+    const blockedByHeading = await within(detailDialog).findByRole("heading", {
+      name: "Blocked by",
+    });
+    const blocksHeading = within(detailDialog).getByRole("heading", {
+      name: "Blocks",
+    });
+    const blockedBySection = blockedByHeading.parentElement?.parentElement;
+    const blocksSection = blocksHeading.parentElement?.parentElement;
+
+    expect(blockedBySection).not.toBeNull();
+    expect(blocksSection).not.toBeNull();
+    if (!blockedBySection || !blocksSection) {
+      throw new Error("Dependency sections were not found");
+    }
+
+    expect(
+      within(blockedBySection).getByText("No dependencies."),
+    ).not.toBeNull();
+    expect(within(blocksSection).getByText("No dependencies.")).not.toBeNull();
+
+    const blockedByAdd = within(blockedBySection).getByRole("button", {
+      name: "Add",
+    });
+    const blocksAdd = within(blocksSection).getByRole("button", {
+      name: "Add",
+    });
+
+    fireEvent.click(blockedByAdd);
+    expect(within(detailDialog).getByLabelText("Search tasks")).not.toBeNull();
+    await waitFor(() => {
+      expect(dependenciesGateway.candidates).toHaveBeenCalledWith(
+        task.id,
+        "blockedBy",
+        "",
+        1,
+        5,
+        expect.any(AbortSignal),
+      );
+    });
+    expect(
+      await within(detailDialog).findByText("No matching tasks."),
+    ).not.toBeNull();
+
+    fireEvent.click(
+      within(detailDialog).getByRole("button", { name: "Cancel" }),
+    );
+    fireEvent.click(blocksAdd);
+    expect(within(detailDialog).getByLabelText("Search tasks")).not.toBeNull();
+    await waitFor(() => {
+      expect(dependenciesGateway.candidates).toHaveBeenCalledWith(
+        task.id,
+        "blocks",
+        "",
+        1,
+        5,
+        expect.any(AbortSignal),
+      );
+    });
+    expect(
+      await within(detailDialog).findByText("No matching tasks."),
+    ).not.toBeNull();
+  });
+
+  it("AC-4 retries a failed dependency load through contextual Edit Task", async () => {
+    const task = node("task", "Backend API");
+    const dependenciesGateway: DependenciesGateway = {
+      list: vi
+        .fn()
+        .mockRejectedValueOnce(new Error("database timeout"))
+        .mockResolvedValueOnce({
+          blockedBy: [
+            {
+              id: "dependency-auth-api",
+              task: {
+                id: "authentication",
+                name: "Authentication",
+                projectId: "security",
+                projectName: "Security",
+                hierarchyPath: "Security > Authentication",
+                completed: false,
+              },
+            },
+          ],
+          blocks: [],
+        }),
+      candidates: vi.fn().mockResolvedValue({
+        items: [],
+        page: 1,
+        pageSize: 5,
+        totalItems: 0,
+      }),
+      create: vi.fn().mockResolvedValue(undefined),
+      remove: vi.fn().mockResolvedValue(undefined),
+      invalidateTask: vi.fn(),
+      invalidateAll: vi.fn(),
+    };
+
+    render(
+      <WBSPanel
+        project={project}
+        gateway={gateway([task])}
+        dependenciesGateway={dependenciesGateway}
+        {...options}
+        onClose={() => undefined}
+      />,
+    );
+
+    const tree = await screen.findByRole("tree");
+    const taskTreeItem = within(tree)
+      .getByText("Backend API")
+      .closest<HTMLElement>('[role="treeitem"]');
+
+    expect(taskTreeItem).not.toBeNull();
+    if (!taskTreeItem) {
+      throw new Error("Backend API tree item was not found");
+    }
+
+    fireEvent.click(
+      within(taskTreeItem).getByRole("button", { name: "Edit Task" }),
+    );
+
+    const detailDialog = await screen.findByRole("dialog", {
+      name: "Edit Task",
+    });
+
+    expect(
+      await within(detailDialog).findByText(
+        /dependencies could not be loaded/i,
+      ),
+    ).not.toBeNull();
+    expect(within(detailDialog).queryByText("database timeout")).toBeNull();
+
+    fireEvent.click(
+      within(detailDialog).getByRole("button", { name: "Retry" }),
+    );
+
+    expect(
+      await within(detailDialog).findByText("Authentication"),
+    ).not.toBeNull();
+
+    await waitFor(() => {
+      expect(
+        within(detailDialog).queryByText(/dependencies could not be loaded/i),
+      ).toBeNull();
+      expect(dependenciesGateway.list).toHaveBeenCalledTimes(2);
+    });
+  });
+
   it("uses Project Structure, Task, Group, and the product empty state", async () => {
     const empty = gateway([]);
     const view = render(

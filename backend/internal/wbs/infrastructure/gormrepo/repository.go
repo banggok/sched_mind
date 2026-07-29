@@ -39,10 +39,11 @@ func (r *Repository) Find(ctx context.Context, p, id string) (*domain.Node, erro
 	return nil, domain.ErrNotFound
 }
 
-func (r *Repository) Create(ctx context.Context, id, p string, parent *string, name string, confirm bool, now time.Time, schedule func(context.Context, string) error) (*domain.Node, error) {
+func (r *Repository) Create(ctx context.Context, id, p string, parent *string, name string, confirm bool, now time.Time, schedule func(context.Context, string) error, invalidate func(context.Context, []string) error) (*domain.Node, error) {
 	var result *domain.Node
 	err := r.tx(ctx, p, func(tx *gorm.DB, project projectModel) error {
 		var parentModel *nodeModel
+		var convertParentTask bool
 		if parent != nil {
 			value, err := findNode(tx, p, *parent, true)
 			if err != nil {
@@ -56,7 +57,12 @@ func (r *Repository) Create(ctx context.Context, id, p string, parent *string, n
 			if err != nil {
 				return err
 			}
-			if hasChildren == 0 && hasData(value) {
+			dependencies, err := dependencyCount(tx, value.ID)
+			if err != nil {
+				return err
+			}
+			convertParentTask = hasChildren == 0
+			if hasChildren == 0 && (hasData(value) || dependencies > 0) {
 				if !confirm {
 					return domain.ErrConversionRequired
 				}
@@ -71,15 +77,27 @@ func (r *Repository) Create(ctx context.Context, id, p string, parent *string, n
 			return err
 		}
 		model := fromDomain(*value)
-		if parentModel != nil && hasData(*parentModel) {
-			copyExecutable(&model, *parentModel)
-			clearExecutable(parentModel)
-			if err := tx.Model(&nodeModel{}).Where("id = ?", parentModel.ID).Updates(executableUpdates(*parentModel, now)).Error; err != nil {
-				return err
+		var convertedTaskID string
+		if parentModel != nil && convertParentTask {
+			convertedTaskID = parentModel.ID
+			if hasData(*parentModel) {
+				copyExecutable(&model, *parentModel)
+				clearExecutable(parentModel)
+				if err := tx.Model(&nodeModel{}).Where("id = ?", parentModel.ID).Updates(executableUpdates(*parentModel, now)).Error; err != nil {
+					return err
+				}
 			}
 		}
 		if err := tx.Create(&model).Error; err != nil {
 			return mapConflict(err)
+		}
+		if convertedTaskID != "" {
+			if err := retargetDependencies(tx, convertedTaskID, model.ID); err != nil {
+				return err
+			}
+			if err := invalidateDependencyProjects(ctx, tx, model.ID, invalidate); err != nil {
+				return err
+			}
 		}
 		if project.AutomaticScheduling {
 			if err := schedule(ctx, p); err != nil {
@@ -222,7 +240,7 @@ func (r *Repository) Reorder(ctx context.Context, p, id string, d domain.Directi
 	})
 }
 
-func (r *Repository) Move(ctx context.Context, p, id, conversionID string, parent *string, confirm bool, now time.Time, schedule func(context.Context, string) error) error {
+func (r *Repository) Move(ctx context.Context, p, id, conversionID string, parent *string, confirm bool, now time.Time, schedule func(context.Context, string) error, invalidate func(context.Context, []string) error) error {
 	return r.tx(ctx, p, func(tx *gorm.DB, project projectModel) error {
 		all, err := loadLocked(tx, p)
 		if err != nil {
@@ -241,11 +259,18 @@ func (r *Repository) Move(ctx context.Context, p, id, conversionID string, paren
 				return domain.ErrParentNotFound
 			}
 			destCount, _ := childCount(tx, p, dest.ID)
-			if destCount == 0 && hasData(dest) {
+			dependencies, err := dependencyCount(tx, dest.ID)
+			if err != nil {
+				return err
+			}
+			if destCount == 0 && (hasData(dest) || dependencies > 0) {
 				if !confirm {
 					return domain.ErrConversionRequired
 				}
 				if err := r.convertDestination(tx, p, conversionID, &dest, now); err != nil {
+					return err
+				}
+				if err := invalidateDependencyProjects(ctx, tx, conversionID, invalidate); err != nil {
 					return err
 				}
 			}
@@ -267,7 +292,7 @@ func (r *Repository) Move(ctx context.Context, p, id, conversionID string, paren
 		return nil
 	})
 }
-func (r *Repository) Delete(ctx context.Context, p, id string, now time.Time, schedule func(context.Context, string) error) error {
+func (r *Repository) Delete(ctx context.Context, p, id string, now time.Time, schedule func(context.Context, string) error, invalidate func(context.Context, []string) error) error {
 	return r.tx(ctx, p, func(tx *gorm.DB, project projectModel) error {
 		m, err := findNode(tx, p, id, true)
 		if err != nil {
@@ -282,6 +307,16 @@ func (r *Repository) Delete(ctx context.Context, p, id string, now time.Time, sc
 		}
 		if count > 0 {
 			return domain.ErrHasChildren
+		}
+		dependencyProjects, err := dependencyProjectIDs(tx, id)
+		if err != nil {
+			return err
+		}
+		if err := tx.Where("blocking_task_id = ? OR blocked_task_id = ?", id, id).Delete(&dependencyLinkModel{}).Error; err != nil {
+			return err
+		}
+		if err := invalidateProjectsIfAutomatic(ctx, tx, dependencyProjects, invalidate); err != nil {
+			return err
 		}
 		if err := tx.Where("id = ?", id).Delete(&nodeModel{}).Error; err != nil {
 			return err
@@ -337,6 +372,11 @@ func childCount(db *gorm.DB, p, id string) (int64, error) {
 	err := db.Model(&nodeModel{}).Where("project_id = ? AND parent_key = ?", p, id).Count(&n).Error
 	return n, err
 }
+func dependencyCount(db *gorm.DB, taskID string) (int64, error) {
+	var count int64
+	err := db.Model(&dependencyLinkModel{}).Where("blocking_task_id = ? OR blocked_task_id = ?", taskID, taskID).Count(&count).Error
+	return count, err
+}
 func nextPosition(db *gorm.DB, p, key string) (int, error) {
 	var max int
 	if err := db.Model(&nodeModel{}).Where("project_id = ? AND parent_key = ?", p, key).Select("COALESCE(MAX(position),0)").Scan(&max).Error; err != nil {
@@ -390,11 +430,75 @@ func (r *Repository) convertDestination(tx *gorm.DB, p, conversionID string, des
 			if err := tx.Create(&child).Error; err != nil {
 				return err
 			}
+			if err := retargetDependencies(tx, dest.ID, child.ID); err != nil {
+				return err
+			}
 			clearExecutable(dest)
 			return tx.Model(&nodeModel{}).Where("id = ?", dest.ID).Updates(executableUpdates(*dest, now)).Error
 		}
 		name = fmt.Sprintf("%s (converted %d)", dest.Name, i)
 	}
+}
+
+func retargetDependencies(tx *gorm.DB, fromTaskID, toTaskID string) error {
+	if err := tx.Model(&dependencyLinkModel{}).Where("blocking_task_id = ?", fromTaskID).Update("blocking_task_id", toTaskID).Error; err != nil {
+		return fmt.Errorf("retarget blocking dependencies: %w", err)
+	}
+	if err := tx.Model(&dependencyLinkModel{}).Where("blocked_task_id = ?", fromTaskID).Update("blocked_task_id", toTaskID).Error; err != nil {
+		return fmt.Errorf("retarget blocked dependencies: %w", err)
+	}
+	return nil
+}
+func dependencyProjectIDs(tx *gorm.DB, taskID string) ([]string, error) {
+	var links []dependencyLinkModel
+	if err := tx.Where("blocking_task_id = ? OR blocked_task_id = ?", taskID, taskID).Find(&links).Error; err != nil {
+		return nil, err
+	}
+	if len(links) == 0 {
+		return []string{}, nil
+	}
+	ids, seen := []string{}, map[string]bool{}
+	var current nodeModel
+	if err := tx.Select("project_id").First(&current, "id = ?", taskID).Error; err != nil {
+		return nil, err
+	}
+	ids = append(ids, current.ProjectID)
+	seen[current.ProjectID] = true
+	for _, link := range links {
+		other := link.BlockingTaskID
+		if other == taskID {
+			other = link.BlockedTaskID
+		}
+		var node nodeModel
+		if err := tx.Select("project_id").First(&node, "id = ?", other).Error; err != nil {
+			return nil, err
+		}
+		if !seen[node.ProjectID] {
+			seen[node.ProjectID] = true
+			ids = append(ids, node.ProjectID)
+		}
+	}
+	return ids, nil
+}
+func invalidateDependencyProjects(ctx context.Context, tx *gorm.DB, taskID string, invalidate func(context.Context, []string) error) error {
+	ids, err := dependencyProjectIDs(tx, taskID)
+	if err != nil {
+		return err
+	}
+	return invalidateProjectsIfAutomatic(ctx, tx, ids, invalidate)
+}
+func invalidateProjectsIfAutomatic(ctx context.Context, tx *gorm.DB, ids []string, invalidate func(context.Context, []string) error) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	var count int64
+	if err := tx.Model(&projectModel{}).Where("id IN ? AND automatic_scheduling = ?", ids, true).Count(&count).Error; err != nil {
+		return err
+	}
+	if count == 0 {
+		return nil
+	}
+	return invalidate(ctx, ids)
 }
 func loadLocked(tx *gorm.DB, p string) (map[string]nodeModel, error) {
 	var values []nodeModel

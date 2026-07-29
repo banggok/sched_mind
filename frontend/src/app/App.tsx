@@ -15,6 +15,7 @@ import { ProjectsPage } from "../features/projects/presentation/ProjectsPage";
 import type { Project } from "../features/projects/domain/project";
 import { createHTTPWBSGateway } from "../features/wbs/infrastructure/httpWBSGateway";
 import { WBSPanel } from "../features/wbs/presentation/WBSPanel";
+import { createHTTPDependenciesGateway } from "../features/dependencies/infrastructure/httpDependenciesGateway";
 
 const apiBaseURL = requiredEnvironment(
   "VITE_API_BASE_URL",
@@ -25,6 +26,7 @@ const capacityOverridesGateway = createHTTPCapacityOverridesGateway(apiBaseURL);
 const publicHolidaysGateway = createHTTPPublicHolidaysGateway(apiBaseURL);
 const projectsGateway = createHTTPProjectsGateway(apiBaseURL);
 const wbsGateway = createHTTPWBSGateway(apiBaseURL);
+const dependenciesGateway = createHTTPDependenciesGateway(apiBaseURL);
 const rolesGateway = createHTTPRolesGateway(
   apiBaseURL,
   teamMembersGateway.invalidateListCache,
@@ -87,6 +89,7 @@ export function App() {
         <WBSPanel
           project={wbsProject}
           gateway={wbsGateway}
+          dependenciesGateway={dependenciesGateway}
           rolesGateway={rolesGateway}
           membersGateway={teamMembersGateway}
           loadPublicHolidayDates={publicHolidaysGateway.calendar}

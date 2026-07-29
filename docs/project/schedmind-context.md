@@ -96,15 +96,16 @@ as proof that timelines were recalculated. Exact rules belong to US-3.3.
 
 ## Future scheduling context
 
-Product discussions anticipate WBS tasks, dependencies, assignees, effort,
+Product discussions anticipate WBS tasks, assignees, effort,
 buffers, and forecast, execution, commitment, and actual dates.
-They may ultimately drive Delivery Impact and health status. The repository does
-not yet contain approved authoritative rules for those concepts.
+They may ultimately drive Delivery Impact and health status. Dependency graph
+behaviour is authoritative in `user_story/US-5.1-manage-dependency.md`; it
+prepares scheduler input but does not calculate dates. The repository does not
+yet contain approved authoritative rules for the remaining calculations.
 
 In particular, do not invent:
 
-- WBS hierarchy or executable-leaf semantics beyond explicit references in an
-  approved story;
+- WBS or dependency behaviour beyond US-4.1 and US-5.1;
 - same-assignee scheduling algorithms beyond the Project Priority trigger
   contract approved in US-3.1;
 - freeze-date behavior;

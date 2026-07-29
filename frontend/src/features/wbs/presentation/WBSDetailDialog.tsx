@@ -1,4 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
+import type { DependenciesGateway } from "../../dependencies/application/dependenciesGateway";
+import { TaskDependencies } from "../../dependencies/presentation/TaskDependencies";
 import type { Project } from "../../projects/domain/project";
 import type { RolesGateway } from "../../roles/application/rolesGateway";
 import type { Role } from "../../roles/domain/role";
@@ -22,6 +24,7 @@ export function WBSDetailDialog({
   project,
   node,
   gateway,
+  dependenciesGateway,
   rolesGateway,
   membersGateway,
   loadPublicHolidayDates,
@@ -31,6 +34,7 @@ export function WBSDetailDialog({
   project: Project;
   node: WBSNode;
   gateway: WBSGateway;
+  dependenciesGateway?: DependenciesGateway;
   rolesGateway: RolesGateway;
   membersGateway: TeamMembersGateway;
   loadPublicHolidayDates?(
@@ -274,6 +278,13 @@ export function WBSDetailDialog({
             </p>
           ) : null}
           {error ? <Alert tone="danger">{error}</Alert> : null}
+          {dependenciesGateway ? (
+            <TaskDependencies
+              taskId={node.id}
+              gateway={dependenciesGateway}
+              readOnly={readOnly}
+            />
+          ) : null}
           <div className="flex justify-end gap-3">
             <Button type="button" onClick={onClose}>
               Close

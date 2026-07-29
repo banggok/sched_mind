@@ -27,3 +27,9 @@ type memberModel struct {
 }
 
 func (memberModel) TableName() string { return "team_members" }
+
+type dependencyLinkModel struct {
+	ID, BlockingTaskID, BlockedTaskID string
+}
+
+func (dependencyLinkModel) TableName() string { return "task_dependencies" }
