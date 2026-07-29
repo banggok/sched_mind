@@ -150,7 +150,8 @@ to reproduce one screen's incidental styling.
   invalid field when useful.
 - Prevent duplicate submission and disable only affected controls.
 - Do not silently transform input unless the transformation is obvious and safe.
-- Confirm destructive or irreversible actions with specific language.
+- Confirm destructive actions when their impact is significant, difficult to understand, or not easily reversible.
+- Low-risk relationship changes that can be recreated through the same workflow may use a direct action without confirmation, provided the action has an explicit accessible name, adequate touch target, pending state, duplicate submission prevention, and clear success or recoverable error feedback.
 
 Exact field density and layout are customizable. Accessibility and failure
 recovery are mandatory.
@@ -253,7 +254,7 @@ token; feature code must not accumulate one-off arbitrary visual values.
 - Is hierarchy consistent across equivalent pages and controls?
 - Are pending, empty, no-result, error, and success states distinct?
 - Can users recover from failures without losing valid work?
-- Are destructive actions protected and visually subordinate?
+- Are destructive actions visually subordinate and protected proportionally to their impact and reversibility?
 - Are keyboard, focus, labels, announcements, contrast, resizing, and reduced
   motion handled?
 - Does the layout remain usable on supported sizes and input methods?
