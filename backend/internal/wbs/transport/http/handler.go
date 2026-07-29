@@ -20,6 +20,7 @@ type Service interface {
 	Rename(context.Context, string, string, string) (*domain.Node, error)
 	UpdateExecutable(context.Context, string, string, application.WriteExecutableInput) (*domain.Node, error)
 	Complete(context.Context, string, string, time.Time) (*domain.Node, error)
+	Reopen(context.Context, string, string) (*domain.Node, error)
 	Reorder(context.Context, string, string, domain.Direction) error
 	Move(context.Context, string, string, *string, bool) error
 	Delete(context.Context, string, string) error
@@ -88,6 +89,7 @@ func (h *Handler) Register(m *http.ServeMux) {
 	m.HandleFunc("PUT /api/projects/{projectId}/wbs/{wbsId}", h.rename)
 	m.HandleFunc("PUT /api/projects/{projectId}/wbs/{wbsId}/executable", h.executable)
 	m.HandleFunc("POST /api/projects/{projectId}/wbs/{wbsId}/actual-end", h.complete)
+	m.HandleFunc("POST /api/projects/{projectId}/wbs/{wbsId}/reopen", h.reopen)
 	m.HandleFunc("POST /api/projects/{projectId}/wbs/{wbsId}/reorder", h.reorder)
 	m.HandleFunc("POST /api/projects/{projectId}/wbs/{wbsId}/move", h.move)
 	m.HandleFunc("DELETE /api/projects/{projectId}/wbs/{wbsId}", h.delete)
@@ -195,6 +197,17 @@ func (h *Handler) complete(w http.ResponseWriter, r *http.Request) {
 	}
 	httpjson.Write(w, 200, response{mapNode(*v)})
 }
+func (h *Handler) reopen(w http.ResponseWriter, r *http.Request) {
+	if !decodeOptionalEmptyObject(w, r) {
+		return
+	}
+	value, err := h.service.Reopen(r.Context(), r.PathValue("projectId"), r.PathValue("wbsId"))
+	if err != nil {
+		writeReopenError(w, err)
+		return
+	}
+	httpjson.Write(w, 200, response{mapReopenNode(*value)})
+}
 func (h *Handler) reorder(w http.ResponseWriter, r *http.Request) {
 	var p commandRequest
 	if !decode(w, r, &p) {
@@ -224,6 +237,23 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(204)
 }
+func decodeOptionalEmptyObject(w http.ResponseWriter, r *http.Request) bool {
+	decoder := json.NewDecoder(r.Body)
+	var payload map[string]json.RawMessage
+	if err := decoder.Decode(&payload); errors.Is(err, io.EOF) {
+		return true
+	} else if err != nil || payload == nil || len(payload) != 0 {
+		httpjson.Write(w, 400, errorResponse{"INVALID_REQUEST", "Request body must be empty or an empty JSON object", ""})
+		return false
+	}
+	var extra any
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		httpjson.Write(w, 400, errorResponse{"INVALID_REQUEST", "Request body is invalid", ""})
+		return false
+	}
+	return true
+}
+
 func decode(w http.ResponseWriter, r *http.Request, target any) bool {
 	d := json.NewDecoder(r.Body)
 	d.DisallowUnknownFields()
@@ -258,6 +288,23 @@ func timeline(w http.ResponseWriter, start, end *string) (domain.Timeline, bool)
 	}
 	return domain.Timeline{Start: s, End: finish}, true
 }
+func writeReopenError(w http.ResponseWriter, err error) {
+	status, code, message := 500, "TASK_REOPEN_FAILED", "Task could not be reopened. Try again."
+	switch {
+	case errors.Is(err, domain.ErrNotFound), errors.Is(err, domain.ErrProjectNotFound):
+		status, code, message = 404, "TASK_NOT_FOUND", domain.ErrNotFound.Error()
+	case errors.Is(err, domain.ErrExecutableOnly):
+		status, code, message = 409, "EXECUTABLE_TASK_REQUIRED", "Reopen is available only for a Task."
+	case errors.Is(err, domain.ErrTaskNotCompleted):
+		status, code, message = 409, "TASK_NOT_COMPLETED", domain.ErrTaskNotCompleted.Error()
+	case errors.Is(err, domain.ErrProjectClosedReadOnly):
+		status, code, message = 409, "PROJECT_CLOSED_READ_ONLY", domain.ErrProjectClosedReadOnly.Error()
+	case errors.Is(err, domain.ErrTaskReopenConflict):
+		status, code, message = 409, "TASK_REOPEN_CONFLICT", "The Task was changed by another request. Refresh and try again."
+	}
+	httpjson.Write(w, status, errorResponse{code, message, ""})
+}
+
 func writeError(w http.ResponseWriter, err error) {
 	status, code := 500, "INTERNAL_ERROR"
 	switch {
@@ -297,6 +344,30 @@ func writeError(w http.ResponseWriter, err error) {
 		message = "An internal error occurred"
 	}
 	httpjson.Write(w, status, errorResponse{code, message, ""})
+}
+
+func mapReopenNode(value domain.Node) map[string]any {
+	children := make([]map[string]any, 0, len(value.Children))
+	for _, child := range value.Children {
+		children = append(children, mapReopenNode(child))
+	}
+	return map[string]any{
+		"id":          value.ID,
+		"projectId":   value.ProjectID,
+		"parentId":    value.ParentID,
+		"name":        value.Name,
+		"position":    value.Position,
+		"hasChildren": value.HasChildren,
+		"executable": map[string]any{
+			"roleId":             value.Executable.RoleID,
+			"assigneeId":         value.Executable.AssigneeID,
+			"effortMinutes":      value.Executable.EffortMinutes,
+			"executionTimeline":  timelineItem{Start: date(value.Executable.ExecutionTimeline.Start), End: date(value.Executable.ExecutionTimeline.End)},
+			"commitmentTimeline": timelineItem{Start: date(value.Executable.CommitmentTimeline.Start), End: date(value.Executable.CommitmentTimeline.End)},
+			"actualEnd":          date(value.Executable.ActualEnd),
+		},
+		"children": children,
+	}
 }
 
 func mapNode(value domain.Node) item {

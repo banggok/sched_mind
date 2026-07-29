@@ -1,0 +1,203 @@
+package wbshttp
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/banggok/sched_mind/backend/internal/wbs/application"
+	"github.com/banggok/sched_mind/backend/internal/wbs/domain"
+)
+
+type reopenServiceStub struct {
+	Service
+	reopen     func(context.Context, string, string) (*domain.Node, error)
+	executable func(context.Context, string, string, application.WriteExecutableInput) (*domain.Node, error)
+}
+
+func (s reopenServiceStub) Reopen(ctx context.Context, projectID, id string) (*domain.Node, error) {
+	return s.reopen(ctx, projectID, id)
+}
+
+func (s reopenServiceStub) UpdateExecutable(ctx context.Context, projectID, id string, input application.WriteExecutableInput) (*domain.Node, error) {
+	if s.executable == nil {
+		return nil, errors.New("unexpected executable call")
+	}
+	return s.executable(ctx, projectID, id, input)
+}
+
+func reopenMux(service Service) http.Handler {
+	mux := http.NewServeMux()
+	New(service).Register(mux)
+	return mux
+}
+
+func completedHTTPNode() *domain.Node {
+	actualEnd := time.Date(2026, 7, 28, 0, 0, 0, 0, time.UTC)
+	executionStart := time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)
+	executionEnd := time.Date(2026, 7, 25, 0, 0, 0, 0, time.UTC)
+	return &domain.Node{
+		ID: "task", ProjectID: "project", Name: "Build API", Position: 1,
+		Executable: domain.ExecutableFields{
+			ExecutionTimeline:  domain.Timeline{Start: &executionStart, End: &executionEnd},
+			CommitmentTimeline: domain.Timeline{Start: &executionStart, End: &executionEnd},
+			ActualEnd:          &actualEnd,
+		},
+		Children: []domain.Node{},
+	}
+}
+
+func TestReopenEndpointAcceptsNoBodyAndEmptyObjectAndReturnsConfirmedNull_AC4(t *testing.T) {
+	for _, body := range []string{"", "{}"} {
+		t.Run("body="+body, func(t *testing.T) {
+			calls := 0
+			service := reopenServiceStub{reopen: func(_ context.Context, projectID, id string) (*domain.Node, error) {
+				calls++
+				if projectID != "project" || id != "task" {
+					t.Fatalf("scope=%q/%q", projectID, id)
+				}
+				value := completedHTTPNode()
+				value.Executable.ActualEnd = nil
+				return value, nil
+			}}
+			request := httptest.NewRequest(http.MethodPost, "/api/projects/project/wbs/task/reopen", strings.NewReader(body))
+			if body != "" {
+				request.Header.Set("Content-Type", "application/json")
+			}
+			response := httptest.NewRecorder()
+			reopenMux(service).ServeHTTP(response, request)
+			if response.Code != http.StatusOK || calls != 1 {
+				t.Fatalf("status=%d calls=%d body=%s", response.Code, calls, response.Body.String())
+			}
+			var payload map[string]any
+			if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+				t.Fatal(err)
+			}
+			data, ok := payload["data"].(map[string]any)
+			if !ok {
+				t.Fatalf("data=%#v", payload["data"])
+			}
+			executable, ok := data["executable"].(map[string]any)
+			if !ok {
+				t.Fatalf("executable=%#v", data["executable"])
+			}
+			actual, exists := executable["actualEnd"]
+			if !exists || actual != nil {
+				t.Fatalf("actualEnd missing or non-null: exists=%v value=%#v body=%s", exists, actual, response.Body.String())
+			}
+			if data["id"] != "task" || data["name"] != "Build API" {
+				t.Fatalf("confirmed identity changed: %#v", data)
+			}
+		})
+	}
+}
+
+func TestReopenEndpointRejectsMalformedUnknownAndArbitraryPayload(t *testing.T) {
+	for _, body := range []string{"{", `{"actualEnd":"2026-07-29"}`, `{"name":"Changed"}`, "null", "{} {}"} {
+		t.Run(body, func(t *testing.T) {
+			calls := 0
+			service := reopenServiceStub{reopen: func(context.Context, string, string) (*domain.Node, error) { calls++; return nil, nil }}
+			request := httptest.NewRequest(http.MethodPost, "/api/projects/project/wbs/task/reopen", strings.NewReader(body))
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			reopenMux(service).ServeHTTP(response, request)
+			assertErrorCode(t, response, http.StatusBadRequest, "INVALID_REQUEST")
+			if calls != 0 {
+				t.Fatalf("reopen called %d times", calls)
+			}
+		})
+	}
+}
+
+func TestReopenEndpointMapsStableSafeBusinessErrors_AC2_AC9_AC11_AC12_AC13(t *testing.T) {
+	cases := []struct {
+		name   string
+		err    error
+		status int
+		code   string
+	}{
+		{"not found", domain.ErrNotFound, 404, "TASK_NOT_FOUND"},
+		{"group", domain.ErrExecutableOnly, 409, "EXECUTABLE_TASK_REQUIRED"},
+		{"unfinished", domain.ErrTaskNotCompleted, 409, "TASK_NOT_COMPLETED"},
+		{"closed", domain.ErrProjectClosedReadOnly, 409, "PROJECT_CLOSED_READ_ONLY"},
+		{"conflict", domain.ErrTaskReopenConflict, 409, "TASK_REOPEN_CONFLICT"},
+		{"forecast", errors.New("scheduler internal SQL secret"), 500, "TASK_REOPEN_FAILED"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			service := reopenServiceStub{reopen: func(context.Context, string, string) (*domain.Node, error) { return nil, tc.err }}
+			request := httptest.NewRequest(http.MethodPost, "/api/projects/project/wbs/task/reopen", nil)
+			response := httptest.NewRecorder()
+			reopenMux(service).ServeHTTP(response, request)
+			assertErrorCode(t, response, tc.status, tc.code)
+			if strings.Contains(response.Body.String(), "SQL") || strings.Contains(response.Body.String(), "scheduler") {
+				t.Fatalf("infrastructure details leaked: %s", response.Body.String())
+			}
+		})
+	}
+}
+
+func TestGenericExecutableUpdateCannotClearCompletedActualEnd_AC6(t *testing.T) {
+	completed := completedHTTPNode()
+	service := reopenServiceStub{
+		reopen: func(context.Context, string, string) (*domain.Node, error) {
+			return nil, errors.New("unexpected reopen")
+		},
+		executable: func(context.Context, string, string, application.WriteExecutableInput) (*domain.Node, error) {
+			return nil, domain.ErrCompletedReadOnly
+		},
+	}
+	body := bytes.NewBufferString(`{"name":"Changed","executionStart":"2026-07-20","executionEnd":"2026-07-25","commitmentStart":"2026-07-20","commitmentEnd":"2026-07-25"}`)
+	request := httptest.NewRequest(http.MethodPut, "/api/projects/project/wbs/task/executable", body)
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	reopenMux(service).ServeHTTP(response, request)
+	assertErrorCode(t, response, http.StatusConflict, "COMPLETED_TASK_READ_ONLY")
+	if completed.Executable.ActualEnd == nil {
+		t.Fatal("test fixture lost Actual End")
+	}
+}
+
+func TestGenericExecutableUpdateRejectsActualEndPayloadWithoutCallingMutation_AC6(t *testing.T) {
+	calls := 0
+	service := reopenServiceStub{
+		reopen: func(context.Context, string, string) (*domain.Node, error) {
+			return nil, errors.New("unexpected reopen")
+		},
+		executable: func(context.Context, string, string, application.WriteExecutableInput) (*domain.Node, error) {
+			calls++
+			return nil, errors.New("unexpected executable mutation")
+		},
+	}
+	body := bytes.NewBufferString(`{"name":"Build API","actualEnd":null}`)
+	request := httptest.NewRequest(http.MethodPut, "/api/projects/project/wbs/task/executable", body)
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	reopenMux(service).ServeHTTP(response, request)
+	assertErrorCode(t, response, http.StatusBadRequest, "INVALID_REQUEST")
+	if calls != 0 {
+		t.Fatalf("generic mutation called %d times", calls)
+	}
+}
+
+func assertErrorCode(t *testing.T, response *httptest.ResponseRecorder, status int, code string) {
+	t.Helper()
+	if response.Code != status {
+		t.Fatalf("status=%d want=%d body=%s", response.Code, status, response.Body.String())
+	}
+	var payload struct {
+		Code string `json:"code"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Code != code {
+		t.Fatalf("code=%q want=%q body=%s", payload.Code, code, response.Body.String())
+	}
+}

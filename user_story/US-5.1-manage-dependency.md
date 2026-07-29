@@ -278,6 +278,11 @@ Relation tersebut akan mengubah histori seolah Task A seharusnya menunggu Task C
 - Completed Task tetap read-only sebagai work record.
 - Completed blocker boleh ditambahkan tanpa mengubah blocker tersebut.
 
+Reopen Task dari US-4.2 tidak membuat, menghapus, memodifikasi, atau me-retarget
+dependency. Setelah Actual End dihapus, completed marker, candidate eligibility,
+dan historical read-only restriction selalu dievaluasi ulang dari current
+persisted Actual End. Immutable Task ID tetap menjadi dependency endpoint.
+
 ### 7.10 Closed Project
 
 - Task dari Closed Project tidak tersedia pada selector dependency baru.

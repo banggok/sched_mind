@@ -24,6 +24,7 @@ type Store interface {
 	Rename(context.Context, string, string, string, time.Time) (*domain.Node, error)
 	UpdateExecutable(context.Context, string, string, WriteExecutableInput, time.Time, func(context.Context, string) error) (*domain.Node, error)
 	Complete(context.Context, string, string, time.Time, time.Time, func(context.Context, string) error) (*domain.Node, error)
+	Reopen(context.Context, string, string, time.Time, func(context.Context, string) error) (*domain.Node, error)
 	Reorder(context.Context, string, string, domain.Direction, time.Time, func(context.Context, string) error) error
 	Move(context.Context, string, string, string, *string, bool, time.Time, func(context.Context, string) error, func(context.Context, []string) error) error
 	Delete(context.Context, string, string, time.Time, func(context.Context, string) error, func(context.Context, []string) error) error
@@ -118,6 +119,16 @@ func (s *Service) Complete(ctx context.Context, p, id string, actual time.Time) 
 	}
 	if value == nil {
 		return nil, errors.New("complete WBS: store returned nil")
+	}
+	return value, nil
+}
+func (s *Service) Reopen(ctx context.Context, p, id string) (*domain.Node, error) {
+	value, err := s.store.Reopen(ctx, p, id, s.now(), s.scheduler.RecalculateProjectForecast)
+	if err != nil {
+		return nil, fmt.Errorf("reopen WBS: %w", err)
+	}
+	if value == nil {
+		return nil, errors.New("reopen WBS: store returned nil")
 	}
 	return value, nil
 }

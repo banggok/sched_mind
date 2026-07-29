@@ -1,8 +1,10 @@
 import type { MouseEvent, ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { useDialogFocus } from "./useDialogFocus";
 
 export function Dialog({
   titleID,
+  descriptionID,
   onClose,
   children,
   kind = "dialog",
@@ -11,6 +13,7 @@ export function Dialog({
   closeOnBackdrop = true,
 }: {
   titleID: string;
+  descriptionID?: string;
   onClose(): void;
   children: ReactNode;
   kind?: "dialog" | "alertdialog";
@@ -22,7 +25,7 @@ export function Dialog({
   function backdrop(event: MouseEvent<HTMLDivElement>) {
     if (closeOnBackdrop && event.currentTarget === event.target) onClose();
   }
-  return (
+  const content = (
     <div
       className={`dialog-overlay ${nested ? "dialog-overlay-nested" : ""}`}
       role="presentation"
@@ -34,9 +37,14 @@ export function Dialog({
         role={kind}
         aria-modal="true"
         aria-labelledby={titleID}
+        aria-describedby={descriptionID}
       >
         {children}
       </section>
     </div>
   );
+
+  return nested && typeof document !== "undefined"
+    ? createPortal(content, document.body)
+    : content;
 }

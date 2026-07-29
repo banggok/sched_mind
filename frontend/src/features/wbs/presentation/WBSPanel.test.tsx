@@ -62,6 +62,7 @@ function gateway(tree: WBSNode[]): WBSGateway {
     remove: vi.fn(),
     updateExecutable: vi.fn(),
     complete: vi.fn(),
+    reopen: vi.fn(),
   };
 }
 

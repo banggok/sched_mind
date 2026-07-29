@@ -224,6 +224,9 @@ granularity snapshot ditentukan saat contract timeline/WBS tersedia.
 - Forecast tetap mencerminkan kondisi terbaru.
 - Delivery Impact dan Project Health tetap dinamis.
 - Actual End tetap editable untuk unfinished leaf sesuai completed-task rules.
+- Completed Task dapat dibuka kembali hanya melalui dedicated Reopen Task
+  command dari US-4.2. Open dan Locked Project eligible; Reopen Task pada
+  Locked Project mempertahankan status Locked dan seluruh locked baselines.
 - Project tetap ikut scheduling berdasarkan Project Priority dan tetap terlihat
   di Gantt.
 - External constraint changes tidak menggeser locked baselines.
@@ -252,7 +255,9 @@ granularity snapshot ditentukan saat contract timeline/WBS tersedia.
 - WBS structure, Effort, Assignee, Dependency, Lag, Project configuration,
   Actual End, dan established planning fields dapat diubah untuk unfinished
   work.
-- Executable Leaf dengan Actual End adalah completed dan tidak dapat diedit.
+- Executable Leaf dengan Actual End adalah completed dan tidak dapat diedit
+  melalui normal mutation. Dedicated Reopen Task dari US-4.2 adalah satu-satunya
+  exception untuk menghapus Actual End.
 - Confirmed planning change tetap mempertahankan status Locked.
 - Scheduling Engine hanya memperbarui Forecast dates untuk Locked Project,
   termasuk bila Forecast bergerak lebih awal atau lebih lambat.
@@ -263,7 +268,8 @@ granularity snapshot ditentukan saat contract timeline/WBS tersedia.
 
 - Project, WBS, task, Actual End, planning fields, dan timeline read-only.
 - Backend menolak mutation walaupun frontend restriction dilewati.
-- Project harus direopen ke Open sebelum perubahan lain.
+- Project harus direopen ke Open sebelum perubahan lain, termasuk sebelum
+  menjalankan Reopen Task. Closed Project tidak menerima Task-level exception.
 
 ---
 

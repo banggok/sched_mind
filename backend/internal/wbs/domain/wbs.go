@@ -132,6 +132,18 @@ func (node *Node) Complete(actualEnd time.Time, now time.Time) error {
 	return nil
 }
 
+func (node *Node) Reopen(now time.Time) error {
+	if !node.IsExecutable() {
+		return ErrExecutableOnly
+	}
+	if node.Executable.ActualEnd == nil {
+		return ErrTaskNotCompleted
+	}
+	node.Executable.ActualEnd = nil
+	node.UpdatedAt = now
+	return nil
+}
+
 func EmptyExecutable() ExecutableFields { return ExecutableFields{} }
 
 func cloneFields(value ExecutableFields) ExecutableFields {

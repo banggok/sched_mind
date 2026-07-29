@@ -20,6 +20,8 @@ var (
 	ErrEffortInvalid         = errors.New("effort must be at least 0.5 hours in 0.5 hour increments")
 	ErrRoleAssigneeMismatch  = errors.New("assignee role does not match the selected role")
 	ErrCompletedReadOnly     = errors.New("completed executable WBS is read-only")
+	ErrTaskNotCompleted      = errors.New("task is not completed")
+	ErrTaskReopenConflict    = errors.New("task reopen conflicted with another state transition")
 	ErrProjectClosedReadOnly = errors.New("closed project is read-only")
 	ErrMoveNotAllowed        = errors.New("WBS cannot move further in that direction")
 )

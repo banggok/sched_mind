@@ -409,3 +409,45 @@ not require an application restart.
   reusable universal constant.
 - Current hash-based navigation and custom request cache are implementation
   choices, not requirements of the reusable frontend architecture.
+
+## Reopen completed Task
+
+`US-4.2` keeps Task as an Executable WBS and adds one explicit exception to the
+normal completed-task read-only invariant. The dedicated command is
+`POST /api/projects/{projectId}/wbs/{wbsId}/reopen`; generic executable update
+continues to reject completed Tasks and cannot clear Actual End.
+
+The WBS repository executes Reopen in one GORM transaction. It reads the scoped
+Task snapshot, locks the owning Project, rejects Closed Projects and non-leaf or
+unfinished WBS state, then conditionally updates by `id`, `project_id`, and
+`actual_end IS NOT NULL`. A request that initially sees unfinished state returns
+`TASK_NOT_COMPLETED`; a request that saw completed state but loses the
+conditional transition returns `TASK_REOPEN_CONFLICT`. Exactly one successful
+completed-to-unfinished transition invokes `RecalculateProjectForecast` inside
+the transaction. Forecast failure rolls back Actual End and Updated At. Reopen
+never invokes full schedule recalculation and never updates Project status,
+Execution or Commitment timelines, or locked baselines.
+
+Dependency rows are not written or revalidated because Task identity and graph
+endpoints do not change. Dependency projections continue to derive completed
+state from the current persisted Actual End. The frontend invalidates the
+project WBS tree and all dependency-detail caches after confirmed success;
+versioned request caches prevent older in-flight WBS or dependency responses
+from becoming cached confirmed state. Current Task detail is replaced directly
+from the confirmed response, so Project Structure updates without a browser hard
+reload. Concrete Forecast, Delivery Impact, Health, and Gantt frontend stores do
+not yet exist; their concrete invalidation remains deferred while the established
+Forecast coordination contract is preserved.
+
+### Reopen query review
+
+The transition query shape is a primary-key lookup scoped by Project followed by
+a conditional update with `id = ? AND project_id = ? AND actual_end IS NOT
+NULL`. PostgreSQL serialises competing commands through the owning Project row
+lock and the conditional Task update. SQLite automated contract tests rely on
+the same conditional predicate; SQLite lock/busy errors during the competing
+transition are mapped to the deterministic conflict error. The primary-key
+predicate limits cardinality to at most one Task, and the Project lookup also
+uses its primary key. No migration or new index is justified: an additional
+Actual End index would add write cost without improving a primary-key point
+mutation.

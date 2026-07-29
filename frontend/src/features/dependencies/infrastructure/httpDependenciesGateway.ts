@@ -13,6 +13,7 @@ export function createHTTPDependenciesGateway(
   baseURL: string,
 ): DependenciesGateway {
   const details = new Map<string, RequestCache<DependencyDetail>>();
+  let projectionVersion = 0;
   const request = async (
     path: string,
     init?: RequestInit,
@@ -32,15 +33,17 @@ export function createHTTPDependenciesGateway(
     list: (taskId, signal) => {
       const cache = details.get(taskId) ?? new RequestCache<DependencyDetail>();
       details.set(taskId, cache);
-      return cache.run(
-        async () =>
-          mapDetail(
-            await request(`/tasks/${encodeURIComponent(taskId)}/dependencies`),
-          ),
-        signal,
-      );
+      const requestVersion = projectionVersion;
+      return cache.run(async () => {
+        const value = mapDetail(
+          await request(`/tasks/${encodeURIComponent(taskId)}/dependencies`),
+        );
+        if (projectionVersion !== requestVersion) throw staleResponseError();
+        return value;
+      }, signal);
     },
     candidates: async (taskId, direction, search, page, pageSize, signal) => {
+      const requestVersion = projectionVersion;
       const query = new URLSearchParams({
         taskId,
         direction,
@@ -48,9 +51,11 @@ export function createHTTPDependenciesGateway(
         page: String(page),
         pageSize: String(pageSize),
       });
-      return mapPage(
+      const value = mapPage(
         await request(`/dependency-candidates?${query}`, { signal }),
       );
+      if (projectionVersion !== requestVersion) throw staleResponseError();
+      return value;
     },
     create: async (blockingTaskId, blockedTaskId) => {
       await request("/dependencies", {
@@ -72,6 +77,7 @@ export function createHTTPDependenciesGateway(
       details.delete(taskId);
     },
     invalidateAll: () => {
+      projectionVersion += 1;
       details.forEach((cache) => cache.invalidate());
       details.clear();
     },
@@ -168,6 +174,10 @@ function mapError(value: unknown): DependencyOperationError {
       : (messages[code] ?? "The dependency could not be updated. Try again.");
   return new DependencyOperationError(code, message, path);
 }
+function staleResponseError(): DOMException {
+  return new DOMException("The response was invalidated", "AbortError");
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
