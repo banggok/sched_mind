@@ -287,6 +287,11 @@ allows it; otherwise it uses the repository's deterministic `"<name>
 (converted N)"` convention. Any failure rolls back hierarchy, positions,
 executable data, dates, and confirmed cache state.
 
+After US-5.1 introduces Task dependencies, this transaction also retargets all
+incoming and outgoing dependency endpoints to the conversion child that
+receives the executable data. The Group retains no dependency endpoint, and a
+retarget failure rolls back both hierarchy and graph.
+
 A completed leaf or subtree containing completed descendants may be moved.
 Structural movement may change only parent/path and sibling position; completed
 executable fields and Actual End remain immutable.

@@ -20,23 +20,25 @@ type WriteExecutableInput struct {
 type Store interface {
 	Tree(context.Context, string) ([]domain.Node, error)
 	Find(context.Context, string, string) (*domain.Node, error)
-	Create(context.Context, string, string, *string, string, bool, time.Time, func(context.Context, string) error) (*domain.Node, error)
+	Create(context.Context, string, string, *string, string, bool, time.Time, func(context.Context, string) error, func(context.Context, []string) error) (*domain.Node, error)
 	Rename(context.Context, string, string, string, time.Time) (*domain.Node, error)
 	UpdateExecutable(context.Context, string, string, WriteExecutableInput, time.Time, func(context.Context, string) error) (*domain.Node, error)
 	Complete(context.Context, string, string, time.Time, time.Time, func(context.Context, string) error) (*domain.Node, error)
 	Reorder(context.Context, string, string, domain.Direction, time.Time, func(context.Context, string) error) error
-	Move(context.Context, string, string, string, *string, bool, time.Time, func(context.Context, string) error) error
-	Delete(context.Context, string, string, time.Time, func(context.Context, string) error) error
+	Move(context.Context, string, string, string, *string, bool, time.Time, func(context.Context, string) error, func(context.Context, []string) error) error
+	Delete(context.Context, string, string, time.Time, func(context.Context, string) error, func(context.Context, []string) error) error
 }
 
 type Scheduler interface {
 	RecalculateProjectSchedule(context.Context, string) error
 	RecalculateProjectForecast(context.Context, string) error
+	InvalidatePortfolio(context.Context, []string) error
 }
 type NoopScheduler struct{}
 
 func (NoopScheduler) RecalculateProjectSchedule(context.Context, string) error { return nil }
 func (NoopScheduler) RecalculateProjectForecast(context.Context, string) error { return nil }
+func (NoopScheduler) InvalidatePortfolio(context.Context, []string) error      { return nil }
 
 type Service struct {
 	store     Store
@@ -80,7 +82,7 @@ func (s *Service) Create(ctx context.Context, projectID string, parentID *string
 	if err != nil {
 		return nil, fmt.Errorf("generate WBS ID: %w", err)
 	}
-	value, err := s.store.Create(ctx, id, projectID, parentID, name, confirm, s.now(), s.scheduler.RecalculateProjectSchedule)
+	value, err := s.store.Create(ctx, id, projectID, parentID, name, confirm, s.now(), s.scheduler.RecalculateProjectSchedule, s.scheduler.InvalidatePortfolio)
 	if err != nil {
 		return nil, fmt.Errorf("create WBS: %w", err)
 	}
@@ -133,13 +135,13 @@ func (s *Service) Move(ctx context.Context, p, id string, parent *string, confir
 	if err != nil {
 		return fmt.Errorf("generate conversion WBS ID: %w", err)
 	}
-	if err := s.store.Move(ctx, p, id, conversionID, parent, confirm, s.now(), s.scheduler.RecalculateProjectSchedule); err != nil {
+	if err := s.store.Move(ctx, p, id, conversionID, parent, confirm, s.now(), s.scheduler.RecalculateProjectSchedule, s.scheduler.InvalidatePortfolio); err != nil {
 		return fmt.Errorf("move WBS: %w", err)
 	}
 	return nil
 }
 func (s *Service) Delete(ctx context.Context, p, id string) error {
-	if err := s.store.Delete(ctx, p, id, s.now(), s.scheduler.RecalculateProjectSchedule); err != nil {
+	if err := s.store.Delete(ctx, p, id, s.now(), s.scheduler.RecalculateProjectSchedule, s.scheduler.InvalidatePortfolio); err != nil {
 		return fmt.Errorf("delete WBS: %w", err)
 	}
 	return nil
