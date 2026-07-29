@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { DependenciesGateway } from "../../dependencies/application/dependenciesGateway";
 import { TaskDependencies } from "../../dependencies/presentation/TaskDependencies";
 import type { Project } from "../../projects/domain/project";
@@ -30,6 +30,7 @@ export function WBSDetailDialog({
   loadPublicHolidayDates,
   onClose,
   onChanged,
+  onReopened,
 }: {
   project: Project;
   node: WBSNode;
@@ -43,6 +44,7 @@ export function WBSDetailDialog({
   ): Promise<string[]>;
   onClose(): void;
   onChanged(message: string): void;
+  onReopened(node: WBSNode, message: string): void;
 }) {
   const [roles, setRoles] = useState<Role[]>([]);
   const [members, setMembers] = useState<TeamMember[]>([]);
@@ -69,6 +71,10 @@ export function WBSDetailDialog({
   const [actualEnd, setActualEnd] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [reopenOpen, setReopenOpen] = useState(false);
+  const [reopenBusy, setReopenBusy] = useState(false);
+  const [reopenError, setReopenError] = useState("");
+  const reopenLock = useRef(false);
   useEffect(() => {
     const controller = new AbortController();
     setError("");
@@ -94,6 +100,8 @@ export function WBSDetailDialog({
   }, [rolesGateway, membersGateway]);
   const completed = Boolean(node.executable.actualEnd);
   const readOnly = completed || project.status === "closed";
+  const canReopen =
+    completed && (project.status === "open" || project.status === "locked");
   const manual =
     project.status === "open" && !project.automaticScheduling && !completed;
   async function save(event: FormEvent) {
@@ -148,11 +156,34 @@ export function WBSDetailDialog({
       setBusy(false);
     }
   }
+  async function reopen() {
+    if (reopenLock.current || !canReopen) return;
+    reopenLock.current = true;
+    setReopenBusy(true);
+    setReopenError("");
+    try {
+      const confirmed = await gateway.reopen(project.id, node.id);
+      reopenLock.current = false;
+      setReopenBusy(false);
+      setReopenOpen(false);
+      onReopened(confirmed, "Task reopened.");
+    } catch (reason: unknown) {
+      setReopenError(
+        reason instanceof Error
+          ? reason.message
+          : "The Task could not be reopened. Try again.",
+      );
+      reopenLock.current = false;
+      setReopenBusy(false);
+    }
+  }
   return (
     <Dialog
       nested
       titleID="wbs-detail-title"
-      onClose={() => !busy && onClose()}
+      onClose={() =>
+        !busy && !reopenBusy && !reopenLock.current && onClose()
+      }
     >
       <h3 id="wbs-detail-title" className="text-xl font-extrabold">
         {node.hasChildren ? node.name : "Edit Task"}
@@ -171,167 +202,237 @@ export function WBSDetailDialog({
           </div>
         </>
       ) : (
-        <form className="mt-5 space-y-4" onSubmit={(e) => void save(e)}>
-          <FormField
-            id="detail-name"
-            name="name"
-            label="Name"
-            value={name}
-            disabled={readOnly}
-            autoFocus
-            onChange={(e) => setName(e.target.value)}
-          />
-          <label className="block text-label font-bold" htmlFor="detail-role">
-            Role
-          </label>
-          <select
-            id="detail-role"
-            className="ui-input"
-            value={role}
-            disabled={readOnly}
-            onChange={(e) => {
-              setRole(e.target.value);
-              if (
-                members.find((m) => m.id === assignee)?.role.id !==
-                e.target.value
-              )
-                setAssignee("");
-            }}
-          >
-            <option value="">No role</option>
-            {roles.map((r) => (
-              <option key={r.id} value={r.id}>
-                {r.name}
-              </option>
-            ))}
-          </select>
-          <label
-            className="block text-label font-bold"
-            htmlFor="detail-assignee"
-          >
-            Assignee
-          </label>
-          <select
-            id="detail-assignee"
-            className="ui-input"
-            value={assignee}
-            disabled={readOnly}
-            onChange={(e) => {
-              setAssignee(e.target.value);
-              const m = members.find((v) => v.id === e.target.value);
-              if (m) setRole(m.role.id);
-            }}
-          >
-            <option value="">No assignee</option>
-            {members
-              .filter((m) => !role || m.role.id === role)
-              .map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.name}
+        <>
+          <form className="mt-5 space-y-4" onSubmit={(e) => void save(e)}>
+            <FormField
+              id="detail-name"
+              name="name"
+              label="Name"
+              value={name}
+              disabled={readOnly}
+              autoFocus
+              onChange={(e) => setName(e.target.value)}
+            />
+            <label
+              className="block text-label font-bold"
+              htmlFor="detail-role"
+            >
+              Role
+            </label>
+            <select
+              id="detail-role"
+              className="ui-input"
+              value={role}
+              disabled={readOnly}
+              onChange={(e) => {
+                setRole(e.target.value);
+                if (
+                  members.find((m) => m.id === assignee)?.role.id !==
+                  e.target.value
+                )
+                  setAssignee("");
+              }}
+            >
+              <option value="">No role</option>
+              {roles.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.name}
                 </option>
               ))}
-          </select>
-          <FormField
-            id="detail-effort"
-            name="effortHours"
-            label="Effort (hours)"
-            type="text"
-            inputMode="decimal"
-            value={effort}
-            disabled={readOnly}
-            onChange={(e) => {
-              if (isDecimalDraft(e.target.value)) setEffort(e.target.value);
-            }}
-            onBlur={() => setEffort(roundToHalfDraft(effort))}
-          />
-          <fieldset>
-            <legend className="font-bold">Manual timelines</legend>
-            <div className="mt-3 grid gap-4">
-              <TaskTimelineCalendar
-                label="Execution timeline"
-                startDate={executionStart}
-                endDate={executionEnd}
-                disabled={!manual || busy}
-                loadPublicHolidayDates={loadPublicHolidayDates}
-                onChange={(start, end) => {
-                  setExecutionStart(start);
-                  setExecutionEnd(end);
-                }}
-              />
-              <TaskTimelineCalendar
-                label="Commitment timeline"
-                startDate={commitmentStart}
-                endDate={commitmentEnd}
-                disabled={!manual || busy}
-                loadPublicHolidayDates={loadPublicHolidayDates}
-                onChange={(start, end) => {
-                  setCommitmentStart(start);
-                  setCommitmentEnd(end);
-                }}
-              />
-            </div>
-          </fieldset>
-          {!manual && !completed ? (
-            <p className="text-sm text-muted">
-              Manual timelines require an Open project with Automatic Scheduling
-              off.
-            </p>
-          ) : null}
-          {error ? <Alert tone="danger">{error}</Alert> : null}
-          {dependenciesGateway ? (
-            <TaskDependencies
-              taskId={node.id}
-              gateway={dependenciesGateway}
-              readOnly={readOnly}
-            />
-          ) : null}
-          <div className="flex justify-end gap-3">
-            <Button type="button" onClick={onClose}>
-              Close
-            </Button>
-            <Button
-              type="submit"
-              variant="primary"
-              loading={busy}
-              disabled={readOnly}
+            </select>
+            <label
+              className="block text-label font-bold"
+              htmlFor="detail-assignee"
             >
-              Save
-            </Button>
-          </div>
-          {!completed && project.status !== "closed" ? (
-            <div className="border-t border-border-subtle pt-4">
-              <CalendarPopover
-                label="Actual End"
-                buttonLabel={
-                  actualEnd ? formatDateOnly(actualEnd) : "Select date"
-                }
-                initialDate={actualEnd}
-                instruction="Select the task completion date."
-                selectedDates={actualEnd ? [actualEnd] : []}
-                disabled={busy}
-                loadPublicHolidayDates={loadPublicHolidayDates}
-                onSelect={(date) => {
-                  setActualEnd(date);
-                  return true;
-                }}
+              Assignee
+            </label>
+            <select
+              id="detail-assignee"
+              className="ui-input"
+              value={assignee}
+              disabled={readOnly}
+              onChange={(e) => {
+                setAssignee(e.target.value);
+                const m = members.find((v) => v.id === e.target.value);
+                if (m) setRole(m.role.id);
+              }}
+            >
+              <option value="">No assignee</option>
+              {members
+                .filter((m) => !role || m.role.id === role)
+                .map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name}
+                  </option>
+                ))}
+            </select>
+            <FormField
+              id="detail-effort"
+              name="effortHours"
+              label="Effort (hours)"
+              type="text"
+              inputMode="decimal"
+              value={effort}
+              disabled={readOnly}
+              onChange={(e) => {
+                if (isDecimalDraft(e.target.value)) setEffort(e.target.value);
+              }}
+              onBlur={() => setEffort(roundToHalfDraft(effort))}
+            />
+            <fieldset>
+              <legend className="font-bold">Manual timelines</legend>
+              <div className="mt-3 grid gap-4">
+                <TaskTimelineCalendar
+                  label="Execution timeline"
+                  startDate={executionStart}
+                  endDate={executionEnd}
+                  disabled={!manual || busy}
+                  loadPublicHolidayDates={loadPublicHolidayDates}
+                  onChange={(start, end) => {
+                    setExecutionStart(start);
+                    setExecutionEnd(end);
+                  }}
+                />
+                <TaskTimelineCalendar
+                  label="Commitment timeline"
+                  startDate={commitmentStart}
+                  endDate={commitmentEnd}
+                  disabled={!manual || busy}
+                  loadPublicHolidayDates={loadPublicHolidayDates}
+                  onChange={(start, end) => {
+                    setCommitmentStart(start);
+                    setCommitmentEnd(end);
+                  }}
+                />
+              </div>
+            </fieldset>
+            {!manual && !completed ? (
+              <p className="text-sm text-muted">
+                Manual timelines require an Open project with Automatic
+                Scheduling off.
+              </p>
+            ) : null}
+            {error ? <Alert tone="danger">{error}</Alert> : null}
+            {dependenciesGateway ? (
+              <TaskDependencies
+                taskId={node.id}
+                gateway={dependenciesGateway}
+                readOnly={readOnly}
               />
+            ) : null}
+            <div className="flex justify-end gap-3">
+              <Button type="button" onClick={onClose}>
+                Close
+              </Button>
               <Button
-                type="button"
-                className="mt-3"
+                type="submit"
+                variant="primary"
                 loading={busy}
-                disabled={!actualEnd}
-                onClick={() => void complete()}
+                disabled={readOnly}
               >
-                Mark completed
+                Save
               </Button>
             </div>
-          ) : completed ? (
-            <Alert tone="success">
-              Completed on {node.executable.actualEnd}. Completed work is
-              read-only.
-            </Alert>
+            {!completed && project.status !== "closed" ? (
+              <div className="border-t border-border-subtle pt-4">
+                <CalendarPopover
+                  label="Actual End"
+                  buttonLabel={
+                    actualEnd ? formatDateOnly(actualEnd) : "Select date"
+                  }
+                  initialDate={actualEnd}
+                  instruction="Select the task completion date."
+                  selectedDates={actualEnd ? [actualEnd] : []}
+                  disabled={busy}
+                  loadPublicHolidayDates={loadPublicHolidayDates}
+                  onSelect={(date) => {
+                    setActualEnd(date);
+                    return true;
+                  }}
+                />
+                <Button
+                  type="button"
+                  className="mt-3"
+                  loading={busy}
+                  disabled={!actualEnd}
+                  onClick={() => void complete()}
+                >
+                  Mark completed
+                </Button>
+              </div>
+            ) : completed ? (
+              <div className="space-y-3">
+                <Alert tone="success">
+                  Completed on {formatDateOnly(node.executable.actualEnd!)}.
+                  Completed work is read-only for normal changes.
+                </Alert>
+                {canReopen ? (
+                  <Button
+                    type="button"
+                    variant="danger"
+                    onClick={() => {
+                      setReopenError("");
+                      setReopenOpen(true);
+                    }}
+                  >
+                    Reopen Task
+                  </Button>
+                ) : null}
+              </div>
+            ) : null}
+          </form>
+          {reopenOpen ? (
+            <Dialog
+              nested
+              kind="alertdialog"
+              titleID="reopen-task-title"
+              descriptionID="reopen-task-description"
+              closeOnBackdrop={!reopenBusy}
+              onClose={() => {
+                if (!reopenBusy && !reopenLock.current) setReopenOpen(false);
+              }}
+            >
+              <h4 id="reopen-task-title" className="text-xl font-extrabold">
+                Reopen Task?
+              </h4>
+              <div id="reopen-task-description" className="mt-4 space-y-3">
+                <p>
+                  <strong>{node.name}</strong> was completed on{" "}
+                  {formatDateOnly(node.executable.actualEnd!)}.
+                </p>
+                <p className="text-sm text-muted">
+                  Reopening removes Actual End, returns the Task to unfinished,
+                  and may change Forecast dates. Execution and Commitment dates
+                  are preserved.
+                </p>
+              </div>
+              {reopenError ? (
+                <Alert tone="danger" className="mt-4">
+                  {reopenError}
+                </Alert>
+              ) : null}
+              <div className="mt-6 flex flex-wrap justify-end gap-3">
+                <Button
+                  type="button"
+                  disabled={reopenBusy}
+                  onClick={() => {
+                    if (!reopenLock.current) setReopenOpen(false);
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="button"
+                  variant="danger-solid"
+                  loading={reopenBusy}
+                  onClick={() => void reopen()}
+                >
+                  Reopen Task
+                </Button>
+              </div>
+            </Dialog>
           ) : null}
-        </form>
+        </>
       )}
     </Dialog>
   );

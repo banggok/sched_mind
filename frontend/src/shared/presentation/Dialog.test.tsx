@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import axe from "axe-core";
 import { useState } from "react";
@@ -25,6 +25,28 @@ function DialogFixture() {
   );
 }
 
+function NestedDialogFixture() {
+  const [nestedOpen, setNestedOpen] = useState(false);
+  return (
+    <Dialog titleID="parent-dialog-title" onClose={() => undefined}>
+      <h2 id="parent-dialog-title">Parent dialog</h2>
+      <button type="button" onClick={() => setNestedOpen(true)}>
+        Open nested dialog
+      </button>
+      {nestedOpen ? (
+        <Dialog
+          nested
+          titleID="nested-dialog-title"
+          onClose={() => setNestedOpen(false)}
+        >
+          <h3 id="nested-dialog-title">Nested dialog</h3>
+          <button type="button">Nested action</button>
+        </Dialog>
+      ) : null}
+    </Dialog>
+  );
+}
+
 describe("Dialog", () => {
   it("has no detectable accessibility violations", async () => {
     const { container } = render(<DialogFixture />);
@@ -39,6 +61,22 @@ describe("Dialog", () => {
       },
     });
     expect(results.violations).toEqual([]);
+  });
+
+  it("portals nested dialogs outside the scrollable parent overlay", async () => {
+    const user = userEvent.setup();
+    render(<NestedDialogFixture />);
+
+    const parent = screen.getByRole("dialog", { name: "Parent dialog" });
+    await user.click(
+      within(parent).getByRole("button", { name: "Open nested dialog" }),
+    );
+
+    const nested = screen.getByRole("dialog", { name: "Nested dialog" });
+    const nestedOverlay = nested.parentElement;
+    expect(parent.contains(nested)).toBe(false);
+    expect(nestedOverlay?.className).toContain("dialog-overlay-nested");
+    expect(nestedOverlay?.parentElement).toBe(document.body);
   });
 
   it("manages initial focus, traps tab navigation, and restores focus", async () => {

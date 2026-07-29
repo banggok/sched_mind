@@ -265,9 +265,11 @@ contract tests; algorithms remain deferred to Epic 6.
 ### Actual End and Completion
 
 - Actual End is date-only and only valid on Executable WBS.
-- Setting it completes the WBS permanently for MVP. It cannot be edited or
-  cleared, and every later planning or structural mutation affecting that
-  completed WBS is rejected. Correction/reopen is out of scope.
+- Setting Actual End completes the Executable WBS. A completed Task remains
+  read-only for normal planning, executable-field, and structural mutation.
+- `US-4.2 — Reopen Completed Task` is the only explicit exception that may
+  clear Actual End. Reopen uses a dedicated command; generic Task update may
+  not clear Actual End or bypass the completed-task read-only invariant.
 
 ### Reorder
 

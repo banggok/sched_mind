@@ -337,6 +337,7 @@ export function WBSPanel({
       ) : null}
       {detail ? (
         <WBSDetailDialog
+          key={`${detail.id}:${detail.executable.actualEnd ?? "unfinished"}`}
           project={project}
           node={detail}
           gateway={gateway}
@@ -349,12 +350,30 @@ export function WBSPanel({
             setDetail(undefined);
             refresh(message);
           }}
+          onReopened={(confirmed, message) => {
+            dependenciesGateway?.invalidateAll();
+            setTree((current) => replaceNode(current, confirmed));
+            setDetail(confirmed);
+            setToast(message);
+          }}
         />
       ) : null}
       <Toast message={toast} onDismiss={() => setToast("")} />
     </Dialog>
   );
 }
+
+function replaceNode(values: WBSNode[], replacement: WBSNode): WBSNode[] {
+  return values.map((value) => {
+    if (value.id === replacement.id) return replacement;
+    if (value.children.length === 0) return value;
+    return {
+      ...value,
+      children: replaceNode(value.children, replacement),
+    };
+  });
+}
+
 function TreeNode({
   node,
   first,

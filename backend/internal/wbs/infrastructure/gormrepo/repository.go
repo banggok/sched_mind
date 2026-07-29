@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/banggok/sched_mind/backend/internal/wbs/application"
@@ -197,6 +198,60 @@ func (r *Repository) Complete(ctx context.Context, p, id string, actual, now tim
 		return nil
 	})
 	return out, err
+}
+
+func (r *Repository) Reopen(ctx context.Context, p, id string, now time.Time, forecast func(context.Context, string) error) (*domain.Node, error) {
+	var out *domain.Node
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Read the Task state before serialising on the owning Project. Requests
+		// that observed the completed state but lose the conditional transition
+		// are reported as concurrent conflicts rather than as initially unfinished.
+		m, err := findNode(tx, p, id, false)
+		if err != nil {
+			return err
+		}
+		count, err := childCount(tx, p, id)
+		if err != nil {
+			return err
+		}
+		project, err := loadProject(tx, p, true)
+		if err != nil {
+			return err
+		}
+		if project.Status == "closed" {
+			return domain.ErrProjectClosedReadOnly
+		}
+		n := toDomain(m, count > 0)
+		if err := n.Reopen(now); err != nil {
+			return err
+		}
+		result := tx.Model(&nodeModel{}).
+			Where("id = ? AND project_id = ? AND actual_end IS NOT NULL", id, p).
+			Updates(map[string]any{"actual_end": nil, "updated_at": now})
+		if result.Error != nil {
+			if isReopenConcurrencyError(tx, result.Error) {
+				return fmt.Errorf("%w: %v", domain.ErrTaskReopenConflict, result.Error)
+			}
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return domain.ErrTaskReopenConflict
+		}
+		if err := forecast(ctx, p); err != nil {
+			return err
+		}
+		out = &n
+		return nil
+	})
+	return out, err
+}
+
+func isReopenConcurrencyError(db *gorm.DB, err error) bool {
+	if db.Dialector.Name() != "sqlite" {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "database is locked") || strings.Contains(message, "database table is locked")
 }
 
 func (r *Repository) Reorder(ctx context.Context, p, id string, d domain.Direction, now time.Time, schedule func(context.Context, string) error) error {

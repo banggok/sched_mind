@@ -34,6 +34,7 @@ export interface WBSGateway {
     input: ExecutableInput,
   ): Promise<void>;
   complete(projectId: string, id: string, actualEnd: string): Promise<void>;
+  reopen(projectId: string, id: string): Promise<WBSNode>;
 }
 export interface ExecutableInput {
   name: string;

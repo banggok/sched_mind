@@ -94,8 +94,10 @@ Project Settings may be modified.
 
 ### Locked
 
-Project Settings are read-only.
-Engineering Lead must change Project Status back to Open before modifying settings.
+Project Settings are read-only while the Project is Locked. This restriction
+must not introduce or imply a `Locked → Open` lifecycle transition. US-4.2 is a
+narrow command exception: a completed Task may be reopened while the Project
+remains Locked, without making Project Settings editable.
 
 ### Closed
 

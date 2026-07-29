@@ -65,6 +65,7 @@ describe("WBSDetailDialog option loading", () => {
           membersGateway={membersGateway}
           onClose={() => undefined}
           onChanged={() => undefined}
+          onReopened={() => undefined}
         />
       </StrictMode>,
     );
@@ -119,6 +120,7 @@ describe("WBSDetailDialog option loading", () => {
         membersGateway={membersGateway}
         onClose={() => undefined}
         onChanged={() => undefined}
+        onReopened={() => undefined}
       />,
     );
     fireEvent.change(screen.getByLabelText("Name"), {
