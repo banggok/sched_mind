@@ -13,7 +13,7 @@ func TestProjectLifecycleAndValidation(t *testing.T) {
 	if err != nil || project == nil {
 		t.Fatalf("create: %#v %v", project, err)
 	}
-	if project.Name != "Alpha" || project.Status != StatusOpen || !project.AutoCalculateDate || !project.AutoDependencyByAssignee || !project.AutomaticScheduling || project.ProjectBuffer != 20 {
+	if project.Name != "Alpha" || project.Status != StatusOpen || !project.AutoCalculateDate || !project.AutomaticScheduling || project.ProjectBuffer != 20 {
 		t.Fatalf("unexpected defaults: %#v", project)
 	}
 	if _, err := NewProject("id", " ", 1, now); !errors.Is(err, ErrNameRequired) {

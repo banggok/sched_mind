@@ -6,16 +6,17 @@ import (
 )
 
 var (
-	ErrNotFound         = errors.New("dependency not found")
-	ErrTaskNotFound     = errors.New("task not found")
-	ErrSelfReference    = errors.New("dependency self reference")
-	ErrAlreadyExists    = errors.New("dependency already exists")
-	ErrExecutableNeeded = errors.New("executable task required")
-	ErrCycle            = errors.New("dependency cycle detected")
-	ErrClosedProject    = errors.New("closed project task not allowed")
-	ErrCompletedBlocked = errors.New("completed task cannot be blocked")
-	ErrCompletedHistory = errors.New("completed dependency history read only")
-	ErrInvalidDirection = errors.New("invalid dependency direction")
+	ErrNotFound              = errors.New("dependency not found")
+	ErrTaskNotFound          = errors.New("task not found")
+	ErrSelfReference         = errors.New("dependency self reference")
+	ErrAlreadyExists         = errors.New("dependency already exists")
+	ErrExecutableNeeded      = errors.New("executable task required")
+	ErrCycle                 = errors.New("dependency cycle detected")
+	ErrClosedProject         = errors.New("closed project task not allowed")
+	ErrCompletedBlocked      = errors.New("completed task cannot be blocked")
+	ErrCompletedHistory      = errors.New("completed dependency history read only")
+	ErrAutomaticOnlyReadOnly = errors.New("automatic-only dependency is read-only")
+	ErrInvalidDirection      = errors.New("invalid dependency direction")
 )
 
 type Direction string
@@ -27,19 +28,95 @@ const (
 
 func (d Direction) Valid() bool { return d == BlockedBy || d == Blocks }
 
+type Source string
+
+const (
+	SourceManual    Source = "manual"
+	SourceAutomatic Source = "automatic"
+	SourceShared    Source = "both"
+)
+
 type Dependency struct {
 	ID, BlockingTaskID, BlockedTaskID string
+	ManualOwned, AutomaticOwned       bool
 	CreatedAt, UpdatedAt              time.Time
 }
 
 func New(id, blockingTaskID, blockedTaskID string, now time.Time) (*Dependency, error) {
+	return newDependency(id, blockingTaskID, blockedTaskID, true, false, now)
+}
+
+func NewAutomatic(id, blockingTaskID, blockedTaskID string, now time.Time) (*Dependency, error) {
+	return newDependency(id, blockingTaskID, blockedTaskID, false, true, now)
+}
+
+func Rehydrate(id, blockingTaskID, blockedTaskID string, manualOwned, automaticOwned bool, createdAt, updatedAt time.Time) (*Dependency, error) {
+	if !manualOwned && !automaticOwned {
+		return nil, ErrNotFound
+	}
+	value, err := newDependency(id, blockingTaskID, blockedTaskID, manualOwned, automaticOwned, createdAt)
+	if err != nil {
+		return nil, err
+	}
+	value.UpdatedAt = updatedAt
+	return value, nil
+}
+
+func newDependency(id, blockingTaskID, blockedTaskID string, manualOwned, automaticOwned bool, now time.Time) (*Dependency, error) {
 	if id == "" || blockingTaskID == "" || blockedTaskID == "" {
 		return nil, ErrTaskNotFound
 	}
 	if blockingTaskID == blockedTaskID {
 		return nil, ErrSelfReference
 	}
-	return &Dependency{ID: id, BlockingTaskID: blockingTaskID, BlockedTaskID: blockedTaskID, CreatedAt: now, UpdatedAt: now}, nil
+	if !manualOwned && !automaticOwned {
+		return nil, ErrNotFound
+	}
+	return &Dependency{
+		ID:             id,
+		BlockingTaskID: blockingTaskID,
+		BlockedTaskID:  blockedTaskID,
+		ManualOwned:    manualOwned,
+		AutomaticOwned: automaticOwned,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}, nil
+}
+
+func (dependency Dependency) Source() Source {
+	switch {
+	case dependency.ManualOwned && dependency.AutomaticOwned:
+		return SourceShared
+	case dependency.AutomaticOwned:
+		return SourceAutomatic
+	default:
+		return SourceManual
+	}
+}
+
+func (dependency Dependency) ManualRemovable() bool { return dependency.ManualOwned }
+
+func (dependency *Dependency) AddManual(now time.Time) error {
+	if dependency.ManualOwned {
+		return ErrAlreadyExists
+	}
+	dependency.ManualOwned = true
+	dependency.UpdatedAt = now
+	return nil
+}
+
+func (dependency *Dependency) RemoveManual(now time.Time) (deleteRelation bool, err error) {
+	if !dependency.ManualOwned {
+		return false, ErrAutomaticOnlyReadOnly
+	}
+	dependency.ManualOwned = false
+	dependency.UpdatedAt = now
+	return !dependency.AutomaticOwned, nil
+}
+
+func (dependency *Dependency) KeepAsManual(now time.Time) {
+	dependency.ManualOwned = true
+	dependency.UpdatedAt = now
 }
 
 type Task struct {
@@ -66,9 +143,7 @@ type CandidatePage struct {
 	TotalItems int64
 }
 
-type CycleStep struct {
-	TaskID, TaskName, ProjectName string
-}
+type CycleStep struct{ TaskID, TaskName, ProjectName string }
 
 type CycleError struct{ Path []CycleStep }
 

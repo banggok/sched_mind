@@ -1,11 +1,16 @@
 # US-3.1 — Create Project
 
+> **Product decision update — US-6.1:** `Automatic Scheduling` is the only
+> Project configuration that activates generated Execution/Commitment dates and
+> Auto Dependency by Assignee. The former system field
+> `Auto Dependency by Assignee` is removed.
+
 > Product decision update: Project includes a nullable `Scheduling Start Date`
 > (`SQL DATE`, API `YYYY-MM-DD`). It is the only initial anchor for future
 > Automatic Scheduling and is configured in the combined Add/Edit Project form.
 > Automatic Scheduling may be saved without it, but generated timelines must
 > remain empty and the UI must warn: `Automatic Scheduling requires a Project
-> Scheduling Start Date.` No task-level Earliest Start or equivalent anchor is
+Scheduling Start Date.` No task-level Earliest Start or equivalent anchor is
 > permitted. Scheduling calculation remains outside this story.
 
 ## 1. User Story
@@ -108,8 +113,9 @@ memenuhi story ini.
   no-results, Retry, background refresh, dan Toast patterns.
 - Add form tidak meminta user memilih status; status Open dijelaskan sebagai
   default yang ditetapkan backend.
-- Add form hanya meminta Project Name. Priority ditetapkan sistem pada posisi
-  terendah; derived dates dan automatic configuration tidak perlu diinput.
+- Add/Edit Project menggunakan combined form dari US-3.3: Project Name,
+  Automatic Scheduling, Scheduling Start Date, dan Project Buffer. Status dan
+  Priority tidak dipilih user; Priority ditetapkan sistem pada posisi terendah.
 - Draft dipertahankan setelah validation atau backend failure.
 - Controls terkait dinonaktifkan selama mutation untuk mencegah duplicate
   submission tanpa memblokir seluruh page.
@@ -138,19 +144,20 @@ memenuhi story ini.
 
 ### Project
 
-| Field | Type | Required | Source | Rules |
-| --- | --- | ---: | --- | --- |
-| ID | System-generated identifier | Ya | System | Dibuat otomatis dan immutable |
-| Name | String | Ya | User | Trimmed; non-blank; maksimum 100 karakter; unique case-insensitive |
-| Status | `open \| locked \| closed` | Ya | System/transition | Default `open`; hanya berubah melalui lifecycle command |
-| Start Date | Nullable date-only | Tidak | System-derived | Min Start Date descendant leaf; `null` bila belum ada leaf/date |
-| End Date | Nullable date-only | Tidak | System-derived | Max End Date descendant leaf; `null` bila belum ada leaf/date |
-| Auto Calculate Date | Boolean | Ya | System | Selalu `true`; tidak editable |
-| Auto Dependency by Assignee | Boolean | Ya | System | Selalu `true`; tidak editable |
-| Project Priority | Positive integer position | Ya | System/User command | Unique; create menggunakan global `MAX(priority)+1`; Move Up/Down menukar position dengan active neighbour |
-| Closed At | Nullable DateTime | Tidak | System | Diisi saat successful close; retained untuk audit dan Closed ordering |
-| Created At | DateTime | Ya | System | Dibuat otomatis dan immutable |
-| Updated At | DateTime | Ya | System | Diperbarui setelah confirmed mutation |
+| Field                 | Type                        | Required | Source              | Rules                                                                                                      |
+| --------------------- | --------------------------- | -------: | ------------------- | ---------------------------------------------------------------------------------------------------------- |
+| ID                    | System-generated identifier |       Ya | System              | Dibuat otomatis dan immutable                                                                              |
+| Name                  | String                      |       Ya | User                | Trimmed; non-blank; maksimum 100 karakter; unique case-insensitive                                         |
+| Status                | `open \| locked \| closed`  |       Ya | System/transition   | Default `open`; hanya berubah melalui lifecycle command                                                    |
+| Start Date            | Nullable date-only          |    Tidak | System-derived      | Min Start Date descendant leaf; `null` bila belum ada leaf/date                                            |
+| End Date              | Nullable date-only          |    Tidak | System-derived      | Max End Date descendant leaf; `null` bila belum ada leaf/date                                              |
+| Automatic Scheduling  | Boolean                     |       Ya | User/default        | Default `true`; configured through US-3.3 combined Add/Edit Project form                                   |
+| Scheduling Start Date | Nullable date-only          |    Tidak | User                | Project-level scheduler anchor; SQL `DATE`, API `YYYY-MM-DD`                                               |
+| Project Buffer        | Decimal percentage          |       Ya | User/default        | Default `20`; configured through US-3.3                                                                    |
+| Project Priority      | Positive integer position   |       Ya | System/User command | Unique; create menggunakan global `MAX(priority)+1`; Move Up/Down menukar position dengan active neighbour |
+| Closed At             | Nullable DateTime           |    Tidak | System              | Diisi saat successful close; retained untuk audit dan Closed ordering                                      |
+| Created At            | DateTime                    |       Ya | System              | Dibuat otomatis dan immutable                                                                              |
+| Updated At            | DateTime                    |       Ya | System              | Diperbarui setelah confirmed mutation                                                                      |
 
 Project Priority dicantumkan karena active ordering membutuhkannya. Closed At
 adalah additional system field untuk audit dan deterministic Closed ordering.
@@ -165,11 +172,11 @@ granularity snapshot ditentukan saat contract timeline/WBS tersedia.
 
 ## 7. Project Status Model
 
-| Status | Meaning | Editable | Scheduling | Gantt | Timeline behaviour |
-| --- | --- | --- | --- | --- | --- |
-| Open | Active planning | Ya, subject to domain rules | Included | Visible | Execution, Commitment, dan Forecast dapat recalculated |
-| Locked | Active dengan protected baseline | Unfinished planning data tetap editable | Included | Visible | Execution dan Commitment baseline tetap; Forecast dynamic |
-| Closed | Completed historical Project | Tidak | Excluded | Hidden | Semua planning dan timeline read-only |
+| Status | Meaning                          | Editable                                | Scheduling | Gantt   | Timeline behaviour                                        |
+| ------ | -------------------------------- | --------------------------------------- | ---------- | ------- | --------------------------------------------------------- |
+| Open   | Active planning                  | Ya, subject to domain rules             | Included   | Visible | Execution, Commitment, dan Forecast dapat recalculated    |
+| Locked | Active dengan protected baseline | Unfinished planning data tetap editable | Included   | Visible | Execution dan Commitment baseline tetap; Forecast dynamic |
+| Closed | Completed historical Project     | Tidak                                   | Excluded   | Hidden  | Semua planning dan timeline read-only                     |
 
 - Status saat create selalu `open`, ditegakkan backend.
 - Tidak ada status lain.
@@ -180,13 +187,13 @@ granularity snapshot ditentukan saat contract timeline/WBS tersedia.
 
 ## 8. Status Transition Rules
 
-| From | To | Allowed | Conditions and effects |
-| --- | --- | ---: | --- |
-| Open | Locked | Ya | Harus mempunyai sedikitnya satu Executable Leaf; capture/protect current Execution dan Commitment baseline |
-| Open | Closed | Ya | Seluruh descendant Executable Leaf harus memiliki Actual End |
-| Locked | Closed | Ya | Full close validation tetap wajib |
-| Closed | Open | Ya | Project kembali editable, schedulable, dan visible in Gantt |
-| Closed | Locked | Tidak | Reject tanpa partial mutation |
+| From   | To     | Allowed | Conditions and effects                                                                                     |
+| ------ | ------ | ------: | ---------------------------------------------------------------------------------------------------------- |
+| Open   | Locked |      Ya | Harus mempunyai sedikitnya satu Executable Leaf; capture/protect current Execution dan Commitment baseline |
+| Open   | Closed |      Ya | Seluruh descendant Executable Leaf harus memiliki Actual End                                               |
+| Locked | Closed |      Ya | Full close validation tetap wajib                                                                          |
+| Closed | Open   |      Ya | Project kembali editable, schedulable, dan visible in Gantt                                                |
+| Closed | Locked |   Tidak | Reject tanpa partial mutation                                                                              |
 
 - Invalid status value ditolak.
 - Transition selain tabel di atas ditolak kecuali idempotency semantics kemudian
@@ -309,9 +316,9 @@ granularity snapshot ditentukan saat contract timeline/WBS tersedia.
 - Semua active Project ditampilkan sebelum Closed Project.
 - Closed Project tidak termasuk active priority allocation.
 - Closed Project diurutkan `closed_at DESC, id ASC`.
-- Untuk active Project dengan Priority sama, tie-breaker adalah Start Date ASC
-  (`null` last), End Date ASC (`null` last), status dengan Locked sebelum Open,
-  lalu Project ID ASC.
+- Duplicate active Project Priority adalah invalid persisted state. List dan
+  Scheduling Engine tidak mengarang tie-breaker dari Start Date, End Date, status,
+  Name, Created At, atau Project ID.
 - Filter/search/pagination menjadi request-cache identity.
 - Confirmed mutation memperbarui affected list/detail serta scheduling/Gantt
   projection tanpa hard refresh.
@@ -554,8 +561,9 @@ GET /api/projects?search=alpha&page=1&pageSize=5
       "status": "open",
       "startDate": "2026-08-01",
       "endDate": "2026-09-30",
-      "autoCalculateDate": true,
-      "autoDependencyByAssignee": true,
+      "automaticScheduling": true,
+      "schedulingStartDate": "2026-08-01",
+      "projectBuffer": 20,
       "projectPriority": 1,
       "closedAt": null,
       "createdAt": "2026-07-26T10:00:00Z",
@@ -588,12 +596,15 @@ Content-Type: application/json
 
 ```json
 {
-  "name": "Alpha"
+  "name": "Alpha",
+  "automaticScheduling": true,
+  "schedulingStartDate": "2026-08-01",
+  "projectBuffer": 20
 }
 ```
 
 Backend assigns `status: open`, lowest Project Priority, `startDate: null`,
-`endDate: null`, both automatic flags `true`, ID, and timestamps. Request must
+`endDate: null`, default Project Settings from US-3.3 when omitted, ID, and timestamps. Request must
 not accept system-derived fields or manually supplied locked baselines.
 
 Success: `201 Created` with `{ "data": Project }`.
@@ -606,8 +617,9 @@ Content-Type: application/json
 ```
 
 The current Project-level writable DTO contains only `name`. Derived dates,
-automatic flags, Priority, status, Closed At, timestamps, and locked baselines
-are not accepted. Status changes use the command endpoint. Closed Project
+Priority, status, Closed At, timestamps, and locked baselines are not accepted.
+`automaticScheduling`, `schedulingStartDate`, and `projectBuffer` follow the
+combined Project form contract from US-3.3. Status changes use the command endpoint. Closed Project
 updates return `409 PROJECT_CLOSED_READ_ONLY`.
 
 ### Change Project Status
@@ -690,25 +702,25 @@ DELETE /api/projects/{projectId}
 }
 ```
 
-| Error Code | HTTP | Field | Condition |
-| --- | ---: | --- | --- |
-| `INVALID_REQUEST` | 400 | — | Malformed JSON, unknown field, atau multiple payloads |
-| `PROJECT_NAME_REQUIRED` | 400 | `name` | Trimmed Name kosong |
-| `PROJECT_NAME_TOO_LONG` | 400 | `name` | Trimmed Name lebih dari 100 karakter |
-| `PROJECT_NAME_ALREADY_EXISTS` | 409 | `name` | Name digunakan Project lain secara case-insensitive |
-| `PROJECT_NOT_FOUND` | 404 | — | Project ID tidak tersedia |
-| `PROJECT_STATUS_INVALID` | 400 | `status` | Target bukan open, locked, atau closed |
-| `PROJECT_STATUS_TRANSITION_NOT_ALLOWED` | 409 | `status` | Transition tidak diizinkan, termasuk Locked ke Open dan Closed ke Locked |
-| `PROJECT_CANNOT_LOCK_WITHOUT_TASKS` | 409 | `status` | Lock diminta untuk Project tanpa Executable Leaf |
-| `PROJECT_CANNOT_CLOSE_WITH_ACTIVE_TASKS` | 409 | `status` | Sedikitnya satu descendant Executable Leaf tidak mempunyai Actual End |
-| `PROJECT_CANNOT_CLOSE_WITHOUT_TASKS` | 409 | `status` | Close diminta untuk Project tanpa Executable Leaf |
-| `PROJECT_CLOSED_READ_ONLY` | 409 | — | Mutation planning pada Closed Project |
-| `COMPLETED_TASK_READ_ONLY` | 409 | — | Mutation pada Executable Leaf yang mempunyai Actual End |
-| `PROJECT_PRIORITY_DIRECTION_INVALID` | 400 | `direction` | Direction bukan up atau down |
-| `PROJECT_PRIORITY_MOVE_NOT_ALLOWED` | 409 | `direction` | Tidak ada active neighbour pada arah yang diminta |
-| `PROJECT_HAS_CHILDREN` | 409 | — | Delete diminta untuk Project yang mempunyai child |
-| `INVALID_PAGE` | 400 | `page` | Page bukan positive integer |
-| `INVALID_PAGE_SIZE` | 400 | `pageSize` | Page size di luar 1..100 |
+| Error Code                               | HTTP | Field       | Condition                                                                |
+| ---------------------------------------- | ---: | ----------- | ------------------------------------------------------------------------ |
+| `INVALID_REQUEST`                        |  400 | —           | Malformed JSON, unknown field, atau multiple payloads                    |
+| `PROJECT_NAME_REQUIRED`                  |  400 | `name`      | Trimmed Name kosong                                                      |
+| `PROJECT_NAME_TOO_LONG`                  |  400 | `name`      | Trimmed Name lebih dari 100 karakter                                     |
+| `PROJECT_NAME_ALREADY_EXISTS`            |  409 | `name`      | Name digunakan Project lain secara case-insensitive                      |
+| `PROJECT_NOT_FOUND`                      |  404 | —           | Project ID tidak tersedia                                                |
+| `PROJECT_STATUS_INVALID`                 |  400 | `status`    | Target bukan open, locked, atau closed                                   |
+| `PROJECT_STATUS_TRANSITION_NOT_ALLOWED`  |  409 | `status`    | Transition tidak diizinkan, termasuk Locked ke Open dan Closed ke Locked |
+| `PROJECT_CANNOT_LOCK_WITHOUT_TASKS`      |  409 | `status`    | Lock diminta untuk Project tanpa Executable Leaf                         |
+| `PROJECT_CANNOT_CLOSE_WITH_ACTIVE_TASKS` |  409 | `status`    | Sedikitnya satu descendant Executable Leaf tidak mempunyai Actual End    |
+| `PROJECT_CANNOT_CLOSE_WITHOUT_TASKS`     |  409 | `status`    | Close diminta untuk Project tanpa Executable Leaf                        |
+| `PROJECT_CLOSED_READ_ONLY`               |  409 | —           | Mutation planning pada Closed Project                                    |
+| `COMPLETED_TASK_READ_ONLY`               |  409 | —           | Mutation pada Executable Leaf yang mempunyai Actual End                  |
+| `PROJECT_PRIORITY_DIRECTION_INVALID`     |  400 | `direction` | Direction bukan up atau down                                             |
+| `PROJECT_PRIORITY_MOVE_NOT_ALLOWED`      |  409 | `direction` | Tidak ada active neighbour pada arah yang diminta                        |
+| `PROJECT_HAS_CHILDREN`                   |  409 | —           | Delete diminta untuk Project yang mempunyai child                        |
+| `INVALID_PAGE`                           |  400 | `page`      | Page bukan positive integer                                              |
+| `INVALID_PAGE_SIZE`                      |  400 | `pageSize`  | Page size di luar 1..100                                                 |
 
 Field-specific date/configuration errors tidak diperlukan karena values tersebut
 system-derived. Internal error tidak
@@ -718,79 +730,79 @@ mengekspos stack trace, SQL, database, atau infrastructure detail.
 
 ## 17. Test Cases
 
-| ID | Scenario | Expected |
-| --- | --- | --- |
-| TC-1 | Buka Project > Projects | Page berada di shared shell; menu dan breadcrumb aktif |
-| TC-2 | Initial list pending | Local skeleton; empty/no-results belum tampil |
-| TC-3 | Empty successful list | Empty state dan Add Project action |
-| TC-4 | List failure lalu Retry | Actionable error, kemudian list pulih |
-| TC-5 | Search Name beda casing | Backend prefix search match |
-| TC-6 | Search tanpa match lalu Clear | No-results berbeda; Clear kembali ke page 1 |
-| TC-7 | Lebih dari lima Projects | Backend pagination dan metadata benar |
-| TC-8 | Active ordering | Open/Locked mengikuti Priority tanpa status grouping |
-| TC-9 | Closed ordering group | Semua Closed berada setelah seluruh active Projects |
-| TC-10 | Buka/Cancel Add form | Labeled approved fields; no mutation on Cancel |
-| TC-11 | Create valid Project | `201`; generated ID/timestamps; backend status Open |
-| TC-12 | Create success | Project terlihat tanpa hard refresh; relevant caches consistent |
-| TC-13 | Create invalid via direct API | Structured validation; repository not mutated |
-| TC-14 | Create dependency failure | Draft preserved; retry available; no partial data |
-| TC-15 | Repeated create submit | Satu request |
-| TC-16 | Open Project contract | Editable, scheduled, dan visible in Gantt |
-| TC-17 | Lock Project dengan Executable Leaf | Status Locked dan both baselines captured atomically |
-| TC-18 | External capacity change while Locked | Execution/Commitment baseline unchanged |
-| TC-19 | Actual End/constraint change while Locked | Forecast dapat berubah |
-| TC-20 | Edit unfinished Locked leaf | Evaluated and eligible to save |
-| TC-21 | Edit completed leaf | `409 COMPLETED_TASK_READ_ONLY`; data unchanged |
-| TC-22 | Locked change produces same timeline | Saved, remains Locked, baselines unchanged |
-| TC-23 | Locked change produces earlier timeline | Saved, remains Locked; only Forecast may move earlier |
-| TC-24 | Locked change produces later timeline | Saved, remains Locked; only Forecast may move later |
-| TC-25 | Move Priority Up/Down | Atomic active-neighbour swap and Scheduling Engine recalculates every active Project task date |
-| TC-26 | Locked to Open | `409 PROJECT_STATUS_TRANSITION_NOT_ALLOWED`; state unchanged |
-| TC-27 | Close Open; all leaves have Actual End | Closed succeeds |
-| TC-28 | Close Locked; all leaves have Actual End | Closed succeeds |
-| TC-29 | One leaf lacks Actual End | Close rejected; state preserved |
-| TC-30 | Nested unfinished descendant | Close rejected after descendant traversal |
-| TC-31 | Grouping WBS dan completed descendant leaf | Group tidak butuh Actual End; close succeeds |
-| TC-32 | Closed Project mutation | Backend rejects read-only violation |
-| TC-33 | Closed scheduling/Gantt | Excluded from both but retained in Project List |
-| TC-34 | Closed to Open | Transition succeeds and Project becomes active/editable |
-| TC-35 | Closed to Locked | Structured invalid-transition conflict |
-| TC-36 | Unknown status | `400 PROJECT_STATUS_INVALID` |
-| TC-37 | Unknown Project ID | `404 PROJECT_NOT_FOUND` |
-| TC-38 | Lock dependency failure | Transaction rollback |
-| TC-39 | Close dependency failure | Transaction rollback |
-| TC-40 | Reopen dependency failure | Transaction rollback |
-| TC-41 | Priority swap or scheduling dependency failure | Priority and timeline transaction/coordination rollback |
-| TC-42 | Concurrent incompatible transitions | At most one valid confirmed state; invariants hold |
-| TC-43 | Mutation with active search/page | Query state preserved and affected caches invalidated |
-| TC-44 | Stale response completes after mutation | Stale data cannot repopulate cache |
-| TC-45 | Keyboard and assistive technology | Controls, warnings, status, and focus accessible |
-| TC-46 | Supported viewport | Workflow usable without normal horizontal scrolling |
-| TC-47 | Delete Project tanpa child | Confirmed hard delete; list/page corrected |
-| TC-48 | Delete Project dengan child | `409 PROJECT_HAS_CHILDREN`; data tetap utuh |
-| TC-49 | Close Project tanpa Executable Leaf | `409 PROJECT_CANNOT_CLOSE_WITHOUT_TASKS`; Delete tersedia |
-| TC-50 | Lock Project tanpa Executable Leaf | `409 PROJECT_CANNOT_LOCK_WITHOUT_TASKS`; status tetap Open |
+| ID    | Scenario                                       | Expected                                                                                       |
+| ----- | ---------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| TC-1  | Buka Project > Projects                        | Page berada di shared shell; menu dan breadcrumb aktif                                         |
+| TC-2  | Initial list pending                           | Local skeleton; empty/no-results belum tampil                                                  |
+| TC-3  | Empty successful list                          | Empty state dan Add Project action                                                             |
+| TC-4  | List failure lalu Retry                        | Actionable error, kemudian list pulih                                                          |
+| TC-5  | Search Name beda casing                        | Backend prefix search match                                                                    |
+| TC-6  | Search tanpa match lalu Clear                  | No-results berbeda; Clear kembali ke page 1                                                    |
+| TC-7  | Lebih dari lima Projects                       | Backend pagination dan metadata benar                                                          |
+| TC-8  | Active ordering                                | Open/Locked mengikuti Priority tanpa status grouping                                           |
+| TC-9  | Closed ordering group                          | Semua Closed berada setelah seluruh active Projects                                            |
+| TC-10 | Buka/Cancel Add form                           | Labeled approved fields; no mutation on Cancel                                                 |
+| TC-11 | Create valid Project                           | `201`; generated ID/timestamps; backend status Open                                            |
+| TC-12 | Create success                                 | Project terlihat tanpa hard refresh; relevant caches consistent                                |
+| TC-13 | Create invalid via direct API                  | Structured validation; repository not mutated                                                  |
+| TC-14 | Create dependency failure                      | Draft preserved; retry available; no partial data                                              |
+| TC-15 | Repeated create submit                         | Satu request                                                                                   |
+| TC-16 | Open Project contract                          | Editable, scheduled, dan visible in Gantt                                                      |
+| TC-17 | Lock Project dengan Executable Leaf            | Status Locked dan both baselines captured atomically                                           |
+| TC-18 | External capacity change while Locked          | Execution/Commitment baseline unchanged                                                        |
+| TC-19 | Actual End/constraint change while Locked      | Forecast dapat berubah                                                                         |
+| TC-20 | Edit unfinished Locked leaf                    | Evaluated and eligible to save                                                                 |
+| TC-21 | Edit completed leaf                            | `409 COMPLETED_TASK_READ_ONLY`; data unchanged                                                 |
+| TC-22 | Locked change produces same timeline           | Saved, remains Locked, baselines unchanged                                                     |
+| TC-23 | Locked change produces earlier timeline        | Saved, remains Locked; only Forecast may move earlier                                          |
+| TC-24 | Locked change produces later timeline          | Saved, remains Locked; only Forecast may move later                                            |
+| TC-25 | Move Priority Up/Down                          | Atomic active-neighbour swap and Scheduling Engine recalculates every active Project task date |
+| TC-26 | Locked to Open                                 | `409 PROJECT_STATUS_TRANSITION_NOT_ALLOWED`; state unchanged                                   |
+| TC-27 | Close Open; all leaves have Actual End         | Closed succeeds                                                                                |
+| TC-28 | Close Locked; all leaves have Actual End       | Closed succeeds                                                                                |
+| TC-29 | One leaf lacks Actual End                      | Close rejected; state preserved                                                                |
+| TC-30 | Nested unfinished descendant                   | Close rejected after descendant traversal                                                      |
+| TC-31 | Grouping WBS dan completed descendant leaf     | Group tidak butuh Actual End; close succeeds                                                   |
+| TC-32 | Closed Project mutation                        | Backend rejects read-only violation                                                            |
+| TC-33 | Closed scheduling/Gantt                        | Excluded from both but retained in Project List                                                |
+| TC-34 | Closed to Open                                 | Transition succeeds and Project becomes active/editable                                        |
+| TC-35 | Closed to Locked                               | Structured invalid-transition conflict                                                         |
+| TC-36 | Unknown status                                 | `400 PROJECT_STATUS_INVALID`                                                                   |
+| TC-37 | Unknown Project ID                             | `404 PROJECT_NOT_FOUND`                                                                        |
+| TC-38 | Lock dependency failure                        | Transaction rollback                                                                           |
+| TC-39 | Close dependency failure                       | Transaction rollback                                                                           |
+| TC-40 | Reopen dependency failure                      | Transaction rollback                                                                           |
+| TC-41 | Priority swap or scheduling dependency failure | Priority and timeline transaction/coordination rollback                                        |
+| TC-42 | Concurrent incompatible transitions            | At most one valid confirmed state; invariants hold                                             |
+| TC-43 | Mutation with active search/page               | Query state preserved and affected caches invalidated                                          |
+| TC-44 | Stale response completes after mutation        | Stale data cannot repopulate cache                                                             |
+| TC-45 | Keyboard and assistive technology              | Controls, warnings, status, and focus accessible                                               |
+| TC-46 | Supported viewport                             | Workflow usable without normal horizontal scrolling                                            |
+| TC-47 | Delete Project tanpa child                     | Confirmed hard delete; list/page corrected                                                     |
+| TC-48 | Delete Project dengan child                    | `409 PROJECT_HAS_CHILDREN`; data tetap utuh                                                    |
+| TC-49 | Close Project tanpa Executable Leaf            | `409 PROJECT_CANNOT_CLOSE_WITHOUT_TASKS`; Delete tersedia                                      |
+| TC-50 | Lock Project tanpa Executable Leaf             | `409 PROJECT_CANNOT_LOCK_WITHOUT_TASKS`; status tetap Open                                     |
 
 ### Acceptance Criteria Traceability
 
-| Acceptance Criteria | Test Case(s) |
-| --- | --- |
-| AC-1 | TC-1 |
-| AC-2 | TC-7—TC-9 |
-| AC-3 | TC-5—TC-6, TC-43 |
-| AC-4 | TC-2—TC-4 |
-| AC-5—AC-7 | TC-10—TC-15 |
-| AC-8 | TC-16 |
-| AC-9—AC-10 | TC-17—TC-19, TC-50 |
-| AC-11 | TC-20—TC-21 |
-| AC-12—AC-14 | TC-22—TC-26 |
-| AC-15—AC-16 | TC-27—TC-31, TC-49 |
-| AC-17 | TC-32—TC-33 |
-| AC-18—AC-20 | TC-34—TC-37 |
-| AC-21 | TC-43—TC-44 |
-| AC-22 | TC-45—TC-46 |
-| AC-23 | TC-38—TC-42 |
-| AC-24 | TC-47—TC-48 |
+| Acceptance Criteria | Test Case(s)       |
+| ------------------- | ------------------ |
+| AC-1                | TC-1               |
+| AC-2                | TC-7—TC-9          |
+| AC-3                | TC-5—TC-6, TC-43   |
+| AC-4                | TC-2—TC-4          |
+| AC-5—AC-7           | TC-10—TC-15        |
+| AC-8                | TC-16              |
+| AC-9—AC-10          | TC-17—TC-19, TC-50 |
+| AC-11               | TC-20—TC-21        |
+| AC-12—AC-14         | TC-22—TC-26        |
+| AC-15—AC-16         | TC-27—TC-31, TC-49 |
+| AC-17               | TC-32—TC-33        |
+| AC-18—AC-20         | TC-34—TC-37        |
+| AC-21               | TC-43—TC-44        |
+| AC-22               | TC-45—TC-46        |
+| AC-23               | TC-38—TC-42        |
+| AC-24               | TC-47—TC-48        |
 
 ---
 
@@ -835,7 +847,7 @@ mengekspos stack trace, SQL, database, atau infrastructure detail.
 - Indexed Name prefix search before count/pagination.
 - Pagination metadata.
 - Active-before-Closed grouping.
-- Active Project Priority ordering with Start/End/status/ID tie-breakers.
+- Active Project Priority ordering and duplicate-priority data-integrity rejection.
 - Atomic active-neighbour Priority swap and rollback.
 - Closed ordering by Closed At DESC then ID ASC.
 - Transaction rollback and concurrent transition protection.
@@ -966,9 +978,11 @@ this requirement.
 
 - Project is the root planning entity in Epic 3.
 - Visible navigation and page label is Projects under Project group.
-- Fields include ID, Name, Status, Start Date, End Date, Auto Calculate Date,
-  Auto Dependency by Assignee, Created At, and Updated At; Project Priority is
-  required by active ordering and Closed At supports audit/ordering.
+- Fields include ID, Name, Status, Start Date, End Date, Automatic Scheduling,
+  Scheduling Start Date, Project Buffer, Created At, and Updated At; Project
+  Priority is required by active ordering and Closed At supports audit/ordering.
+- There is no separate `Auto Dependency by Assignee` configuration. Auto
+  Dependency is active only while Automatic Scheduling is ON.
 - Status values are exactly Open, Locked, and Closed; create defaults to Open
   and backend enforces it.
 - Open is active, editable, scheduled, visible in Gantt, and all timelines may
@@ -1007,9 +1021,11 @@ this requirement.
   may receive Execution, Commitment, and Forecast updates; Locked Projects
   receive Forecast updates only.
 - Project Start/End are derived from descendant leaf dates and remain null when
-  no relevant leaf date exists. Both automatic flags are always enabled.
-- Equal-Priority active ordering uses Start Date, End Date, Locked-before-Open,
-  then ID. Closed ordering uses Closed At descending then ID ascending.
+  no relevant leaf date exists. Automatic Scheduling defaults to enabled but is
+  user-configurable through US-3.3.
+- Duplicate active Priority is rejected as a data-integrity conflict; no
+  additional active-order tie-breaker is invented. Closed ordering uses Closed At
+  descending then ID ascending.
 - Reopening retains previous locked baselines and immediately restores Gantt and
   scheduling eligibility. A Locked edit may move Forecast earlier or later
   without changing status or protected baselines.
@@ -1022,3 +1038,18 @@ this requirement.
 ## 22. Unresolved Questions
 
 Tidak ada unresolved question untuk scope US-3.1.
+
+---
+
+## Implementation Evidence for the US-6.1 Requirement Delta
+
+Concrete production paths, exact test names, per-AC local commands, and the
+Three-Level Confidence readiness mapping are maintained in
+`docs/project/automatic-scheduling-implementation-evidence.md`.
+
+- Code Inspection: `IMPLEMENTED BY CODE INSPECTION`
+- Unit/Integration: `AUTHORED — NOT RUN — LOCAL VALIDATION REQUIRED`
+- Acceptance-Level: `AUTHORED — NOT RUN — LOCAL VALIDATION REQUIRED`
+- Overall affected ACs: `IMPLEMENTED — LOCAL VALIDATION REQUIRED`
+
+No automated validation result is recorded in this story.

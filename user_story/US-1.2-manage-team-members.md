@@ -1,5 +1,10 @@
 # US-1.2 — Manage Team Members
 
+> **Product decision update — US-6.1:** Member Buffer now reduces Execution Capacity.
+> A single Commitment Capacity no longer exists at Team Member master level because
+> Commitment Capacity also requires the owning Project Buffer. Scheduler-derived
+> Base Execution Capacity preserves the existing `0.5`-hour rounding rule after Member Buffer is applied.
+
 ## User Story
 
 **Sebagai** Engineering Lead,
@@ -14,12 +19,12 @@ Team Member merupakan resource yang dapat dipilih sebagai assignee pada Executab
 
 Data Team Member digunakan oleh Scheduling Engine sebagai constraint untuk menentukan:
 
-* Kapasitas kerja harian.
-* Execution Timeline.
-* Commitment Timeline.
-* Forecast Timeline.
-* Urutan task untuk assignee yang sama.
-* Alokasi task lintas project.
+- Kapasitas kerja harian.
+- Execution Timeline.
+- Commitment Timeline.
+- Forecast Timeline.
+- Urutan task untuk assignee yang sama.
+- Alokasi task lintas project.
 
 ---
 
@@ -34,7 +39,7 @@ Engineering Lead dapat:
 5. Menentukan Role.
 6. Menentukan Daily Capacity.
 7. Menentukan Buffer.
-8. Melihat Execution Capacity dan Commitment Capacity.
+8. Melihat Base Execution Capacity sebagai preview dari Daily Capacity dan Member Buffer.
 
 ---
 
@@ -42,14 +47,14 @@ Engineering Lead dapat:
 
 User story ini tidak mencakup:
 
-* Capacity Override.
-* Public Holiday.
-* Pengaturan kapasitas per hari tertentu.
-* Penugasan task kepada Team Member.
-* Menjalankan Scheduling Engine.
-* Menampilkan hasil timeline.
-* Import atau sinkronisasi user dari sistem lain.
-* Authentication atau user account management.
+- Capacity Override.
+- Public Holiday.
+- Pengaturan kapasitas per hari tertentu.
+- Penugasan task kepada Team Member.
+- Menjalankan Scheduling Engine.
+- Menampilkan hasil timeline.
+- Import atau sinkronisasi user dari sistem lain.
+- Authentication atau user account management.
 
 Capacity Override dan Public Holiday harus dibuat melalui user story terpisah.
 
@@ -59,15 +64,15 @@ Capacity Override dan Public Holiday harus dibuat melalui user story terpisah.
 
 ## Team Member
 
-| Field             | Type                        | Required | Source       | Rules                                    |
-| ----------------- | --------------------------- | -------: | ------------ | ---------------------------------------- |
-| ID                | System-generated identifier |       Ya | System       | Dibuat otomatis dan tidak dapat diubah   |
-| Name              | String                      |       Ya | User         | Di-trim dan tidak boleh kosong           |
-| Role ID           | Identifier                  |       Ya | User         | Harus mereferensikan Role yang tersedia  |
-| Daily Capacity    | Decimal hours               |       Ya | User         | Kapasitas dasar untuk Execution Timeline |
-| Buffer Percentage | Decimal percentage          |       Ya | User/default | Default 20%                              |
-| Created At        | DateTime                    |       Ya | System       | Dibuat otomatis                          |
-| Updated At        | DateTime                    |       Ya | System       | Diperbarui otomatis                      |
+| Field                    | Type                        | Required | Source       | Rules                                           |
+| ------------------------ | --------------------------- | -------: | ------------ | ----------------------------------------------- |
+| ID                       | System-generated identifier |       Ya | System       | Dibuat otomatis dan tidak dapat diubah          |
+| Name                     | String                      |       Ya | User         | Di-trim dan tidak boleh kosong                  |
+| Role ID                  | Identifier                  |       Ya | User         | Harus mereferensikan Role yang tersedia         |
+| Daily Capacity           | Decimal hours               |       Ya | User         | Kapasitas dasar untuk Execution Timeline        |
+| Member Buffer Percentage | Decimal percentage          |       Ya | User/default | Default 20%; API field tetap `bufferPercentage` |
+| Created At               | DateTime                    |       Ya | System       | Dibuat otomatis                                 |
+| Updated At               | DateTime                    |       Ya | System       | Diperbarui otomatis                             |
 
 ---
 
@@ -91,13 +96,16 @@ Contoh:
 6
 ```
 
-Daily Capacity digunakan sebagai Execution Capacity sebelum Capacity Override, Public Holiday, dan Buffer diterapkan.
+Daily Capacity adalah kapasitas dasar sebelum precedence Public Holiday, Capacity
+Override, dan Member Buffer diterapkan oleh Scheduling Engine.
 
 ---
 
-## Buffer
+## Member Buffer
 
-Buffer digunakan untuk mengurangi kapasitas yang dikomitmenkan kepada stakeholder.
+Member Buffer mengurangi kapasitas yang dapat digunakan pada Execution Timeline.
+Nilai ini dimiliki Team Member dan berlaku setelah scheduler menentukan Resolved
+Daily Capacity untuk tanggal terkait.
 
 Default:
 
@@ -105,34 +113,44 @@ Default:
 20%
 ```
 
-Formula:
+Formula scheduler:
 
 ```text
-Raw Commitment Capacity =
-Daily Capacity × (100% - Buffer Percentage)
+Raw Execution Capacity =
+Resolved Daily Capacity × (1 - Member Buffer Percentage / 100)
+
+Execution Capacity =
+MROUND(Raw Execution Capacity, 0.5)
 ```
 
-Hasil Commitment Capacity dibulatkan ke kelipatan terdekat 0,5 jam.
-
-Formula konseptual:
-
-```text
-Commitment Capacity =
-MROUND(Raw Commitment Capacity, 0.5)
-```
-
-Contoh:
+Contoh preview pada master Team Member, sebelum Public Holiday atau Capacity
+Override tanggal tertentu diketahui:
 
 ```text
 Daily Capacity: 8 jam
-Buffer: 20%
+Member Buffer: 20%
 
-Raw Commitment Capacity:
-8 × 80% = 6.4 jam
-
-Commitment Capacity:
-MROUND(6.4, 0.5) = 6.5 jam
+Base Execution Capacity:
+MROUND(8 × 80%, 0.5) = 6.5 jam
 ```
+
+Base Execution Capacity dibulatkan ke kelipatan `0.5` jam terdekat setelah Member Buffer diterapkan. Input Daily Capacity juga tetap menggunakan increment `0.5` jam sesuai validation rule.
+
+Commitment Capacity tidak dapat dihitung hanya dari Team Member karena juga
+membutuhkan Project Buffer:
+
+```text
+Commitment Capacity =
+MROUND(
+  Resolved Daily Capacity
+  × (1 - Member Buffer Percentage / 100)
+  × (1 - Project Buffer Percentage / 100),
+  0.5
+)
+```
+
+Karena Project Buffer dapat berbeda antar-Project, Team Member master tidak
+menampilkan satu Commitment Capacity global.
 
 ---
 
@@ -140,14 +158,16 @@ MROUND(6.4, 0.5) = 6.5 jam
 
 User story ini hanya mengelola kapasitas dasar Team Member.
 
-Pada saat scheduler dijalankan, effective capacity harus mengikuti urutan berikut:
+Pada saat scheduler dijalankan, capacity mengikuti urutan berikut:
 
-1. Public Holiday → capacity = 0.
-2. Capacity Override → gunakan nilai override.
-3. Team Member Daily Capacity.
-4. Buffer → menghasilkan Commitment Capacity.
+1. Public Holiday → Resolved Daily Capacity `0`.
+2. Jika bukan Public Holiday dan Capacity Override berlaku → gunakan override.
+3. Jika tidak → gunakan Team Member Daily Capacity.
+4. Terapkan Member Buffer dan pembulatan `0.5` jam → Execution Capacity.
+5. Untuk Commitment, terapkan Member Buffer dan owning Project Buffer ke Resolved Daily Capacity, lalu bulatkan final Commitment Capacity ke kelipatan `0.5` jam.
 
-Implementasi lengkap urutan resolution tersebut merupakan bagian dari Scheduling Engine dan user story Capacity Override/Public Holiday.
+Implementasi allocation dan timeline merupakan bagian dari US-6.1. Story ini
+hanya mengelola Daily Capacity dan Member Buffer sebagai scheduler input.
 
 ---
 
@@ -157,31 +177,31 @@ Rule berikut merupakan keputusan implementasi agar perilaku sistem deterministik
 
 ## Name Rules
 
-* Nama di-trim sebelum divalidasi dan disimpan.
-* Nama minimum 1 karakter setelah trim.
-* Nama maksimum 100 karakter.
-* Nama tidak wajib unik karena dua engineer dapat memiliki nama yang sama.
-* ID menjadi identitas utama Team Member.
+- Nama di-trim sebelum divalidasi dan disimpan.
+- Nama minimum 1 karakter setelah trim.
+- Nama maksimum 100 karakter.
+- Nama tidak wajib unik karena dua engineer dapat memiliki nama yang sama.
+- ID menjadi identitas utama Team Member.
 
 ## Daily Capacity Rules
 
-* Nilai minimum: lebih besar dari `0`.
-* Nilai maksimum: `24`.
-* Maksimal satu angka desimal.
-* Increment yang diterima: `0.5` jam.
-* Contoh valid: `0.5`, `6`, `7.5`, `8`, `24`.
-* Contoh tidak valid: `0`, `-1`, `7.2`, `24.5`.
+- Nilai minimum: lebih besar dari `0`.
+- Nilai maksimum: `24`.
+- Maksimal satu angka desimal.
+- Increment yang diterima: `0.5` jam.
+- Contoh valid: `0.5`, `6`, `7.5`, `8`, `24`.
+- Contoh tidak valid: `0`, `-1`, `7.2`, `24.5`.
 
 ## Buffer Rules
 
-* Nilai minimum: `0`.
-* Nilai maksimum eksklusif: `100`.
-* Maksimal dua angka desimal.
-* Default saat tidak dikirim: `20`.
-* Contoh valid: `0`, `10`, `20`, `25.5`, `99.99`.
-* Contoh tidak valid: `-1`, `100`, `120`.
+- Nilai minimum: `0`.
+- Nilai maksimum eksklusif: `100`.
+- Maksimal dua angka desimal.
+- Default saat tidak dikirim: `20`.
+- Contoh valid: `0`, `10`, `20`, `25.5`, `99.99`.
+- Contoh tidak valid: `-1`, `100`, `120`.
 
-Buffer `100%` tidak diperbolehkan karena menghasilkan Commitment Capacity `0` dan membuat task tidak dapat dijadwalkan pada Commitment Timeline.
+Member Buffer `100%` tidak diperbolehkan karena menghasilkan Execution Capacity `0` pada setiap hari non-holiday dan membuat Task tidak dapat dijadwalkan pada Execution maupun Commitment Timeline.
 
 ## Delete Rules
 
@@ -203,37 +223,46 @@ Keputusan ini wajib direview ketika Project Management diimplementasikan.
 
 # Derived Values
 
-## Execution Capacity
+## Base Execution Capacity Preview
 
 Pada master Team Member:
 
 ```text
-Execution Capacity = Daily Capacity
+Raw Base Execution Capacity =
+Daily Capacity × (1 - Member Buffer Percentage / 100)
+
+Base Execution Capacity =
+MROUND(Raw Base Execution Capacity, 0.5)
 ```
 
-Nilai tersebut belum memperhitungkan:
+Preview ini tidak memperhitungkan:
 
-* Public Holiday.
-* Capacity Override.
-* Project Freeze.
+- Public Holiday.
+- Capacity Override.
+- Project Freeze.
 
-## Commitment Capacity
+Base Execution Capacity:
+
+- Bukan source of truth yang disimpan.
+- Dibulatkan secara deterministik ke kelipatan `0.5` jam terdekat.
+- Harus konsisten di backend dan frontend bila ditampilkan.
+
+## Project-specific Commitment Capacity
+
+Commitment Capacity hanya dihitung dalam konteks Project oleh US-6.1:
 
 ```text
 Commitment Capacity =
 MROUND(
-    Daily Capacity × (1 - Buffer Percentage / 100),
-    0.5
+  Resolved Daily Capacity
+  × (1 - Member Buffer Percentage / 100)
+  × (1 - Project Buffer Percentage / 100),
+  0.5
 )
 ```
 
-Commitment Capacity adalah derived value.
-
-Commitment Capacity:
-
-* Tidak perlu disimpan sebagai source of truth.
-* Harus dihitung dari Daily Capacity dan Buffer.
-* Harus selalu konsisten di backend dan frontend.
+Team Member master tidak menyimpan atau menampilkan satu Commitment Capacity
+global karena nilai tersebut berbeda menurut Project Buffer.
 
 ---
 
@@ -246,11 +275,11 @@ Commitment Capacity:
 **Then** sistem menampilkan seluruh Team Member
 **And** setiap Team Member menampilkan:
 
-* Name.
-* Role.
-* Daily Capacity.
-* Buffer Percentage.
-* Commitment Capacity.
+- Name.
+- Role.
+- Daily Capacity.
+- Buffer Percentage.
+- Base Execution Capacity.
 
 **And** daftar diurutkan berdasarkan Name secara ascending tanpa membedakan huruf besar-kecil
 **And** jika nama sama, urutan ditentukan berdasarkan ID secara ascending
@@ -275,16 +304,16 @@ Commitment Capacity:
 **Given** minimal satu Role tersedia
 **When** Engineering Lead mengisi:
 
-* Name valid.
-* Role valid.
-* Daily Capacity valid.
-* Buffer valid.
+- Name valid.
+- Role valid.
+- Daily Capacity valid.
+- Buffer valid.
 
 **And** menyimpan form
 **Then** sistem membuat Team Member
 **And** sistem menyimpan Name setelah trim
 **And** Team Member muncul pada daftar
-**And** Commitment Capacity dihitung otomatis
+**And** Base Execution Capacity preview dihitung otomatis
 **And** sistem menampilkan notifikasi keberhasilan.
 
 ---
@@ -443,12 +472,12 @@ Buffer must be between 0 and less than 100
 
 ---
 
-## AC-14 — Menghitung Commitment Capacity
+## AC-14 — Menghitung Base Execution Capacity
 
 **Given** Daily Capacity dan Buffer valid
 **When** Team Member ditampilkan atau disimpan
-**Then** sistem menghitung Commitment Capacity menggunakan formula yang ditentukan
-**And** hasil dibulatkan ke kelipatan `0.5` jam
+**Then** sistem menghitung Base Execution Capacity menggunakan Daily Capacity dan Member Buffer
+**And** hasil dibulatkan ke kelipatan `0.5` jam terdekat
 **And** frontend dan backend menghasilkan nilai yang sama.
 
 ---
@@ -461,7 +490,7 @@ Buffer must be between 0 and less than 100
 **And** ID Team Member tetap sama
 **And** Created At tetap sama
 **And** Updated At diperbarui
-**And** Commitment Capacity dihitung ulang
+**And** Base Execution Capacity preview dihitung ulang
 **And** referensi task terhadap Team Member tetap valid.
 
 ---
@@ -471,7 +500,7 @@ Buffer must be between 0 and less than 100
 **Given** Team Member digunakan sebagai assignee
 **When** Daily Capacity atau Buffer diperbarui
 **Then** nilai terbaru menjadi input yang digunakan pada scheduling berikutnya
-**And** sistem tidak menggunakan Commitment Capacity lama yang tersimpan atau ter-cache.
+**And** scheduler tidak menggunakan Daily Capacity atau Member Buffer lama yang tersimpan atau ter-cache.
 
 User story ini tidak mewajibkan scheduler langsung dijalankan otomatis setelah update.
 
@@ -608,7 +637,7 @@ GET /api/team-members?search=har&page=1&pageSize=5
       },
       "dailyCapacity": 8,
       "bufferPercentage": 20,
-      "commitmentCapacity": 6.5,
+      "baseExecutionCapacity": 6.5,
       "createdAt": "2026-07-24T10:00:00Z",
       "updatedAt": "2026-07-24T10:00:00Z"
     }
@@ -676,7 +705,7 @@ Content-Type: application/json
     },
     "dailyCapacity": 8,
     "bufferPercentage": 20,
-    "commitmentCapacity": 6.5,
+    "baseExecutionCapacity": 6.5,
     "createdAt": "2026-07-24T10:00:00Z",
     "updatedAt": "2026-07-24T10:00:00Z"
   }
@@ -744,10 +773,10 @@ Status sukses:
 
 Status kegagalan:
 
-| Condition                              |        Status |
-| -------------------------------------- | ------------: |
-| Team Member tidak ditemukan            | 404 Not Found |
-| Team Member memiliki task aktif        |  409 Conflict |
+| Condition                       |        Status |
+| ------------------------------- | ------------: |
+| Team Member tidak ditemukan     | 404 Not Found |
+| Team Member memiliki task aktif |  409 Conflict |
 
 ---
 
@@ -765,17 +794,17 @@ Seluruh API error menggunakan format konsisten:
 
 Error code minimum:
 
-* `TEAM_MEMBER_NAME_REQUIRED`
-* `TEAM_MEMBER_NAME_TOO_LONG`
-* `ROLE_REQUIRED`
-* `ROLE_NOT_FOUND`
-* `DAILY_CAPACITY_REQUIRED`
-* `DAILY_CAPACITY_NOT_POSITIVE`
-* `DAILY_CAPACITY_EXCEEDS_LIMIT`
-* `DAILY_CAPACITY_INVALID_INCREMENT`
-* `BUFFER_OUT_OF_RANGE`
-* `TEAM_MEMBER_NOT_FOUND`
-* `TEAM_MEMBER_ASSIGNED_TO_TASK`
+- `TEAM_MEMBER_NAME_REQUIRED`
+- `TEAM_MEMBER_NAME_TOO_LONG`
+- `ROLE_REQUIRED`
+- `ROLE_NOT_FOUND`
+- `DAILY_CAPACITY_REQUIRED`
+- `DAILY_CAPACITY_NOT_POSITIVE`
+- `DAILY_CAPACITY_EXCEEDS_LIMIT`
+- `DAILY_CAPACITY_INVALID_INCREMENT`
+- `BUFFER_OUT_OF_RANGE`
+- `TEAM_MEMBER_NOT_FOUND`
+- `TEAM_MEMBER_ASSIGNED_TO_TASK`
 
 ---
 
@@ -801,11 +830,11 @@ Data tersedia:
 
 1. Sistem menampilkan tiga Team Member.
 2. Urutan berdasarkan Name:
+   - Dewi.
+   - Harry.
+   - Sandi.
 
-   * Dewi.
-   * Harry.
-   * Sandi.
-3. Setiap row menampilkan Role, Daily Capacity, Buffer, dan Commitment Capacity.
+3. Setiap row menampilkan Role, Daily Capacity, Member Buffer, dan Base Execution Capacity.
 
 ---
 
@@ -845,7 +874,7 @@ Role Backend tersedia.
 
 1. API mengembalikan `201`.
 2. Team Member tersimpan.
-3. Commitment Capacity bernilai `6.5`.
+3. Base Execution Capacity bernilai `6.5`.
 4. ID dan timestamp dibuat otomatis.
 
 ---
@@ -872,7 +901,7 @@ Role Backend tersedia.
 
 1. Request berhasil.
 2. Buffer tersimpan sebagai `20`.
-3. Commitment Capacity dihitung menggunakan Buffer `20`.
+3. Base Execution Capacity dihitung menggunakan Member Buffer `20`.
 
 ---
 
@@ -1092,7 +1121,7 @@ Uji nilai:
 ### Expected Result
 
 1. Request berhasil.
-2. Commitment Capacity sama dengan Daily Capacity.
+2. Base Execution Capacity sama dengan Daily Capacity.
 
 ---
 
@@ -1156,7 +1185,7 @@ Uji nilai:
 
 ---
 
-## TC-25 — Perhitungan Commitment Capacity 8 jam
+## TC-25 — Perhitungan Base Execution Capacity 8 jam
 
 ### Test Data
 
@@ -1168,13 +1197,13 @@ Buffer: 20
 ### Expected Result
 
 ```text
-Raw: 6.4
-Rounded: 6.5
+Base Execution Capacity: 6.5
+Rounded to nearest 0.5 hour
 ```
 
 ---
 
-## TC-26 — Perhitungan Commitment Capacity 7,5 jam
+## TC-26 — Perhitungan Base Execution Capacity 7,5 jam
 
 ### Test Data
 
@@ -1186,13 +1215,13 @@ Buffer: 20
 ### Expected Result
 
 ```text
-Raw: 6
-Rounded: 6
+Base Execution Capacity: 6
+Rounded to nearest 0.5 hour
 ```
 
 ---
 
-## TC-27 — Perhitungan Commitment Capacity dibulatkan turun
+## TC-27 — Base Execution Capacity half-hour result
 
 ### Test Data
 
@@ -1204,8 +1233,8 @@ Buffer: 25
 ### Expected Result
 
 ```text
-Raw: 6
-Rounded: 6
+Base Execution Capacity: 6
+Rounded to nearest 0.5 hour
 ```
 
 ---
@@ -1236,12 +1265,13 @@ Buffer: 20
 2. ID tidak berubah.
 3. Created At tidak berubah.
 4. Updated At berubah.
-5. Commitment Capacity menjadi:
+5. Base Execution Capacity menjadi:
 
 ```text
-7.5 × 90% = 6.75
-MROUND(6.75, 0.5) = 7
+MROUND(7.5 × 90%, 0.5) = 7
 ```
+
+Raw value `6.75` dibulatkan menjadi `7` sesuai aturan kelipatan `0.5` jam.
 
 ---
 
@@ -1448,16 +1478,16 @@ Test ini dapat diimplementasikan sebagai application integration test tanpa menj
 
 Wajib menguji:
 
-* Name validation dan trim.
-* Daily Capacity minimum.
-* Daily Capacity maksimum.
-* Increment `0.5`.
-* Buffer range.
-* Default Buffer.
-* Commitment Capacity calculation.
-* Commitment Capacity rounding.
-* Update mempertahankan ID.
-* Update mempertahankan Created At.
+- Name validation dan trim.
+- Daily Capacity minimum.
+- Daily Capacity maksimum.
+- Increment `0.5`.
+- Buffer range.
+- Default Buffer.
+- Base Execution Capacity calculation.
+- Rounded to nearest 0.5 hour.
+- Update mempertahankan ID.
+- Update mempertahankan Created At.
 
 ---
 
@@ -1465,17 +1495,17 @@ Wajib menguji:
 
 Wajib menguji:
 
-* Create Team Member.
-* List Team Member.
-* Get Team Member.
-* Update Team Member.
-* Delete unused Team Member.
-* Reject Role not found.
-* Reject Team Member not found.
-* Reject delete saat menjadi assignee.
-* Cascade soft delete Capacity Override saat Member dihapus.
-* Transaction rollback.
-* Nilai capacity terbaru tersedia sebagai scheduling input.
+- Create Team Member.
+- List Team Member.
+- Get Team Member.
+- Update Team Member.
+- Delete unused Team Member.
+- Reject Role not found.
+- Reject Team Member not found.
+- Reject delete saat menjadi assignee.
+- Cascade soft delete Capacity Override saat Member dihapus.
+- Transaction rollback.
+- Nilai capacity terbaru tersedia sebagai scheduling input.
 
 Repository dependency harus dimock atau menggunakan test double pada unit test application.
 
@@ -1485,17 +1515,17 @@ Repository dependency harus dimock atau menggunakan test double pada unit test a
 
 Wajib menguji:
 
-* Persist dan retrieve Team Member.
-* Foreign key Role.
-* Foreign key Executable Leaf assignee.
-* Foreign key Capacity Override.
-* Active task delete restriction.
-* Transactional soft delete Member dan Capacity Override.
-* Active query mengecualikan soft-deleted records.
-* Nama Member dapat digunakan kembali setelah soft delete.
-* Decimal capacity persistence.
-* Timestamp behavior.
-* Transaction rollback.
+- Persist dan retrieve Team Member.
+- Foreign key Role.
+- Foreign key Executable Leaf assignee.
+- Foreign key Capacity Override.
+- Active task delete restriction.
+- Transactional soft delete Member dan Capacity Override.
+- Active query mengecualikan soft-deleted records.
+- Nama Member dapat digunakan kembali setelah soft delete.
+- Decimal capacity persistence.
+- Timestamp behavior.
+- Transaction rollback.
 
 ---
 
@@ -1503,17 +1533,17 @@ Wajib menguji:
 
 Wajib menguji:
 
-* HTTP method dan path.
-* Request validation.
-* HTTP status.
-* Success response.
-* Error response.
-* Field mapping.
-* Derived Commitment Capacity.
-* Database persistence.
-* Not-found behavior.
-* Conflict behavior.
-* Backend search dan pagination, termasuk metadata serta default page size.
+- HTTP method dan path.
+- Request validation.
+- HTTP status.
+- Success response.
+- Error response.
+- Field mapping.
+- Derived Base Execution Capacity.
+- Database persistence.
+- Not-found behavior.
+- Conflict behavior.
+- Backend search dan pagination, termasuk metadata serta default page size.
 
 ---
 
@@ -1521,32 +1551,32 @@ Wajib menguji:
 
 Wajib menguji:
 
-* Render list.
-* Skeleton saat initial load dan selama remote search.
-* Search list dan clear search.
-* No-results state berbeda dari empty state.
-* Pagination dan reset ke halaman pertama setelah search berubah.
-* Empty state.
-* Add form.
-* Default Buffer.
-* Searchable Role selector.
-* Role selector default kosong pada Add form.
-* Enter pada Role selector memilih hasil teratas tanpa submit form.
-* Fokus berpindah ke Daily Capacity setelah pemilihan Role dengan Enter.
-* Role list menampilkan seluruh Role saat pencarian kosong.
-* Role list difilter berdasarkan awalan nama pada setiap perubahan input.
-* Name tidak berubah saat diketik dan dikapitalisasi per kata saat blur.
-* Daily Capacity dan Buffer tidak berubah saat diketik.
-* Daily Capacity dan Buffer dibulatkan ke kelipatan `0.5` saat blur.
-* Normalisasi dan validasi form dijalankan ulang saat submit.
-* Client-side validation.
-* Commitment Capacity preview.
-* Edit form.
-* Delete confirmation.
-* Cancel deletion.
-* Conflict error.
-* Refresh atau cache invalidation setelah mutation.
-* Rename Role memperbarui nama pada daftar dan selected Role pada form Edit tanpa hard refresh.
+- Render list.
+- Skeleton saat initial load dan selama remote search.
+- Search list dan clear search.
+- No-results state berbeda dari empty state.
+- Pagination dan reset ke halaman pertama setelah search berubah.
+- Empty state.
+- Add form.
+- Default Buffer.
+- Searchable Role selector.
+- Role selector default kosong pada Add form.
+- Enter pada Role selector memilih hasil teratas tanpa submit form.
+- Fokus berpindah ke Daily Capacity setelah pemilihan Role dengan Enter.
+- Role list menampilkan seluruh Role saat pencarian kosong.
+- Role list difilter berdasarkan awalan nama pada setiap perubahan input.
+- Name tidak berubah saat diketik dan dikapitalisasi per kata saat blur.
+- Daily Capacity dan Buffer tidak berubah saat diketik.
+- Daily Capacity dibulatkan ke kelipatan `0.5` saat blur; Member Buffer mempertahankan decimal draft dan divalidasi sesuai range/precision rule.
+- Normalisasi dan validasi form dijalankan ulang saat submit.
+- Client-side validation.
+- Base Execution Capacity preview.
+- Edit form.
+- Delete confirmation.
+- Cancel deletion.
+- Conflict error.
+- Refresh atau cache invalidation setelah mutation.
+- Rename Role memperbarui nama pada daftar dan selected Role pada form Edit tanpa hard refresh.
 
 ---
 
@@ -1554,27 +1584,27 @@ Wajib menguji:
 
 ## Priority 1 — Mandatory
 
-* Create valid Team Member.
-* Required field validation.
-* Role not found.
-* Daily Capacity validation.
-* Buffer validation.
-* Commitment Capacity formula.
-* Update Team Member.
-* Active task delete restriction dan cascade soft delete.
-* Backend validation.
-* Referential integrity.
+- Create valid Team Member.
+- Required field validation.
+- Role not found.
+- Daily Capacity validation.
+- Buffer validation.
+- Base Execution Capacity formula.
+- Update Team Member.
+- Active task delete restriction dan cascade soft delete.
+- Backend validation.
+- Referential integrity.
 
 ## Priority 2 — Important
 
-* Empty state.
-* Sorting.
-* Name trim.
-* Duplicate names.
-* Timestamp behavior.
-* Transaction rollback.
-* Frontend notification.
-* Cache invalidation.
+- Empty state.
+- Sorting.
+- Name trim.
+- Duplicate names.
+- Timestamp behavior.
+- Transaction rollback.
+- Frontend notification.
+- Cache invalidation.
 
 ---
 
@@ -1586,8 +1616,8 @@ User story dianggap selesai jika:
 2. Foreign key ke Role tersedia.
 3. Daily Capacity disimpan sebagai decimal yang presisi, bukan floating-point binary yang berisiko menghasilkan rounding error.
 4. Buffer disimpan sebagai decimal yang presisi.
-5. Commitment Capacity dihitung sebagai derived value.
-6. Formula pembulatan kelipatan `0.5` memiliki satu implementasi domain yang menjadi source of truth.
+5. Base Execution Capacity preview dihitung sebagai derived value.
+6. Base Execution Capacity dibulatkan secara deterministik ke kelipatan `0.5`; Commitment Capacity dihitung dari Resolved Daily Capacity dengan Member Buffer dan Project Buffer, lalu final Commitment Capacity dibulatkan secara independen ke kelipatan `0.5`.
 7. Backend tetap memvalidasi seluruh input.
 8. Create, list, get, update, dan transactional soft delete tersedia.
 9. Referential integrity dengan active task assignment dan Capacity Override terjaga.
@@ -1599,3 +1629,18 @@ User story dianggap selesai jika:
 15. Dokumentasi API diperbarui.
 16. Perubahan Daily Capacity dan Buffer dapat dibaca oleh Scheduling Engine pada proses scheduling berikutnya.
 17. Tidak terdapat field Grade, Squad, atau Department.
+
+---
+
+## Implementation Evidence for the US-6.1 Requirement Delta
+
+Concrete production paths, exact test names, per-AC local commands, and the
+Three-Level Confidence readiness mapping are maintained in
+`docs/project/automatic-scheduling-implementation-evidence.md`.
+
+- Code Inspection: `IMPLEMENTED BY CODE INSPECTION`
+- Unit/Integration: `AUTHORED — NOT RUN — LOCAL VALIDATION REQUIRED`
+- Acceptance-Level: `AUTHORED — NOT RUN — LOCAL VALIDATION REQUIRED`
+- Overall affected ACs: `IMPLEMENTED — LOCAL VALIDATION REQUIRED`
+
+No automated validation result is recorded in this story.

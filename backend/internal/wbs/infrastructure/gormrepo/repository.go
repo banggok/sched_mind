@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	sharedpersistence "github.com/banggok/sched_mind/backend/internal/shared/persistence"
 	"github.com/banggok/sched_mind/backend/internal/wbs/application"
 	"github.com/banggok/sched_mind/backend/internal/wbs/domain"
 	"gorm.io/gorm"
@@ -14,6 +15,8 @@ import (
 )
 
 type Repository struct{ db *gorm.DB }
+
+var errSchedulePreviewComplete = errors.New("schedule preview complete")
 
 func New(db *gorm.DB) *Repository { return &Repository{db: db} }
 
@@ -42,7 +45,7 @@ func (r *Repository) Find(ctx context.Context, p, id string) (*domain.Node, erro
 
 func (r *Repository) Create(ctx context.Context, id, p string, parent *string, name string, confirm bool, now time.Time, schedule func(context.Context, string) error, invalidate func(context.Context, []string) error) (*domain.Node, error) {
 	var result *domain.Node
-	err := r.tx(ctx, p, func(tx *gorm.DB, project projectModel) error {
+	err := r.tx(ctx, p, func(txContext context.Context, tx *gorm.DB, project projectModel) error {
 		var parentModel *nodeModel
 		var convertParentTask bool
 		if parent != nil {
@@ -96,12 +99,12 @@ func (r *Repository) Create(ctx context.Context, id, p string, parent *string, n
 			if err := retargetDependencies(tx, convertedTaskID, model.ID); err != nil {
 				return err
 			}
-			if err := invalidateDependencyProjects(ctx, tx, model.ID, invalidate); err != nil {
+			if err := invalidateDependencyProjects(txContext, tx, model.ID, invalidate); err != nil {
 				return err
 			}
 		}
 		if project.AutomaticScheduling {
-			if err := schedule(ctx, p); err != nil {
+			if err := schedule(txContext, p); err != nil {
 				return err
 			}
 		}
@@ -114,7 +117,7 @@ func (r *Repository) Create(ctx context.Context, id, p string, parent *string, n
 
 func (r *Repository) Rename(ctx context.Context, p, id, name string, now time.Time) (*domain.Node, error) {
 	var out *domain.Node
-	err := r.tx(ctx, p, func(tx *gorm.DB, _ projectModel) error {
+	err := r.tx(ctx, p, func(_ context.Context, tx *gorm.DB, _ projectModel) error {
 		m, err := findNode(tx, p, id, true)
 		if err != nil {
 			return err
@@ -135,7 +138,7 @@ func (r *Repository) Rename(ctx context.Context, p, id, name string, now time.Ti
 
 func (r *Repository) UpdateExecutable(ctx context.Context, p, id string, input application.WriteExecutableInput, now time.Time, schedule func(context.Context, string) error) (*domain.Node, error) {
 	var out *domain.Node
-	err := r.tx(ctx, p, func(tx *gorm.DB, project projectModel) error {
+	err := r.tx(ctx, p, func(txContext context.Context, tx *gorm.DB, project projectModel) error {
 		m, err := findNode(tx, p, id, true)
 		if err != nil {
 			return err
@@ -145,7 +148,7 @@ func (r *Repository) UpdateExecutable(ctx context.Context, p, id string, input a
 			return err
 		}
 		n := toDomain(m, count > 0)
-		fields := domain.ExecutableFields{RoleID: input.RoleID, AssigneeID: input.AssigneeID, EffortMinutes: input.EffortMinutes, ExecutionTimeline: input.Execution, CommitmentTimeline: input.Commitment, ActualEnd: n.Executable.ActualEnd}
+		fields := domain.ExecutableFields{RoleID: input.RoleID, AssigneeID: input.AssigneeID, EffortMinutes: input.EffortMinutes, LagDays: input.LagDays, ExecutionTimeline: input.Execution, CommitmentTimeline: input.Commitment, ActualEnd: n.Executable.ActualEnd}
 		if input.Name != nil {
 			if err := n.Rename(*input.Name, now); err != nil {
 				return err
@@ -154,7 +157,7 @@ func (r *Repository) UpdateExecutable(ctx context.Context, p, id string, input a
 		if err := validateMember(tx, fields); err != nil {
 			return err
 		}
-		oldAssignee, oldEffort := n.Executable.AssigneeID, n.Executable.EffortMinutes
+		oldAssignee, oldEffort, oldLag := n.Executable.AssigneeID, n.Executable.EffortMinutes, n.Executable.LagDays
 		if err := n.UpdateExecutable(fields, project.AutomaticScheduling, project.Status == "open", now); err != nil {
 			return err
 		}
@@ -165,8 +168,8 @@ func (r *Repository) UpdateExecutable(ctx context.Context, p, id string, input a
 		if err := tx.Model(&nodeModel{}).Where("id = ?", id).Updates(updates).Error; err != nil {
 			return mapConflict(err)
 		}
-		if project.AutomaticScheduling && (differentString(oldAssignee, n.Executable.AssigneeID) || differentInt(oldEffort, n.Executable.EffortMinutes)) {
-			if err := schedule(ctx, p); err != nil {
+		if project.AutomaticScheduling && (differentString(oldAssignee, n.Executable.AssigneeID) || differentInt(oldEffort, n.Executable.EffortMinutes) || oldLag != n.Executable.LagDays) {
+			if err := schedule(txContext, p); err != nil {
 				return err
 			}
 		}
@@ -175,9 +178,77 @@ func (r *Repository) UpdateExecutable(ctx context.Context, p, id string, input a
 	})
 	return out, err
 }
+func (r *Repository) PreviewExecutableSchedule(ctx context.Context, p, id string, input application.PreviewExecutableInput, now time.Time, schedule func(context.Context, string) error) (*application.SchedulePreview, error) {
+	if err := input.Validate(); err != nil {
+		return nil, err
+	}
+	ctx, release := sharedpersistence.SerializeScheduleMutation(ctx)
+	defer release()
+
+	var preview *application.SchedulePreview
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := sharedpersistence.LockScheduleMutation(tx); err != nil {
+			return fmt.Errorf("lock schedule preview: %w", err)
+		}
+		project, err := loadProject(tx, p, true)
+		if err != nil {
+			return err
+		}
+		if project.Status != "open" || !project.AutomaticScheduling {
+			return domain.ErrSchedulePreviewUnavailable
+		}
+		m, err := findNode(tx, p, id, true)
+		if err != nil {
+			return err
+		}
+		if m.ActualEnd != nil {
+			return domain.ErrSchedulePreviewUnavailable
+		}
+		count, err := childCount(tx, p, id)
+		if err != nil {
+			return err
+		}
+		n := toDomain(m, count > 0)
+		fields := domain.ExecutableFields{
+			RoleID:        input.RoleID,
+			AssigneeID:    input.AssigneeID,
+			EffortMinutes: input.EffortMinutes,
+			LagDays:       input.LagDays,
+		}
+		if err := validateMember(tx, fields); err != nil {
+			return err
+		}
+		if err := n.UpdateExecutable(fields, true, true, now); err != nil {
+			return err
+		}
+		applyFields(&m, n.Executable)
+		if err := tx.Model(&nodeModel{}).Where("id = ?", id).Updates(executableUpdates(m, now)).Error; err != nil {
+			return mapConflict(err)
+		}
+		if err := schedule(sharedpersistence.WithTransaction(ctx, tx), p); err != nil {
+			return err
+		}
+		generated, err := findNode(tx, p, id, false)
+		if err != nil {
+			return err
+		}
+		value := toDomain(generated, false)
+		dependencies, err := loadSchedulePreviewDependencies(tx, id)
+		if err != nil {
+			return err
+		}
+		preview = &application.SchedulePreview{Task: &value, Dependencies: dependencies}
+		return errSchedulePreviewComplete
+	})
+	if errors.Is(err, errSchedulePreviewComplete) {
+		return preview, nil
+	}
+	return nil, err
+}
+
 func (r *Repository) Complete(ctx context.Context, p, id string, actual, now time.Time, forecast func(context.Context, string) error) (*domain.Node, error) {
 	var out *domain.Node
-	err := r.tx(ctx, p, func(tx *gorm.DB, _ projectModel) error {
+	err := r.tx(ctx, p, func(txContext context.Context, tx *gorm.DB, _ projectModel) error {
 		m, err := findNode(tx, p, id, true)
 		if err != nil {
 			return err
@@ -191,7 +262,7 @@ func (r *Repository) Complete(ctx context.Context, p, id string, actual, now tim
 		if err := tx.Model(&nodeModel{}).Where("id = ?", id).Updates(map[string]any{"actual_end": m.ActualEnd, "updated_at": now}).Error; err != nil {
 			return err
 		}
-		if err := forecast(ctx, p); err != nil {
+		if err := forecast(txContext, p); err != nil {
 			return err
 		}
 		out = &n
@@ -201,11 +272,29 @@ func (r *Repository) Complete(ctx context.Context, p, id string, actual, now tim
 }
 
 func (r *Repository) Reopen(ctx context.Context, p, id string, now time.Time, forecast func(context.Context, string) error) (*domain.Node, error) {
+	observed, err := findNode(r.db.WithContext(ctx), p, id, false)
+	if err != nil {
+		return nil, err
+	}
+	observedChildren, err := childCount(r.db.WithContext(ctx), p, id)
+	if err != nil {
+		return nil, err
+	}
+	observedNode := toDomain(observed, observedChildren > 0)
+	if err := observedNode.Reopen(now); err != nil {
+		return nil, err
+	}
+
+	ctx, release := sharedpersistence.SerializeScheduleMutation(ctx)
+	defer release()
 	var out *domain.Node
-	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// Read the Task state before serialising on the owning Project. Requests
-		// that observed the completed state but lose the conditional transition
-		// are reported as concurrent conflicts rather than as initially unfinished.
+	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := sharedpersistence.LockScheduleMutation(tx); err != nil {
+			return fmt.Errorf("lock schedule mutation: %w", err)
+		}
+		// The preflight read established that this request observed a completed
+		// executable Task. If the serialized transaction now sees it unfinished,
+		// another request won the transition and this request is a conflict.
 		m, err := findNode(tx, p, id, false)
 		if err != nil {
 			return err
@@ -223,6 +312,9 @@ func (r *Repository) Reopen(ctx context.Context, p, id string, now time.Time, fo
 		}
 		n := toDomain(m, count > 0)
 		if err := n.Reopen(now); err != nil {
+			if errors.Is(err, domain.ErrTaskNotCompleted) {
+				return domain.ErrTaskReopenConflict
+			}
 			return err
 		}
 		result := tx.Model(&nodeModel{}).
@@ -237,7 +329,7 @@ func (r *Repository) Reopen(ctx context.Context, p, id string, now time.Time, fo
 		if result.RowsAffected != 1 {
 			return domain.ErrTaskReopenConflict
 		}
-		if err := forecast(ctx, p); err != nil {
+		if err := forecast(sharedpersistence.WithTransaction(ctx, tx), p); err != nil {
 			return err
 		}
 		out = &n
@@ -255,7 +347,7 @@ func isReopenConcurrencyError(db *gorm.DB, err error) bool {
 }
 
 func (r *Repository) Reorder(ctx context.Context, p, id string, d domain.Direction, now time.Time, schedule func(context.Context, string) error) error {
-	return r.tx(ctx, p, func(tx *gorm.DB, project projectModel) error {
+	return r.tx(ctx, p, func(txContext context.Context, tx *gorm.DB, project projectModel) error {
 		m, err := findNode(tx, p, id, true)
 		if err != nil {
 			return err
@@ -289,14 +381,14 @@ func (r *Repository) Reorder(ctx context.Context, p, id string, d domain.Directi
 			return err
 		}
 		if project.AutomaticScheduling {
-			return schedule(ctx, p)
+			return schedule(txContext, p)
 		}
 		return nil
 	})
 }
 
 func (r *Repository) Move(ctx context.Context, p, id, conversionID string, parent *string, confirm bool, now time.Time, schedule func(context.Context, string) error, invalidate func(context.Context, []string) error) error {
-	return r.tx(ctx, p, func(tx *gorm.DB, project projectModel) error {
+	return r.tx(ctx, p, func(txContext context.Context, tx *gorm.DB, project projectModel) error {
 		all, err := loadLocked(tx, p)
 		if err != nil {
 			return err
@@ -325,7 +417,7 @@ func (r *Repository) Move(ctx context.Context, p, id, conversionID string, paren
 				if err := r.convertDestination(tx, p, conversionID, &dest, now); err != nil {
 					return err
 				}
-				if err := invalidateDependencyProjects(ctx, tx, conversionID, invalidate); err != nil {
+				if err := invalidateDependencyProjects(txContext, tx, conversionID, invalidate); err != nil {
 					return err
 				}
 			}
@@ -342,13 +434,13 @@ func (r *Repository) Move(ctx context.Context, p, id, conversionID string, paren
 			return err
 		}
 		if project.AutomaticScheduling {
-			return schedule(ctx, p)
+			return schedule(txContext, p)
 		}
 		return nil
 	})
 }
 func (r *Repository) Delete(ctx context.Context, p, id string, now time.Time, schedule func(context.Context, string) error, invalidate func(context.Context, []string) error) error {
-	return r.tx(ctx, p, func(tx *gorm.DB, project projectModel) error {
+	return r.tx(ctx, p, func(txContext context.Context, tx *gorm.DB, project projectModel) error {
 		m, err := findNode(tx, p, id, true)
 		if err != nil {
 			return err
@@ -370,24 +462,29 @@ func (r *Repository) Delete(ctx context.Context, p, id string, now time.Time, sc
 		if err := tx.Where("blocking_task_id = ? OR blocked_task_id = ?", id, id).Delete(&dependencyLinkModel{}).Error; err != nil {
 			return err
 		}
-		if err := invalidateProjectsIfAutomatic(ctx, tx, dependencyProjects, invalidate); err != nil {
-			return err
-		}
 		if err := tx.Where("id = ?", id).Delete(&nodeModel{}).Error; err != nil {
 			return err
 		}
 		if err := compact(tx, p, m.ParentKey); err != nil {
 			return err
 		}
-		if project.AutomaticScheduling {
-			return schedule(ctx, p)
+		if err := invalidateProjectsIfAutomatic(txContext, tx, dependencyProjects, invalidate); err != nil {
+			return err
+		}
+		if project.AutomaticScheduling && !containsProjectID(dependencyProjects, p) {
+			return schedule(txContext, p)
 		}
 		return nil
 	})
 }
 
-func (r *Repository) tx(ctx context.Context, p string, fn func(*gorm.DB, projectModel) error) error {
+func (r *Repository) tx(ctx context.Context, p string, fn func(context.Context, *gorm.DB, projectModel) error) error {
+	ctx, release := sharedpersistence.SerializeScheduleMutation(ctx)
+	defer release()
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := sharedpersistence.LockScheduleMutation(tx); err != nil {
+			return fmt.Errorf("lock schedule mutation: %w", err)
+		}
 		project, err := loadProject(tx, p, true)
 		if err != nil {
 			return err
@@ -395,7 +492,7 @@ func (r *Repository) tx(ctx context.Context, p string, fn func(*gorm.DB, project
 		if project.Status == "closed" {
 			return domain.ErrProjectClosedReadOnly
 		}
-		return fn(tx, project)
+		return fn(sharedpersistence.WithTransaction(ctx, tx), tx, project)
 	})
 }
 func loadProject(db *gorm.DB, id string, lock bool) (projectModel, error) {
@@ -446,30 +543,36 @@ func parentKey(p *string) string {
 	return *p
 }
 func hasData(m nodeModel) bool {
-	return m.RoleID != nil || m.AssigneeID != nil || m.EffortMinutes != nil || m.ExecutionStart != nil || m.ExecutionEnd != nil || m.CommitmentStart != nil || m.CommitmentEnd != nil || m.ActualEnd != nil
+	return m.RoleID != nil || m.AssigneeID != nil || m.EffortMinutes != nil || m.ExecutionStart != nil || m.ExecutionEnd != nil || m.CommitmentStart != nil || m.CommitmentEnd != nil || m.ExecutionUnscheduledReason != nil || m.CommitmentUnscheduledReason != nil || m.ActualEnd != nil
 }
 func clearExecutable(m *nodeModel) {
 	m.RoleID = nil
 	m.AssigneeID = nil
 	m.EffortMinutes = nil
+	m.LagDays = 0
 	m.ExecutionStart = nil
 	m.ExecutionEnd = nil
 	m.CommitmentStart = nil
 	m.CommitmentEnd = nil
+	m.ExecutionUnscheduledReason = nil
+	m.CommitmentUnscheduledReason = nil
 	m.ActualEnd = nil
 }
 func copyExecutable(dst *nodeModel, src nodeModel) {
 	dst.RoleID = src.RoleID
 	dst.AssigneeID = src.AssigneeID
 	dst.EffortMinutes = src.EffortMinutes
+	dst.LagDays = src.LagDays
 	dst.ExecutionStart = src.ExecutionStart
 	dst.ExecutionEnd = src.ExecutionEnd
 	dst.CommitmentStart = src.CommitmentStart
 	dst.CommitmentEnd = src.CommitmentEnd
+	dst.ExecutionUnscheduledReason = src.ExecutionUnscheduledReason
+	dst.CommitmentUnscheduledReason = src.CommitmentUnscheduledReason
 	dst.ActualEnd = src.ActualEnd
 }
 func executableUpdates(m nodeModel, now time.Time) map[string]any {
-	return map[string]any{"role_id": m.RoleID, "assignee_id": m.AssigneeID, "effort_minutes": m.EffortMinutes, "execution_start": m.ExecutionStart, "execution_end": m.ExecutionEnd, "commitment_start": m.CommitmentStart, "commitment_end": m.CommitmentEnd, "actual_end": m.ActualEnd, "updated_at": now}
+	return map[string]any{"role_id": m.RoleID, "assignee_id": m.AssigneeID, "effort_minutes": m.EffortMinutes, "lag_days": m.LagDays, "execution_start": m.ExecutionStart, "execution_end": m.ExecutionEnd, "commitment_start": m.CommitmentStart, "commitment_end": m.CommitmentEnd, "execution_unscheduled_reason": m.ExecutionUnscheduledReason, "commitment_unscheduled_reason": m.CommitmentUnscheduledReason, "actual_end": m.ActualEnd, "updated_at": now}
 }
 func (r *Repository) convertDestination(tx *gorm.DB, p, conversionID string, dest *nodeModel, now time.Time) error {
 	name := dest.Name
@@ -504,6 +607,15 @@ func retargetDependencies(tx *gorm.DB, fromTaskID, toTaskID string) error {
 	}
 	return nil
 }
+func containsProjectID(ids []string, projectID string) bool {
+	for _, id := range ids {
+		if id == projectID {
+			return true
+		}
+	}
+	return false
+}
+
 func dependencyProjectIDs(tx *gorm.DB, taskID string) ([]string, error) {
 	var links []dependencyLinkModel
 	if err := tx.Where("blocking_task_id = ? OR blocked_task_id = ?", taskID, taskID).Find(&links).Error; err != nil {
@@ -553,7 +665,7 @@ func invalidateProjectsIfAutomatic(ctx context.Context, tx *gorm.DB, ids []strin
 	if count == 0 {
 		return nil
 	}
-	return invalidate(ctx, ids)
+	return invalidate(sharedpersistence.WithTransaction(ctx, tx), ids)
 }
 func loadLocked(tx *gorm.DB, p string) (map[string]nodeModel, error) {
 	var values []nodeModel
@@ -637,14 +749,17 @@ func applyFields(m *nodeModel, f domain.ExecutableFields) {
 	m.RoleID = f.RoleID
 	m.AssigneeID = f.AssigneeID
 	m.EffortMinutes = f.EffortMinutes
+	m.LagDays = f.LagDays
 	m.ExecutionStart = f.ExecutionTimeline.Start
 	m.ExecutionEnd = f.ExecutionTimeline.End
 	m.CommitmentStart = f.CommitmentTimeline.Start
 	m.CommitmentEnd = f.CommitmentTimeline.End
+	m.ExecutionUnscheduledReason = f.ExecutionUnscheduledReason
+	m.CommitmentUnscheduledReason = f.CommitmentUnscheduledReason
 	m.ActualEnd = f.ActualEnd
 }
 func toDomain(m nodeModel, children bool) domain.Node {
-	return domain.Node{ID: m.ID, ProjectID: m.ProjectID, ParentID: m.ParentID, Name: m.Name, Position: m.Position, HasChildren: children, Executable: domain.ExecutableFields{RoleID: m.RoleID, AssigneeID: m.AssigneeID, EffortMinutes: m.EffortMinutes, ExecutionTimeline: domain.Timeline{Start: m.ExecutionStart, End: m.ExecutionEnd}, CommitmentTimeline: domain.Timeline{Start: m.CommitmentStart, End: m.CommitmentEnd}, ActualEnd: m.ActualEnd}, Children: []domain.Node{}, CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt}
+	return domain.Node{ID: m.ID, ProjectID: m.ProjectID, ParentID: m.ParentID, Name: m.Name, Position: m.Position, HasChildren: children, Executable: domain.ExecutableFields{RoleID: m.RoleID, AssigneeID: m.AssigneeID, EffortMinutes: m.EffortMinutes, LagDays: m.LagDays, ExecutionTimeline: domain.Timeline{Start: m.ExecutionStart, End: m.ExecutionEnd}, CommitmentTimeline: domain.Timeline{Start: m.CommitmentStart, End: m.CommitmentEnd}, ExecutionUnscheduledReason: m.ExecutionUnscheduledReason, CommitmentUnscheduledReason: m.CommitmentUnscheduledReason, ActualEnd: m.ActualEnd}, Children: []domain.Node{}, CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt}
 }
 func buildTree(models []nodeModel) []domain.Node {
 	children := map[string][]nodeModel{}

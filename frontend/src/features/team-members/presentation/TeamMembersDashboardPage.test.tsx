@@ -87,7 +87,7 @@ describe("TeamMembersDashboardPage", () => {
         role: { id: "backend", name: "Backend" },
         dailyCapacity: 7.5,
         bufferPercentage: 20,
-        commitmentCapacity: 6,
+        baseExecutionCapacity: 6,
         createdAt: new Date(),
         updatedAt: new Date(),
       }),
@@ -138,7 +138,9 @@ describe("TeamMembersDashboardPage", () => {
     expect(buffer.value).toBe("20.3");
     await user.tab();
     expect(buffer.value).toBe("20.5");
-    expect(screen.getByText("Commitment capacity: 6 hours/day")).toBeTruthy();
+    expect(
+      screen.getByText("Base execution capacity: 6 hours/day"),
+    ).toBeTruthy();
 
     await user.click(screen.getByRole("button", { name: "Save" }));
     expect(gateway.create).toHaveBeenCalledWith({
@@ -202,7 +204,7 @@ function member(id: string, name: string) {
     role: { id: "backend", name: "Backend" },
     dailyCapacity: 8,
     bufferPercentage: 20,
-    commitmentCapacity: 6.5,
+    baseExecutionCapacity: 6.5,
     createdAt: new Date("2026-07-25T00:00:00Z"),
     updatedAt: new Date("2026-07-25T00:00:00Z"),
   };

@@ -7,6 +7,7 @@ import {
 } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { DependenciesGateway } from "../../dependencies/application/dependenciesGateway";
+import type { DependencyDetail } from "../../dependencies/domain/dependency";
 import type { Project } from "../../projects/domain/project";
 import type { RolesGateway } from "../../roles/application/rolesGateway";
 import type { TeamMembersGateway } from "../../team-members/application/teamMembersGateway";
@@ -19,9 +20,9 @@ const project: Project = {
   name: "Alpha",
   status: "open",
   autoCalculateDate: true,
-  autoDependencyByAssignee: true,
   automaticScheduling: true,
   projectBuffer: 20,
+  scheduleVersion: 0,
   priority: 1,
   createdAt: new Date(),
   updatedAt: new Date(),
@@ -48,7 +49,7 @@ function node(id: string, name: string, children: WBSNode[] = []): WBSNode {
     name,
     position: 1,
     hasChildren: children.length > 0,
-    executable: { executionTimeline: {}, commitmentTimeline: {} },
+    executable: { lagDays: 0, executionTimeline: {}, commitmentTimeline: {} },
     children,
   };
 }
@@ -61,6 +62,7 @@ function gateway(tree: WBSNode[]): WBSGateway {
     move: vi.fn(),
     remove: vi.fn(),
     updateExecutable: vi.fn(),
+    previewExecutableSchedule: vi.fn(),
     complete: vi.fn(),
     reopen: vi.fn(),
   };
@@ -72,13 +74,15 @@ describe("WBS presentation terminology", () => {
     const taskA = node("a", "API");
     const taskB = node("b", "Build");
     const dependenciesGateway: DependenciesGateway = {
-      list: vi.fn(async (taskId: string) => {
+      list: vi.fn(async (taskId: string): Promise<DependencyDetail> => {
         if (taskId === taskA.id) {
           return {
             blockedBy: [],
             blocks: [
               {
                 id: dependencyId,
+                source: "manual",
+                manualRemovable: true,
                 task: {
                   id: taskB.id,
                   name: taskB.name,
@@ -96,6 +100,8 @@ describe("WBS presentation terminology", () => {
             blockedBy: [
               {
                 id: dependencyId,
+                source: "manual",
+                manualRemovable: true,
                 task: {
                   id: taskA.id,
                   name: taskA.name,
@@ -119,6 +125,7 @@ describe("WBS presentation terminology", () => {
       }),
       create: vi.fn().mockResolvedValue(undefined),
       remove: vi.fn().mockResolvedValue(undefined),
+      keepAsManual: vi.fn().mockResolvedValue(undefined),
       invalidateTask: vi.fn(),
       invalidateAll: vi.fn(),
     };
@@ -209,6 +216,7 @@ describe("WBS presentation terminology", () => {
       }),
       create: vi.fn().mockResolvedValue(undefined),
       remove: vi.fn().mockResolvedValue(undefined),
+      keepAsManual: vi.fn().mockResolvedValue(undefined),
       invalidateTask: vi.fn(),
       invalidateAll: vi.fn(),
     };
@@ -273,6 +281,7 @@ describe("WBS presentation terminology", () => {
       }),
       create: vi.fn().mockResolvedValue(undefined),
       remove: vi.fn().mockResolvedValue(undefined),
+      keepAsManual: vi.fn().mockResolvedValue(undefined),
       invalidateTask: vi.fn(),
       invalidateAll: vi.fn(),
     };
@@ -378,6 +387,8 @@ describe("WBS presentation terminology", () => {
           blockedBy: [
             {
               id: "dependency-auth-api",
+              source: "manual",
+              manualRemovable: true,
               task: {
                 id: "authentication",
                 name: "Authentication",
@@ -398,6 +409,7 @@ describe("WBS presentation terminology", () => {
       }),
       create: vi.fn().mockResolvedValue(undefined),
       remove: vi.fn().mockResolvedValue(undefined),
+      keepAsManual: vi.fn().mockResolvedValue(undefined),
       invalidateTask: vi.fn(),
       invalidateAll: vi.fn(),
     };

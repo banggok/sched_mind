@@ -14,6 +14,8 @@ type storeStub struct {
 	createErr          error
 	deleted            string
 	deleteErr          error
+	kept               string
+	keepErr            error
 	affectedProjectIDs []string
 }
 
@@ -48,12 +50,23 @@ func (s *storeStub) Create(
 	return &v, nil
 }
 
-func (s *storeStub) Delete(ctx context.Context, id string, callback func(context.Context, []string) error) error {
+func (s *storeStub) Delete(ctx context.Context, id string, _ time.Time, callback func(context.Context, []string) error) error {
 	s.deleted = id
 	if s.deleteErr != nil {
 		return s.deleteErr
 	}
 	return callback(ctx, []string{"project"})
+}
+
+func (s *storeStub) KeepAsManual(ctx context.Context, id string, now time.Time, callback func(context.Context, []string) error) (*domain.Dependency, error) {
+	s.kept = id
+	if s.keepErr != nil {
+		return nil, s.keepErr
+	}
+	if err := callback(ctx, []string{"project"}); err != nil {
+		return nil, err
+	}
+	return &domain.Dependency{ID: id, BlockingTaskID: "a", BlockedTaskID: "b", ManualOwned: true, AutomaticOwned: true, CreatedAt: now, UpdatedAt: now}, nil
 }
 
 type schedulerStub struct {
@@ -154,5 +167,22 @@ func TestCreateInvalidatesAllAffectedProjects(t *testing.T) {
 			"scheduler.projectIDs=%v, want both alpha and beta",
 			scheduler.projectIDs,
 		)
+	}
+}
+
+func TestKeepAsManualOrchestratesStoreAndScheduler_AC24(t *testing.T) {
+	store := &storeStub{}
+	scheduler := &schedulerStub{}
+	service := NewServiceWithDependencies(store, scheduler, time.Now, func() (string, error) { return "unused", nil })
+
+	value, err := service.KeepAsManual(context.Background(), "dependency")
+	if err != nil {
+		t.Fatalf("KeepAsManual() error = %v", err)
+	}
+	if value == nil || store.kept != "dependency" || scheduler.calls != 1 {
+		t.Fatalf("value=%#v kept=%q scheduler.calls=%d", value, store.kept, scheduler.calls)
+	}
+	if !value.ManualOwned || !value.AutomaticOwned {
+		t.Fatalf("ownership = manual:%v automatic:%v, want shared", value.ManualOwned, value.AutomaticOwned)
 	}
 }

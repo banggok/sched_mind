@@ -105,3 +105,34 @@ func TestDedicatedReopenDoesNotWeakenCompletedGenericMutations_AC6(t *testing.T)
 		t.Fatalf("generic mutation changed completed task: %#v", node)
 	}
 }
+
+func TestValidateExecutableRejectsNegativeLagAndPreservesZeroDefault_US6_AC2_AC3(t *testing.T) {
+	if err := ValidateExecutable(ExecutableFields{LagDays: -1}, true, true); !errors.Is(err, ErrLagInvalid) {
+		t.Fatalf("negative Lag error = %v, want ErrLagInvalid", err)
+	}
+	if err := ValidateExecutable(ExecutableFields{}, true, true); err != nil {
+		t.Fatalf("zero default Lag error = %v", err)
+	}
+}
+
+func TestAutomaticSchedulingKeepsGeneratedDatesReadOnlyWhileLagRemainsEditable_US6_AC1_AC2(t *testing.T) {
+	now := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	start := time.Date(2026, 8, 3, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2026, 8, 4, 0, 0, 0, 0, time.UTC)
+	node, err := New("task", "project", nil, "Task", 1, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	node.Executable.ExecutionTimeline = Timeline{Start: &start, End: &end}
+	node.Executable.CommitmentTimeline = Timeline{Start: &start, End: &end}
+	err = node.UpdateExecutable(ExecutableFields{LagDays: 2}, true, true, now.Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if node.Executable.LagDays != 2 {
+		t.Fatalf("LagDays = %d, want 2", node.Executable.LagDays)
+	}
+	if node.Executable.ExecutionTimeline.Start == nil || !node.Executable.ExecutionTimeline.Start.Equal(start) || node.Executable.CommitmentTimeline.End == nil || !node.Executable.CommitmentTimeline.End.Equal(end) {
+		t.Fatalf("generated dates changed through generic automatic update: %#v", node.Executable)
+	}
+}

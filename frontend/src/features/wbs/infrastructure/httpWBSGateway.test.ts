@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createHTTPProjectsGateway } from "../../projects/infrastructure/httpProjectsGateway";
 import { createHTTPWBSGateway } from "./httpWBSGateway";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -50,7 +51,224 @@ describe("HTTP WBS gateway tree cache", () => {
     await gateway.tree("project");
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
+
+  it("US-6.1 AC-2 AC-27 sends Task Lag through the API lag field", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const gateway = createHTTPWBSGateway("/api");
+
+    await gateway.updateExecutable("project", "task", {
+      name: "Build API",
+      effortHours: 8,
+      lagDays: 3,
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/projects/project/wbs/task/executable",
+      expect.objectContaining({ method: "PUT" }),
+    );
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(JSON.parse(String(init.body))).toEqual({
+      name: "Build API",
+      effortHours: 8,
+      lag: 3,
+    });
+    expect(String(init.body)).not.toContain("lagDays");
+  });
+
+  it("US-6.1 AC-36 rejects an in-flight WBS projection after another gateway mutates scheduling state", async () => {
+    let resolveOld: ((response: Response) => void) | undefined;
+    const oldRequest = new Promise<Response>((resolve) => {
+      resolveOld = resolve;
+    });
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(() => oldRequest)
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ data: [] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    const wbsGateway = createHTTPWBSGateway("/api");
+    const projectsGateway = createHTTPProjectsGateway("/api");
+
+    const staleTree = wbsGateway.tree("project");
+    await projectsGateway.delete("other-project");
+    resolveOld?.(
+      new Response(JSON.stringify({ data: [taskResponse()] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    await expect(staleTree).rejects.toMatchObject({ name: "AbortError" });
+    await expect(wbsGateway.tree("project")).resolves.toEqual([]);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("rejects a draft preview invalidated by a newer confirmed scheduling mutation", async () => {
+    let resolvePreview: ((response: Response) => void) | undefined;
+    const previewRequest = new Promise<Response>((resolve) => {
+      resolvePreview = resolve;
+    });
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(() => previewRequest)
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const wbsGateway = createHTTPWBSGateway("/api");
+    const projectsGateway = createHTTPProjectsGateway("/api");
+
+    const preview = wbsGateway.previewExecutableSchedule("project", "task", {
+      roleId: "role",
+      assigneeId: "member",
+      effortHours: 8,
+      lagDays: 0,
+    });
+    await projectsGateway.delete("other-project");
+    resolvePreview?.(
+      new Response(JSON.stringify({ data: schedulePreviewResponse() }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    await expect(preview).rejects.toMatchObject({ name: "AbortError" });
+  });
+
+  it("omits a cleared Assignee from the preview request so the backend can reconcile the queue", async () => {
+    const response = {
+      task: {
+        ...taskResponse(),
+        executable: {
+          ...taskResponse().executable,
+          assigneeId: null,
+          executionTimeline: { start: null, end: null },
+          commitmentTimeline: { start: null, end: null },
+          executionUnscheduledReason:
+            "Task requires an Assignee before it can be scheduled.",
+          commitmentUnscheduledReason:
+            "Task requires an Assignee before it can be scheduled.",
+        },
+      },
+      dependencies: { blockedBy: [], blocks: [] },
+    };
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ data: response }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const gateway = createHTTPWBSGateway("/api");
+
+    const preview = await gateway.previewExecutableSchedule("project", "task", {
+      roleId: "role",
+      assigneeId: undefined,
+      effortHours: 8,
+      lagDays: 0,
+    });
+
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(JSON.parse(String(init.body))).toEqual({
+      roleId: "role",
+      effortHours: 8,
+      lag: 0,
+    });
+    expect(preview.task.executable.assigneeId).toBeUndefined();
+    expect(preview.task.executable.executionTimeline).toEqual({});
+    expect(preview.dependencies).toEqual({ blockedBy: [], blocks: [] });
+  });
+
+  it("previews a scheduling draft without invalidating the confirmed WBS cache", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ data: [taskResponse()] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            data: schedulePreviewResponse(),
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    const gateway = createHTTPWBSGateway("/api");
+
+    await gateway.tree("project");
+    const preview = await gateway.previewExecutableSchedule("project", "task", {
+      roleId: "role",
+      assigneeId: "member",
+      effortHours: 8,
+      lagDays: 2,
+    });
+    await gateway.tree("project");
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/api/projects/project/wbs/task/executable/preview",
+      expect.objectContaining({ method: "POST" }),
+    );
+    const init = fetchMock.mock.calls[1]?.[1] as RequestInit;
+    expect(JSON.parse(String(init.body))).toEqual({
+      roleId: "role",
+      assigneeId: "member",
+      effortHours: 8,
+      lag: 2,
+    });
+    expect(preview.task.id).toBe("task");
+    expect(preview.task.executable.executionTimeline).toEqual({
+      start: "2026-08-01",
+      end: "2026-08-03",
+    });
+    expect(preview.dependencies.blockedBy).toEqual([
+      expect.objectContaining({
+        id: "automatic-1",
+        source: "automatic",
+        task: expect.objectContaining({ id: "task-1", name: "Task 1" }),
+      }),
+    ]);
+  });
 });
+
+function schedulePreviewResponse() {
+  return {
+    task: taskResponse(null, "task", "project"),
+    dependencies: {
+      blockedBy: [
+        {
+          id: "automatic-1",
+          source: "automatic",
+          manualRemovable: false,
+          task: {
+            id: "task-1",
+            name: "Task 1",
+            projectId: "project",
+            projectName: "Alpha",
+            hierarchyPath: "",
+            completed: false,
+            expectedStart: "2026-08-01",
+          },
+        },
+      ],
+      blocks: [],
+    },
+  };
+}
 
 function taskResponse(
   actualEnd: string | null = null,
@@ -67,8 +285,11 @@ function taskResponse(
       roleId: null,
       assigneeId: null,
       effortMinutes: 390,
+      lag: 0,
       executionTimeline: { start: "2026-08-01", end: "2026-08-03" },
       commitmentTimeline: { start: "2026-08-01", end: "2026-08-05" },
+      executionUnscheduledReason: null,
+      commitmentUnscheduledReason: null,
       actualEnd,
     },
     children: [],
@@ -78,10 +299,13 @@ function taskResponse(
 describe("HTTP WBS gateway reopen command", () => {
   it("AC-4 uses the dedicated endpoint without arbitrary payload and validates confirmed state", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ data: taskResponse(null, "task/with slash") }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      }),
+      new Response(
+        JSON.stringify({ data: taskResponse(null, "task/with slash") }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
     );
     vi.stubGlobal("fetch", fetchMock);
     const gateway = createHTTPWBSGateway("/api");
@@ -101,8 +325,11 @@ describe("HTTP WBS gateway reopen command", () => {
         roleId: undefined,
         assigneeId: undefined,
         effortMinutes: 390,
+        lagDays: 0,
         executionTimeline: { start: "2026-08-01", end: "2026-08-03" },
         commitmentTimeline: { start: "2026-08-01", end: "2026-08-05" },
+        executionUnscheduledReason: undefined,
+        commitmentUnscheduledReason: undefined,
         actualEnd: undefined,
       },
     });
@@ -223,13 +450,10 @@ describe("HTTP WBS gateway reopen command", () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({ data: [taskResponse("2026-07-28")] }),
-          {
-            status: 200,
-            headers: { "Content-Type": "application/json" },
-          },
-        ),
+        new Response(JSON.stringify({ data: [taskResponse("2026-07-28")] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
       )
       .mockResolvedValueOnce(
         new Response(JSON.stringify({ data: taskResponse(null, "other") }), {
@@ -260,13 +484,10 @@ describe("HTTP WBS gateway reopen command", () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({ data: [taskResponse("2026-07-28")] }),
-          {
-            status: 200,
-            headers: { "Content-Type": "application/json" },
-          },
-        ),
+        new Response(JSON.stringify({ data: [taskResponse("2026-07-28")] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
       )
       .mockResolvedValueOnce(
         new Response("not-json", {
@@ -319,13 +540,10 @@ describe("HTTP WBS gateway reopen command", () => {
     const staleConsumer = gateway.tree("project");
     await gateway.reopen("project", "task");
     resolveOldTree?.(
-      new Response(
-        JSON.stringify({ data: [taskResponse("2026-07-28")] }),
-        {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        },
-      ),
+      new Response(JSON.stringify({ data: [taskResponse("2026-07-28")] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
     );
     await expect(staleConsumer).rejects.toMatchObject({ name: "AbortError" });
 

@@ -29,9 +29,12 @@ func (s *serviceStub) Create(_ context.Context, from, to string) (*domain.Depend
 	if s.createErr != nil {
 		return nil, s.createErr
 	}
-	return &domain.Dependency{ID: "dependency", BlockingTaskID: from, BlockedTaskID: to}, nil
+	return &domain.Dependency{ID: "dependency", BlockingTaskID: from, BlockedTaskID: to, ManualOwned: true}, nil
 }
 func (s *serviceStub) Delete(context.Context, string) error { return nil }
+func (s *serviceStub) KeepAsManual(_ context.Context, id string) (*domain.Dependency, error) {
+	return &domain.Dependency{ID: id, BlockingTaskID: "a", BlockedTaskID: "b", ManualOwned: true, AutomaticOwned: true}, nil
+}
 func testHandler(service Service) *http.ServeMux {
 	mux := http.NewServeMux()
 	New(service).Register(mux)
@@ -70,6 +73,15 @@ func TestCreateRejectsUnknownField(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/api/dependencies", strings.NewReader(`{"blockingTaskId":"a","blockedTaskId":"b","extra":true}`))
 	testHandler(&serviceStub{}).ServeHTTP(response, request)
 	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestKeepAsManualReturnsSharedOwnershipProjection_AC32(t *testing.T) {
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/dependencies/dependency/keep-manual", nil)
+	testHandler(&serviceStub{}).ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"source":"both"`) || !strings.Contains(response.Body.String(), `"manualRemovable":true`) {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 	}
 }

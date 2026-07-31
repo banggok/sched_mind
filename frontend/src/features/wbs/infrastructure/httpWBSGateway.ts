@@ -1,13 +1,28 @@
-import { WBSOperationError, type WBSGateway } from "../application/wbsGateway";
+import type {
+  DependencyDetail,
+  DependencyRelation,
+} from "../../dependencies/domain/dependency";
+import {
+  WBSOperationError,
+  type SchedulePreview,
+  type WBSGateway,
+} from "../application/wbsGateway";
 import type { WBSNode } from "../domain/wbs";
 import { RequestCache } from "../../../shared/infrastructure/RequestCache";
+import {
+  advanceScheduleProjectionVersion,
+  currentScheduleProjectionVersion,
+} from "../../../shared/infrastructure/scheduleProjectionClock";
 
 const invalidResponseMessage = "WBS response is invalid. Try again.";
 
 export function createHTTPWBSGateway(baseURL: string): WBSGateway {
   const trees = new Map<string, RequestCache<WBSNode[]>>();
-  const treeVersions = new Map<string, number>();
-  const request = async (path: string, init?: RequestInit): Promise<unknown> => {
+  let observedProjectionVersion = currentScheduleProjectionVersion();
+  const request = async (
+    path: string,
+    init?: RequestInit,
+  ): Promise<unknown> => {
     const response = await fetch(`${baseURL}${path}`, init);
     if (!response.ok) {
       const body: unknown = await response.json().catch(() => undefined);
@@ -22,10 +37,16 @@ export function createHTTPWBSGateway(baseURL: string): WBSGateway {
   };
   const path = (projectId: string) =>
     `/projects/${encodeURIComponent(projectId)}/wbs`;
-  const invalidate = (projectId: string) => {
-    treeVersions.set(projectId, (treeVersions.get(projectId) ?? 0) + 1);
-    trees.get(projectId)?.invalidate();
-    trees.delete(projectId);
+  const invalidateAll = (advance: boolean) => {
+    if (advance) advanceScheduleProjectionVersion();
+    observedProjectionVersion = currentScheduleProjectionVersion();
+    trees.forEach((cache) => cache.invalidate());
+    trees.clear();
+  };
+  const syncProjectionVersion = () => {
+    if (observedProjectionVersion !== currentScheduleProjectionVersion()) {
+      invalidateAll(false);
+    }
   };
   const json = (method: string, body: object): RequestInit => ({
     method,
@@ -34,12 +55,13 @@ export function createHTTPWBSGateway(baseURL: string): WBSGateway {
   });
   return {
     tree: async (projectId, signal) => {
+      syncProjectionVersion();
       const cache = trees.get(projectId) ?? new RequestCache<WBSNode[]>();
       trees.set(projectId, cache);
-      const requestVersion = treeVersions.get(projectId) ?? 0;
+      const requestVersion = currentScheduleProjectionVersion();
       return cache.run(async () => {
         const data = await request(path(projectId));
-        if ((treeVersions.get(projectId) ?? 0) !== requestVersion) {
+        if (currentScheduleProjectionVersion() !== requestVersion) {
           throw staleResponseError();
         }
         if (!Array.isArray(data)) throw new Error(invalidResponseMessage);
@@ -51,48 +73,61 @@ export function createHTTPWBSGateway(baseURL: string): WBSGateway {
         path(projectId),
         json("POST", { parentId, name, confirmConversion }),
       );
-      invalidate(projectId);
+      invalidateAll(true);
     },
     rename: async (projectId, id, name) => {
-      await request(
-        `${path(projectId)}/${id}`,
-        json("PUT", { name }),
-      );
-      invalidate(projectId);
+      await request(`${path(projectId)}/${id}`, json("PUT", { name }));
+      invalidateAll(true);
     },
     reorder: async (projectId, id, direction) => {
       await request(
         `${path(projectId)}/${id}/reorder`,
         json("POST", { direction }),
       );
-      invalidate(projectId);
+      invalidateAll(true);
     },
     move: async (projectId, id, parentId, confirmConversion) => {
       await request(
         `${path(projectId)}/${id}/move`,
         json("POST", { parentId, confirmConversion }),
       );
-      invalidate(projectId);
+      invalidateAll(true);
     },
     remove: async (projectId, id) => {
       await request(`${path(projectId)}/${id}`, {
         method: "DELETE",
       });
-      invalidate(projectId);
+      invalidateAll(true);
     },
     updateExecutable: async (projectId, id, input) => {
+      const { lagDays, ...fields } = input;
       await request(
         `${path(projectId)}/${id}/executable`,
-        json("PUT", input),
+        json("PUT", { ...fields, lag: lagDays }),
       );
-      invalidate(projectId);
+      invalidateAll(true);
+    },
+    previewExecutableSchedule: async (projectId, id, input, signal) => {
+      const requestVersion = currentScheduleProjectionVersion();
+      const { lagDays, ...fields } = input;
+      const data = await request(
+        `${path(projectId)}/${encodeURIComponent(id)}/executable/preview`,
+        {
+          ...json("POST", { ...fields, lag: lagDays }),
+          signal,
+        },
+      );
+      if (currentScheduleProjectionVersion() !== requestVersion) {
+        throw staleResponseError();
+      }
+      return mapSchedulePreview(data, projectId, id);
     },
     complete: async (projectId, id, actualEnd) => {
       await request(
         `${path(projectId)}/${id}/actual-end`,
         json("POST", { actualEnd }),
       );
-      invalidate(projectId);
+      invalidateAll(true);
     },
     reopen: async (projectId, id) => {
       try {
@@ -108,7 +143,7 @@ export function createHTTPWBSGateway(baseURL: string): WBSGateway {
         // A successful command may already have changed persisted state even if
         // its response body is malformed. Invalidate before parsing so neither
         // the previous tree nor an older in-flight response can become confirmed.
-        invalidate(projectId);
+        invalidateAll(true);
         const payload: unknown = await response.json();
         if (!isRecord(payload) || !("data" in payload)) {
           throw new Error(invalidResponseMessage);
@@ -125,6 +160,84 @@ export function createHTTPWBSGateway(baseURL: string): WBSGateway {
   };
 }
 
+function mapSchedulePreview(
+  value: unknown,
+  projectId: string,
+  id: string,
+): SchedulePreview {
+  if (!isRecord(value) || !("task" in value) || !("dependencies" in value)) {
+    throw new Error(invalidResponseMessage);
+  }
+  return {
+    task: mapPreviewNode(value.task, projectId, id),
+    dependencies: mapPreviewDependencies(value.dependencies),
+  };
+}
+
+function mapPreviewNode(
+  value: unknown,
+  projectId: string,
+  id: string,
+): WBSNode {
+  const preview = mapNode(value);
+  if (
+    preview.id !== id ||
+    preview.projectId !== projectId ||
+    preview.hasChildren ||
+    preview.children.length !== 0
+  ) {
+    throw new Error(invalidResponseMessage);
+  }
+  return preview;
+}
+
+function mapPreviewDependencies(value: unknown): DependencyDetail {
+  if (
+    !isRecord(value) ||
+    !Array.isArray(value.blockedBy) ||
+    !Array.isArray(value.blocks)
+  ) {
+    throw new Error(invalidResponseMessage);
+  }
+  return {
+    blockedBy: value.blockedBy.map(mapPreviewRelation),
+    blocks: value.blocks.map(mapPreviewRelation),
+  };
+}
+
+function mapPreviewRelation(value: unknown): DependencyRelation {
+  if (
+    !isRecord(value) ||
+    typeof value.id !== "string" ||
+    (value.source !== "manual" &&
+      value.source !== "automatic" &&
+      value.source !== "both") ||
+    typeof value.manualRemovable !== "boolean" ||
+    !isRecord(value.task) ||
+    typeof value.task.id !== "string" ||
+    typeof value.task.name !== "string" ||
+    typeof value.task.projectId !== "string" ||
+    typeof value.task.projectName !== "string" ||
+    typeof value.task.hierarchyPath !== "string" ||
+    typeof value.task.completed !== "boolean"
+  ) {
+    throw new Error(invalidResponseMessage);
+  }
+  return {
+    id: value.id,
+    source: value.source,
+    manualRemovable: value.manualRemovable,
+    task: {
+      id: value.task.id,
+      name: value.task.name,
+      projectId: value.task.projectId,
+      projectName: value.task.projectName,
+      hierarchyPath: value.task.hierarchyPath,
+      completed: value.task.completed,
+      expectedStart: optionalString(value.task.expectedStart),
+    },
+  };
+}
 
 function mapReopenedNode(
   value: unknown,
@@ -187,8 +300,15 @@ function mapExecutable(value: Record<string, unknown>): WBSNode["executable"] {
     roleId: optionalString(value.roleId),
     assigneeId: optionalString(value.assigneeId),
     effortMinutes: optionalNumber(value.effortMinutes),
+    lagDays: optionalNonNegativeInteger(value.lag) ?? 0,
     executionTimeline: mapTimeline(value.executionTimeline),
     commitmentTimeline: mapTimeline(value.commitmentTimeline),
+    executionUnscheduledReason: optionalString(
+      value.executionUnscheduledReason,
+    ),
+    commitmentUnscheduledReason: optionalString(
+      value.commitmentUnscheduledReason,
+    ),
     actualEnd: optionalString(value.actualEnd),
   };
 }
@@ -206,6 +326,14 @@ function mapTimeline(value: Record<string, unknown>): {
 function optionalString(value: unknown): string | undefined {
   if (value === undefined || value === null) return undefined;
   if (typeof value !== "string") throw new Error(invalidResponseMessage);
+  return value;
+}
+
+function optionalNonNegativeInteger(value: unknown): number | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+    throw new Error(invalidResponseMessage);
+  }
   return value;
 }
 
@@ -231,6 +359,8 @@ function operationError(value: unknown): WBSOperationError {
 
 function userMessage(code: string): string {
   switch (code) {
+    case "INVALID_LAG":
+      return "Lag must be a non-negative whole number of days.";
     case "WBS_HAS_CHILDREN":
       return "This group cannot be deleted while it still contains items. Move or delete its children first.";
     case "WBS_CONVERSION_REQUIRED":
@@ -253,6 +383,10 @@ function userMessage(code: string): string {
       return "The Task changed in another request. Refresh and try again.";
     case "TASK_REOPEN_FAILED":
       return "The Task could not be reopened. Try again.";
+    case "SCHEDULING_INPUT_INCOMPLETE":
+      return "Complete Role, Effort, and valid Lag to preview the schedule.";
+    case "SCHEDULE_PREVIEW_UNAVAILABLE":
+      return "Schedule preview is available only for an open unfinished Task with Automatic Scheduling on.";
     default:
       return "The item could not be updated. Check the form and try again.";
   }

@@ -113,7 +113,7 @@ describe("HTTP roles gateway", () => {
                     role: { id: "role-id", name: roleName },
                     dailyCapacity: 8,
                     bufferPercentage: 20,
-                    commitmentCapacity: 6.5,
+                    baseExecutionCapacity: 6.5,
                     createdAt: "2026-07-25T00:00:00Z",
                     updatedAt: "2026-07-25T00:00:00Z",
                   },

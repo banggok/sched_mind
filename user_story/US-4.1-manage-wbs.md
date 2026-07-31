@@ -1,9 +1,13 @@
 # US-4.1 Manage WBS
 
+> **Product decision update — US-6.1:** WBS mutations use the concrete
+> portfolio scheduler when Automatic Scheduling is ON. Dependency remains owned
+> by US-5.1; Task Lag and generated timeline algorithms are owned by US-6.1.
+
 ## User Story
 
-**As an** Engineering Lead  
-**I want** to manage the Work Breakdown Structure (WBS) of a project  
+**As an** Engineering Lead
+**I want** to manage the Work Breakdown Structure (WBS) of a project
 **So that** project work can be decomposed into executable work items for future scheduling.
 
 ---
@@ -22,17 +26,20 @@ entity types.
 ## Scope
 
 ### In Scope
+
 - Create, rename, move and delete WBS
 - Unlimited hierarchy
 - Automatic conversion between Grouping and Executable WBS
-- Manage executable attributes: Role, Assignee, Effort, Dependency, Lag, Manual Execution Timeline, Manual Commitment Timeline, Actual End
+- Manage executable attributes owned by this story: Role, Assignee, Effort, Manual Execution Timeline, Manual Commitment Timeline, Actual End
+- Integrate with Dependency from US-5.1 and Lag/generated dates from US-6.1 without duplicating their business rules
 - Validation, Persistence, API and UI
 
 ### Out of Scope
-- Execution Scheduler
-- Commitment Scheduler
+
+- Execution and Commitment scheduling algorithms; owned by US-6.1
 - Forecast Scheduler
-- Timeline calculation
+- Dependency editor and graph rules; owned by US-5.1
+- Lag validation and calculation; owned by US-6.1
 
 ---
 
@@ -48,7 +55,6 @@ entity types.
 
 ---
 
-
 ## Move Rules
 
 - A WBS node may be moved to any valid parent within the same Project.
@@ -60,9 +66,9 @@ entity types.
 - When the destination parent receives its first child, it automatically becomes a Grouping WBS.
 - If the destination parent was an Executable WBS with executable attributes, the normal Executable-to-Grouping conversion and confirmation rules apply.
 - Cross-Project moves are not allowed in this story.
-- When Project Automatic Scheduling is ON, a confirmed move triggers the scheduler integration contract to recalculate the affected Project.
+- When Project Automatic Scheduling is ON, a confirmed move triggers the concrete portfolio scheduler from US-6.1 for the affected active scope.
 - When Project Automatic Scheduling is OFF, existing manual Execution and Commitment dates remain unchanged.
-- The real scheduling algorithm remains deferred to Epic 6; this story must invoke the established scheduling port and verify the invocation through automated tests.
+- US-4.1 owns the mutation trigger and atomic coordination; US-6.1 owns the scheduling algorithm. Integrated acceptance tests must verify observable generated-date changes, not only port invocation.
 
 ## Delete Rules
 
@@ -73,7 +79,7 @@ entity types.
 - Delete is a hard delete for a leaf that has no descendants, subject to Project lifecycle restrictions.
 - Deleting a leaf may cause its parent to have no remaining children; that parent then automatically becomes an Executable WBS.
 - Deleting a WBS must not cascade-delete descendants because deletion of a node with descendants is prohibited.
-- When Automatic Scheduling is ON, confirmed deletion triggers the scheduler integration contract for the affected Project.
+- When Automatic Scheduling is ON, confirmed deletion triggers the concrete portfolio scheduler from US-6.1 for the affected active scope.
 - When Automatic Scheduling is OFF, remaining manual dates stay unchanged.
 
 ---
@@ -90,24 +96,29 @@ entity types.
 8. Moving a node under itself or its descendant is rejected.
 9. Moving the last child away converts the source parent to Executable.
 10. Moving a node into an Executable destination applies the confirmed Executable-to-Grouping conversion.
-11. With Automatic Scheduling ON, a successful move invokes Project recalculation through the scheduler port.
+11. With Automatic Scheduling ON, a successful move invokes concrete portfolio recalculation and refreshes affected generated dates.
 12. With Automatic Scheduling OFF, a successful move preserves existing manual dates.
 13. Only a leaf WBS may be deleted.
 14. A WBS with children cannot be deleted.
 15. The delete conflict explains that children must be moved or deleted first.
 16. Deleting the last child converts the parent to Executable.
-17. With Automatic Scheduling ON, a successful delete invokes Project recalculation through the scheduler port.
+17. With Automatic Scheduling ON, a successful delete invokes concrete portfolio recalculation and refreshes affected generated dates.
 18. With Automatic Scheduling OFF, successful deletion preserves remaining manual dates.
 19. Executable WBS supports Role, Assignee, Effort, Manual Execution Timeline, Manual Commitment Timeline and Actual End.
 20. Grouping WBS cannot edit executable fields.
 21. Manual timeline is editable only when Automatic Scheduling is OFF.
 22. Actual End is only available for Executable WBS.
+23. With Automatic Scheduling ON, create, sibling reorder, Assignee change, Effort change, and structural conversion invoke concrete portfolio recalculation.
+24. Rename and Role-only changes do not invoke scheduling when Assignee is unchanged.
+25. WBS mutation and required scheduling are atomic; scheduling failure rolls back hierarchy, executable data, generated dates, and confirmed UI state.
+26. On an Open unfinished automatic Task, blur previews generated dates and automatic dependency ownership without persisting the Task when Role, valid Effort, and valid Lag are present. Assignee may be selected or explicitly cleared: a selected Assignee previews its reconciled schedule, while a cleared Assignee still calls preview to remove stale automatic ownership and return a missing-Assignee unscheduled projection. Missing or invalid Role, Effort, or Lag makes no preview request.
 
 ---
 
 ## Test Cases
 
 ### Happy Path
+
 - Create root WBS.
 - Create nested WBS.
 - Convert Executable to Grouping.
@@ -116,16 +127,17 @@ entity types.
 - Move a Grouping WBS together with its full subtree.
 - Move the last child away and verify the source parent becomes Executable.
 - Move into an Executable destination and confirm conversion to Grouping.
-- Move with Automatic Scheduling ON and verify the scheduler port is invoked once.
+- Move with Automatic Scheduling ON and verify generated Execution/Commitment dates are recalculated.
 - Move with Automatic Scheduling OFF and verify manual dates remain unchanged.
 - Delete a leaf.
 - Delete the last child and verify the parent becomes Executable.
-- Delete with Automatic Scheduling ON and verify the scheduler port is invoked.
+- Delete with Automatic Scheduling ON and verify generated Execution/Commitment dates are recalculated.
 - Delete with Automatic Scheduling OFF and verify remaining manual dates are unchanged.
 - Edit executable attributes.
 - Enter Actual End.
 
 ### Validation
+
 - Attempt executable fields on Grouping WBS.
 - Add child to Executable containing data without confirming conversion.
 - Edit manual timeline while Automatic Scheduling is ON.
@@ -138,6 +150,7 @@ entity types.
 - Concurrent move/delete operations preserve one valid tree.
 
 ### Regression
+
 - Existing WBS data is preserved after unrelated moves.
 - Child ordering remains deterministic.
 - Executable-to-Grouping conversion preserves executable data in the first child.
@@ -149,6 +162,7 @@ entity types.
 ---
 
 ## Required Automated Tests
+
 - Domain
 - Application
 - Repository
@@ -157,16 +171,19 @@ entity types.
 - WBS conversion
 - Move subtree and cycle prevention
 - Leaf-only deletion
-- Scheduler-port invocation
+- Concrete scheduler trigger and observable date update
 - Manual-date preservation
 - Concurrency and rollback
 - Validation
 
 ---
 
-## Deferred Implementation
+## Scheduling Ownership
 
-This story prepares the complete WBS aggregate only. Automatic scheduling is deferred to Epic 6 (Scheduling Engine).
+US-4.1 owns WBS mutation, validation, persistence, and trigger coordination.
+US-6.1 owns concrete Execution/Commitment scheduling, daily allocation, Lag, and
+Auto Dependency. US-4.1 must call the concrete scheduler when available and may
+not claim completion from a no-op adapter after US-6.1 is implemented.
 
 ---
 
@@ -182,6 +199,12 @@ This story prepares the complete WBS aggregate only. Automatic scheduling is def
 - Move/delete invokes scheduler recalculation only when Automatic Scheduling is ON.
 - Automatic Scheduling OFF preserves existing manual dates after structural changes.
 - Manual timeline only when Automatic Scheduling is OFF.
+- For an Open unfinished Task with Automatic Scheduling ON, leaving Role,
+  Assignee, Effort, or Lag requests the rollback-only schedule preview defined
+  by US-6.1 when Role, valid Effort, and valid Lag are present. Assignee may be
+  selected or explicitly cleared; clearing it still previews automatic-
+  dependency reconciliation and the missing-Assignee unscheduled result. Save
+  remains the only confirmed Task mutation.
 
 ---
 
@@ -198,9 +221,10 @@ This story prepares the complete WBS aggregate only. Automatic scheduling is def
 
 ### Dependency and Lag
 
-Dependency and Lag are removed from US-4.1 and deferred completely to Epic 5.
-US-4.1 does not persist or present them and does not calculate a dependency
-graph.
+Dependency business rules and editor are owned by US-5.1. Lag persistence,
+validation, UI field, and calculation are owned by US-6.1. US-4.1 must preserve
+both fields during structural conversion and atomic Task mutation but must not
+duplicate their domain rules.
 
 ### Manual Timeline
 
@@ -230,7 +254,7 @@ graph.
 - When Automatic Scheduling is ON without this Project anchor, generated
   timelines remain empty and the UI exposes
   `Automatic Scheduling requires a Project Scheduling Start Date.`
-- Epic 6 will use the anchor as the earliest working date for the first
+- US-6.1 uses the anchor as the earliest working date for the first
   executable tasks without predecessors. Dependency-ready dates continue to
   govern downstream tasks.
 
@@ -257,10 +281,10 @@ graph.
 
 With Automatic Scheduling ON, create root, create child, sibling reorder, move,
 delete, Assignee change, Effort change, and structural conversion invoke the
-Project scheduling port. Rename and Role-only changes do not. Cancelled, failed,
-and manual-mode mutations do not invoke it. Actual End invokes a separate
-Forecast recalculation contract. US-4.1 implements only port invocation and
-contract tests; algorithms remain deferred to Epic 6.
+concrete portfolio scheduler from US-6.1. Rename and Role-only changes do not
+when Assignee is unchanged. Cancelled, failed, and manual-mode mutations do not
+invoke it. Actual End invokes a separate Forecast recalculation contract. WBS
+mutation and required scheduling must commit or roll back atomically.
 
 ### Actual End and Completion
 
@@ -301,9 +325,24 @@ executable fields and Actual End remain immutable.
 ### Capacity Allocation
 
 US-4.1 stores only Effort minutes and date-only manual boundaries. Per-working-
-date allocation projections and all capacity consumption belong to Epic 6 and
-must not be introduced by this story.
+date allocation projections and all capacity consumption belong to US-6.1 and
+must not be reimplemented inside the WBS feature.
 
 ## Unresolved Questions
 
 None.
+
+---
+
+## Implementation Evidence for the US-6.1 Requirement Delta
+
+Concrete production paths, exact test names, per-AC local commands, and the
+Three-Level Confidence readiness mapping are maintained in
+`docs/project/automatic-scheduling-implementation-evidence.md`.
+
+- Code Inspection: `IMPLEMENTED BY CODE INSPECTION`
+- Unit/Integration: `AUTHORED — NOT RUN — LOCAL VALIDATION REQUIRED`
+- Acceptance-Level: `AUTHORED — NOT RUN — LOCAL VALIDATION REQUIRED`
+- Overall affected ACs: `IMPLEMENTED — LOCAL VALIDATION REQUIRED`
+
+No automated validation result is recorded in this story.

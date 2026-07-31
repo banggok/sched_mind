@@ -1,3 +1,4 @@
+import type { DependencyDetail } from "../../dependencies/domain/dependency";
 import type { WBSNode } from "../domain/wbs";
 export class WBSOperationError extends Error {
   constructor(
@@ -33,6 +34,12 @@ export interface WBSGateway {
     id: string,
     input: ExecutableInput,
   ): Promise<void>;
+  previewExecutableSchedule(
+    projectId: string,
+    id: string,
+    input: SchedulePreviewInput,
+    signal?: AbortSignal,
+  ): Promise<SchedulePreview>;
   complete(projectId: string, id: string, actualEnd: string): Promise<void>;
   reopen(projectId: string, id: string): Promise<WBSNode>;
 }
@@ -41,8 +48,21 @@ export interface ExecutableInput {
   roleId?: string;
   assigneeId?: string;
   effortHours?: number;
+  lagDays: number;
   executionStart?: string;
   executionEnd?: string;
   commitmentStart?: string;
   commitmentEnd?: string;
+}
+
+export interface SchedulePreview {
+  task: WBSNode;
+  dependencies: DependencyDetail;
+}
+
+export interface SchedulePreviewInput {
+  roleId: string;
+  assigneeId?: string;
+  effortHours: number;
+  lagDays: number;
 }

@@ -3,6 +3,7 @@ package gormrepo
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -73,7 +74,7 @@ func (r *Repository) listBase(ctx context.Context, search string) *gorm.DB {
 func (r *Repository) listSegment(ctx context.Context, search string, active bool, offset, limit int) ([]projectModel, error) {
 	statement := r.listBase(ctx, search)
 	if active {
-		statement = statement.Where("status IN ?", activeStatuses()).Order("priority ASC").Order("CASE WHEN start_date IS NULL THEN 1 ELSE 0 END ASC").Order("start_date ASC").Order("CASE WHEN end_date IS NULL THEN 1 ELSE 0 END ASC").Order("end_date ASC").Order("CASE WHEN status = 'locked' THEN 0 ELSE 1 END ASC").Order("id ASC")
+		statement = statement.Where("status IN ?", activeStatuses()).Order("priority ASC")
 	} else {
 		statement = statement.Where("status = ?", string(domain.StatusClosed)).Order("closed_at DESC").Order("id ASC")
 	}
@@ -136,9 +137,14 @@ func (r *Repository) CreateNext(ctx context.Context, id, name string, automaticS
 	return nil, errors.New("create project with next priority: concurrent allocation did not settle")
 }
 
-func (r *Repository) UpdateDetails(ctx context.Context, id, name string, automaticScheduling bool, schedulingStartDate *time.Time, projectBuffer int, now time.Time, schedule func(context.Context, string) error) (*domain.Project, error) {
+func (r *Repository) UpdateDetails(ctx context.Context, id, name string, automaticScheduling bool, schedulingStartDate *time.Time, projectBuffer int, now time.Time, schedule func(context.Context, string) error, markUnscheduled func(context.Context, string, string) error) (*domain.Project, error) {
+	ctx, release := sharedpersistence.SerializeScheduleMutation(ctx)
+	defer release()
 	var changed *domain.Project
 	err := r.database.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := sharedpersistence.LockScheduleMutation(tx); err != nil {
+			return fmt.Errorf("lock schedule mutation: %w", err)
+		}
 		value, err := find(tx, id, true)
 		if err != nil {
 			return err
@@ -147,6 +153,8 @@ func (r *Repository) UpdateDetails(ctx context.Context, id, name string, automat
 			return errors.New("update project: find returned nil")
 		}
 		wasAutomatic := value.AutomaticScheduling
+		previousAnchor := value.SchedulingStartDate
+		previousBuffer := value.ProjectBuffer
 		if err := value.Rename(name, now); err != nil {
 			return err
 		}
@@ -162,8 +170,14 @@ func (r *Repository) UpdateDetails(ctx context.Context, id, name string, automat
 		if result.Error != nil {
 			return result.Error
 		}
-		if !wasAutomatic && automaticScheduling && value.SchedulingStartDate != nil {
-			if err := schedule(ctx, id); err != nil {
+		settingsAffectSchedule := !datesEqual(previousAnchor, value.SchedulingStartDate) || previousBuffer != value.ProjectBuffer || wasAutomatic != value.AutomaticScheduling
+		if value.AutomaticScheduling && settingsAffectSchedule {
+			txContext := sharedpersistence.WithTransaction(ctx, tx)
+			if value.SchedulingStartDate == nil {
+				if err := markUnscheduled(txContext, id, "Automatic Scheduling requires a Project Scheduling Start Date."); err != nil {
+					return fmt.Errorf("mark project schedule unscheduled: %w", err)
+				}
+			} else if err := schedule(txContext, id); err != nil {
 				return fmt.Errorf("recalculate project schedule: %w", err)
 			}
 		}
@@ -176,9 +190,14 @@ func (r *Repository) UpdateDetails(ctx context.Context, id, name string, automat
 	return changed, nil
 }
 
-func (r *Repository) ChangeStatus(ctx context.Context, id string, target domain.Status, now time.Time) (*domain.Project, error) {
+func (r *Repository) ChangeStatus(ctx context.Context, id string, target domain.Status, now time.Time, schedule func(context.Context) error) (*domain.Project, error) {
+	ctx, release := sharedpersistence.SerializeScheduleMutation(ctx)
+	defer release()
 	var changed *domain.Project
 	err := r.database.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := sharedpersistence.LockScheduleMutation(tx); err != nil {
+			return fmt.Errorf("lock schedule mutation: %w", err)
+		}
 		value, err := find(tx, id, true)
 		if err != nil {
 			return err
@@ -186,13 +205,36 @@ func (r *Repository) ChangeStatus(ctx context.Context, id string, target domain.
 		if value == nil {
 			return errors.New("change status: find returned nil")
 		}
-		// WBS is not implemented. Every Project created in this story therefore has
-		// zero leaves, so lock and close are rejected without inventing rows.
-		if err := value.ChangeStatus(target, false, false, nil, nil, now); err != nil {
+		leaves, err := loadLifecycleLeaves(tx, id)
+		if err != nil {
+			return err
+		}
+		hasUnfinishedLeaves := false
+		for _, leaf := range leaves {
+			if leaf.ActualEnd == nil {
+				hasUnfinishedLeaves = true
+				break
+			}
+		}
+		var executionSnapshot, commitmentSnapshot *string
+		if target == domain.StatusLocked {
+			executionSnapshot, err = marshalTimelineSnapshot(leaves, true)
+			if err != nil {
+				return err
+			}
+			commitmentSnapshot, err = marshalTimelineSnapshot(leaves, false)
+			if err != nil {
+				return err
+			}
+		}
+		if err := value.ChangeStatus(target, len(leaves) > 0, hasUnfinishedLeaves, executionSnapshot, commitmentSnapshot, now); err != nil {
 			return err
 		}
 		if err := tx.Model(&projectModel{}).Where("id = ?", value.ID).Updates(statusUpdates(*value)).Error; err != nil {
 			return err
+		}
+		if err := schedule(sharedpersistence.WithTransaction(ctx, tx)); err != nil {
+			return fmt.Errorf("schedule active projects after status change: %w", err)
 		}
 		changed = value
 		return nil
@@ -203,9 +245,65 @@ func (r *Repository) ChangeStatus(ctx context.Context, id string, target domain.
 	return changed, nil
 }
 
+type lifecycleLeaf struct {
+	ID              string
+	ExecutionStart  *time.Time
+	ExecutionEnd    *time.Time
+	CommitmentStart *time.Time
+	CommitmentEnd   *time.Time
+	ActualEnd       *time.Time
+}
+
+type timelineSnapshotEntry struct {
+	TaskID string     `json:"taskId"`
+	Start  *time.Time `json:"start"`
+	End    *time.Time `json:"end"`
+}
+
+func loadLifecycleLeaves(database *gorm.DB, projectID string) ([]lifecycleLeaf, error) {
+	leaves := make([]lifecycleLeaf, 0)
+	childQuery := database.Table("wbs_nodes AS child").Select("1").
+		Where("child.project_id = task.project_id AND child.parent_id = task.id")
+	err := database.Table("wbs_nodes AS task").
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Select("task.id, task.execution_start, task.execution_end, task.commitment_start, task.commitment_end, task.actual_end").
+		Where("task.project_id = ?", projectID).
+		Where("NOT EXISTS (?)", childQuery).
+		Order("task.id ASC").
+		Scan(&leaves).Error
+	if err != nil {
+		return nil, fmt.Errorf("load project executable leaves: %w", err)
+	}
+	return leaves, nil
+}
+
+func marshalTimelineSnapshot(leaves []lifecycleLeaf, execution bool) (*string, error) {
+	entries := make([]timelineSnapshotEntry, 0, len(leaves))
+	for _, leaf := range leaves {
+		entry := timelineSnapshotEntry{TaskID: leaf.ID}
+		if execution {
+			entry.Start, entry.End = leaf.ExecutionStart, leaf.ExecutionEnd
+		} else {
+			entry.Start, entry.End = leaf.CommitmentStart, leaf.CommitmentEnd
+		}
+		entries = append(entries, entry)
+	}
+	payload, err := json.Marshal(entries)
+	if err != nil {
+		return nil, fmt.Errorf("marshal locked timeline snapshot: %w", err)
+	}
+	value := string(payload)
+	return &value, nil
+}
+
 func (r *Repository) MovePriority(ctx context.Context, id string, direction domain.PriorityDirection, now time.Time, schedule func(context.Context) error) (*domain.Project, error) {
+	ctx, release := sharedpersistence.SerializeScheduleMutation(ctx)
+	defer release()
 	var changed *domain.Project
 	err := r.database.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := sharedpersistence.LockScheduleMutation(tx); err != nil {
+			return fmt.Errorf("lock schedule mutation: %w", err)
+		}
 		var active []projectModel
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("status IN ?", activeStatuses()).Order("priority ASC").Find(&active).Error; err != nil {
 			return err
@@ -248,7 +346,7 @@ func (r *Repository) MovePriority(ctx context.Context, id string, direction doma
 		if err := tx.Model(&projectModel{}).Where("id = ?", current.ID).Updates(map[string]interface{}{"priority": other.Priority, "updated_at": now}).Error; err != nil {
 			return err
 		}
-		if err := schedule(ctx); err != nil {
+		if err := schedule(sharedpersistence.WithTransaction(ctx, tx)); err != nil {
 			return fmt.Errorf("schedule active projects: %w", err)
 		}
 		current.Priority = other.Priority
@@ -262,9 +360,14 @@ func (r *Repository) MovePriority(ctx context.Context, id string, direction doma
 	return changed, nil
 }
 
-func (r *Repository) UpdateSettings(ctx context.Context, id string, automaticScheduling bool, schedulingStartDate *time.Time, projectBuffer int, now time.Time, schedule func(context.Context, string) error) (*domain.Project, error) {
+func (r *Repository) UpdateSettings(ctx context.Context, id string, automaticScheduling bool, schedulingStartDate *time.Time, projectBuffer int, now time.Time, schedule func(context.Context, string) error, markUnscheduled func(context.Context, string, string) error) (*domain.Project, error) {
+	ctx, release := sharedpersistence.SerializeScheduleMutation(ctx)
+	defer release()
 	var changed *domain.Project
 	err := r.database.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := sharedpersistence.LockScheduleMutation(tx); err != nil {
+			return fmt.Errorf("lock schedule mutation: %w", err)
+		}
 		value, err := find(tx, id, true)
 		if err != nil {
 			return err
@@ -273,14 +376,22 @@ func (r *Repository) UpdateSettings(ctx context.Context, id string, automaticSch
 			return errors.New("update settings: find returned nil")
 		}
 		wasAutomatic := value.AutomaticScheduling
+		previousAnchor := value.SchedulingStartDate
+		previousBuffer := value.ProjectBuffer
 		if err := value.UpdateSettings(automaticScheduling, schedulingStartDate, projectBuffer, now); err != nil {
 			return err
 		}
 		if err := tx.Model(&projectModel{}).Where("id = ?", id).Updates(map[string]interface{}{"automatic_scheduling": value.AutomaticScheduling, "scheduling_start_date": value.SchedulingStartDate, "project_buffer": value.ProjectBuffer, "updated_at": value.UpdatedAt}).Error; err != nil {
 			return err
 		}
-		if !wasAutomatic && automaticScheduling && value.SchedulingStartDate != nil {
-			if err := schedule(ctx, id); err != nil {
+		settingsAffectSchedule := !datesEqual(previousAnchor, value.SchedulingStartDate) || previousBuffer != value.ProjectBuffer || wasAutomatic != value.AutomaticScheduling
+		if value.AutomaticScheduling && settingsAffectSchedule {
+			txContext := sharedpersistence.WithTransaction(ctx, tx)
+			if value.SchedulingStartDate == nil {
+				if err := markUnscheduled(txContext, id, "Automatic Scheduling requires a Project Scheduling Start Date."); err != nil {
+					return fmt.Errorf("mark project schedule unscheduled: %w", err)
+				}
+			} else if err := schedule(txContext, id); err != nil {
 				return fmt.Errorf("recalculate project schedule: %w", err)
 			}
 		}
@@ -333,10 +444,10 @@ func find(database *gorm.DB, id string, lock bool) (*domain.Project, error) {
 }
 
 func fromDomain(value domain.Project) *projectModel {
-	return &projectModel{ID: value.ID, Name: value.Name, NameKey: domain.NormalizedNameKey(value.Name), Status: string(value.Status), StartDate: value.StartDate, EndDate: value.EndDate, AutoCalculateDate: value.AutoCalculateDate, AutoDependencyByAssignee: value.AutoDependencyByAssignee, AutomaticScheduling: value.AutomaticScheduling, SchedulingStartDate: value.SchedulingStartDate, ProjectBuffer: value.ProjectBuffer, Priority: value.Priority, ClosedAt: value.ClosedAt, LockedExecutionSnapshot: value.LockedExecutionSnapshot, LockedCommitmentSnapshot: value.LockedCommitmentSnapshot, CreatedAt: value.CreatedAt, UpdatedAt: value.UpdatedAt}
+	return &projectModel{ID: value.ID, Name: value.Name, NameKey: domain.NormalizedNameKey(value.Name), Status: string(value.Status), StartDate: value.StartDate, EndDate: value.EndDate, AutoCalculateDate: value.AutoCalculateDate, AutomaticScheduling: value.AutomaticScheduling, SchedulingStartDate: value.SchedulingStartDate, ProjectBuffer: value.ProjectBuffer, Priority: value.Priority, ScheduleVersion: value.ScheduleVersion, ClosedAt: value.ClosedAt, LockedExecutionSnapshot: value.LockedExecutionSnapshot, LockedCommitmentSnapshot: value.LockedCommitmentSnapshot, CreatedAt: value.CreatedAt, UpdatedAt: value.UpdatedAt}
 }
 func toDomain(model projectModel) (*domain.Project, error) {
-	return domain.Rehydrate(model.ID, model.Name, domain.Status(model.Status), model.StartDate, model.EndDate, model.AutoCalculateDate, model.AutoDependencyByAssignee, model.AutomaticScheduling, model.SchedulingStartDate, model.ProjectBuffer, model.Priority, model.ClosedAt, model.LockedExecutionSnapshot, model.LockedCommitmentSnapshot, model.CreatedAt, model.UpdatedAt)
+	return domain.Rehydrate(model.ID, model.Name, domain.Status(model.Status), model.StartDate, model.EndDate, model.AutoCalculateDate, model.AutomaticScheduling, model.SchedulingStartDate, model.ProjectBuffer, model.Priority, model.ScheduleVersion, model.ClosedAt, model.LockedExecutionSnapshot, model.LockedCommitmentSnapshot, model.CreatedAt, model.UpdatedAt)
 }
 
 func datesEqual(left, right *time.Time) bool {

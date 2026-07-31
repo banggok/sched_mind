@@ -65,7 +65,7 @@ func (buffer BufferPercentage) Decimal() string {
 	return strconv.FormatFloat(buffer.Percentage(), 'f', 2, 64)
 }
 
-func CommitmentCapacity(
+func BaseExecutionCapacity(
 	dailyCapacity DailyCapacity,
 	buffer BufferPercentage,
 ) float64 {

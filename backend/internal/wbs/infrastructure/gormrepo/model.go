@@ -8,7 +8,9 @@ type nodeModel struct {
 	Position                                                                int
 	RoleID, AssigneeID                                                      *string
 	EffortMinutes                                                           *int
+	LagDays                                                                 int
 	ExecutionStart, ExecutionEnd, CommitmentStart, CommitmentEnd, ActualEnd *time.Time
+	ExecutionUnscheduledReason, CommitmentUnscheduledReason                 *string
 	CreatedAt, UpdatedAt                                                    time.Time
 }
 

@@ -25,7 +25,7 @@ func testHandler(t *testing.T) http.Handler {
 		t.Fatal(err)
 	}
 	// Isolated test schema is intentionally ORM-owned; production uses migration DDL.
-	if err := database.Exec("CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, name_key TEXT NOT NULL UNIQUE, status TEXT NOT NULL, start_date DATETIME, end_date DATETIME, auto_calculate_date NUMERIC NOT NULL, auto_dependency_by_assignee NUMERIC NOT NULL, automatic_scheduling NUMERIC NOT NULL DEFAULT 1, scheduling_start_date DATE, project_buffer INTEGER NOT NULL DEFAULT 20, priority INTEGER NOT NULL UNIQUE, closed_at DATETIME, locked_execution_snapshot TEXT, locked_commitment_snapshot TEXT, created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL)").Error; err != nil {
+	if err := database.Exec("CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, name_key TEXT NOT NULL UNIQUE, status TEXT NOT NULL, start_date DATETIME, end_date DATETIME, auto_calculate_date NUMERIC NOT NULL, automatic_scheduling NUMERIC NOT NULL DEFAULT 1, scheduling_start_date DATE, project_buffer INTEGER NOT NULL DEFAULT 20, schedule_version INTEGER NOT NULL DEFAULT 0, priority INTEGER NOT NULL UNIQUE, closed_at DATETIME, locked_execution_snapshot TEXT, locked_commitment_snapshot TEXT, created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL)").Error; err != nil {
 		t.Fatal(err)
 	}
 	service := application.NewService(gormrepo.New(database), application.NoopScheduler{})

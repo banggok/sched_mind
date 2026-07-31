@@ -1,11 +1,16 @@
 import { RequestCache } from "../../../shared/infrastructure/RequestCache";
 import {
+  advanceScheduleProjectionVersion,
+  currentScheduleProjectionVersion,
+} from "../../../shared/infrastructure/scheduleProjectionClock";
+import {
   DependencyOperationError,
   type DependenciesGateway,
 } from "../application/dependenciesGateway";
 import type {
   DependencyCandidatePage,
   DependencyDetail,
+  DependencyRelation,
   DependencyTask,
 } from "../domain/dependency";
 
@@ -13,7 +18,18 @@ export function createHTTPDependenciesGateway(
   baseURL: string,
 ): DependenciesGateway {
   const details = new Map<string, RequestCache<DependencyDetail>>();
-  let projectionVersion = 0;
+  let projectionVersion = currentScheduleProjectionVersion();
+  const invalidateAllCaches = (advance: boolean) => {
+    if (advance) advanceScheduleProjectionVersion();
+    projectionVersion = currentScheduleProjectionVersion();
+    details.forEach((cache) => cache.invalidate());
+    details.clear();
+  };
+  const syncProjectionVersion = () => {
+    if (projectionVersion !== currentScheduleProjectionVersion()) {
+      invalidateAllCaches(false);
+    }
+  };
   const request = async (
     path: string,
     init?: RequestInit,
@@ -31,6 +47,7 @@ export function createHTTPDependenciesGateway(
   };
   return {
     list: (taskId, signal) => {
+      syncProjectionVersion();
       const cache = details.get(taskId) ?? new RequestCache<DependencyDetail>();
       details.set(taskId, cache);
       const requestVersion = projectionVersion;
@@ -43,6 +60,7 @@ export function createHTTPDependenciesGateway(
       }, signal);
     },
     candidates: async (taskId, direction, search, page, pageSize, signal) => {
+      syncProjectionVersion();
       const requestVersion = projectionVersion;
       const query = new URLSearchParams({
         taskId,
@@ -63,22 +81,27 @@ export function createHTTPDependenciesGateway(
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ blockingTaskId, blockedTaskId }),
       });
-      details.get(blockingTaskId)?.invalidate();
-      details.get(blockedTaskId)?.invalidate();
+      invalidateAllCaches(true);
     },
     remove: async (dependencyId) => {
       await request(`/dependencies/${encodeURIComponent(dependencyId)}`, {
         method: "DELETE",
       });
-      details.forEach((cache) => cache.invalidate());
+      invalidateAllCaches(true);
+    },
+    keepAsManual: async (dependencyId) => {
+      await request(
+        `/dependencies/${encodeURIComponent(dependencyId)}/keep-manual`,
+        { method: "POST" },
+      );
+      invalidateAllCaches(true);
     },
     invalidateTask: (taskId) => {
       details.get(taskId)?.invalidate();
       details.delete(taskId);
     },
     invalidateAll: () => {
-      projectionVersion += 1;
-      details.forEach((cache) => cache.invalidate());
+      invalidateAllCaches(true);
       details.clear();
     },
   };
@@ -96,10 +119,25 @@ function mapDetail(value: unknown): DependencyDetail {
     blocks: value.blocks.map(mapRelation),
   };
 }
-function mapRelation(value: unknown) {
+function mapRelation(value: unknown): DependencyRelation {
   if (!isRecord(value) || typeof value.id !== "string")
     throw new Error("Dependency response is invalid.");
-  return { id: value.id, task: mapTask(value.task) };
+  if (
+    value.source !== "manual" &&
+    value.source !== "automatic" &&
+    value.source !== "both"
+  ) {
+    throw new Error("Dependency response is invalid.");
+  }
+  if (typeof value.manualRemovable !== "boolean") {
+    throw new Error("Dependency response is invalid.");
+  }
+  return {
+    id: value.id,
+    source: value.source,
+    manualRemovable: value.manualRemovable,
+    task: mapTask(value.task),
+  };
 }
 function mapTask(value: unknown): DependencyTask {
   if (
@@ -167,6 +205,8 @@ function mapError(value: unknown): DependencyOperationError {
       "A completed task cannot be blocked by a new dependency.",
     DEPENDENCY_COMPLETED_HISTORY_READ_ONLY:
       "This historical dependency is read-only.",
+    DEPENDENCY_AUTOMATIC_ONLY_READ_ONLY:
+      "Automatic dependencies cannot be removed directly. Keep it as manual first if manual ownership is required.",
   };
   const message =
     code === "DEPENDENCY_CYCLE_DETECTED"

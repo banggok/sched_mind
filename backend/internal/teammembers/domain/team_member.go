@@ -101,6 +101,6 @@ func NormalizeName(name string) (string, error) {
 	return normalized, nil
 }
 
-func (member TeamMember) CommitmentCapacity() float64 {
-	return CommitmentCapacity(member.DailyCapacity, member.BufferPercentage)
+func (member TeamMember) BaseExecutionCapacity() float64 {
+	return BaseExecutionCapacity(member.DailyCapacity, member.BufferPercentage)
 }

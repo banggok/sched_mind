@@ -1,5 +1,9 @@
 # US-2.2 — Manage Public Holiday
 
+> **Product decision update — US-6.1:** Public Holiday resolves capacity to `0`
+> before both buffers. Member Buffer then derives Execution Capacity, and the
+> owning Project Buffer derives Commitment Capacity.
+
 ## 1. User Story
 
 **Sebagai** Engineering Lead,
@@ -44,40 +48,40 @@ Engineering Lead dapat:
 
 User story ini tidak mencakup:
 
-* Country, Region, Holiday Type, Recurrence, Half Day, Start Time, End Time,
+- Country, Region, Holiday Type, Recurrence, Half Day, Start Time, End Time,
   Capacity, Team Member, Project, Role, atau Approval Status.
-* Public Holiday per Team Member, project, negara, atau region.
-* Date-range filter dan text search. Tidak adanya text search merupakan exception
+- Public Holiday per Team Member, project, negara, atau region.
+- Date-range filter dan text search. Tidak adanya text search merupakan exception
   eksplisit terhadap default search pada `AGENTS.md`; kebutuhan operasional MVP
   adalah lookup exact date.
-* Import atau sinkronisasi hari libur dari layanan eksternal.
-* Menjalankan Scheduling Engine secara otomatis setelah mutation.
-* Menyimpan derived Execution Capacity atau Commitment Capacity.
-* Restore Public Holiday yang sudah dihapus.
-* Permission model baru. Aplikasi saat ini belum memiliki permission model.
+- Import atau sinkronisasi hari libur dari layanan eksternal.
+- Menjalankan Scheduling Engine secara otomatis setelah mutation.
+- Menyimpan derived Execution Capacity atau Commitment Capacity.
+- Restore Public Holiday yang sudah dihapus.
+- Permission model baru. Aplikasi saat ini belum memiliki permission model.
 
 ---
 
 ## 5. UI Placement and User Flow
 
-* **Public Holidays** tersedia sebagai page tersendiri di bawah group navigasi
+- **Public Holidays** tersedia sebagai page tersendiri di bawah group navigasi
   **Team Configuration**, bersama Roles dan Members.
-* Page menggunakan application shell yang persisten; global top bar, sidebar,
+- Page menggunakan application shell yang persisten; global top bar, sidebar,
   dan chrome tidak diduplikasi atau diremount ketika route berubah.
-* Page title adalah **Public Holidays**.
-* Primary action adalah **Add Public Holiday**.
-* Page mengikuti pola list Roles dan Members untuk loading, list, pagination,
+- Page title adalah **Public Holidays**.
+- Primary action adalah **Add Public Holiday**.
+- Page mengikuti pola list Roles dan Members untuk loading, list, pagination,
   form, feedback, dan destructive confirmation jika pola tersebut relevan.
-* Add dan Edit menyediakan field berlabel **Date Range** dan **Description**. Label
+- Add dan Edit menyediakan field berlabel **Date Range** dan **Description**. Label
   tidak boleh hanya berupa placeholder.
-* Date Range menggunakan shared two-click range calendar pattern dengan
+- Date Range menggunakan shared two-click range calendar pattern dengan
   month navigation, click-outside dismissal, keyboard operation, dan
   viewport-aware placement.
-* Delete confirmation menampilkan Holiday Date dan Description serta action
+- Delete confirmation menampilkan Holiday Date dan Description serta action
   Cancel dan Delete.
-* Cancel pada form atau dialog tidak mengirim mutation.
-* Modal/dialog mengelola focus dan mengembalikannya ke trigger saat ditutup.
-* Seluruh required action tetap tersedia pada supported screen sizes tanpa
+- Cancel pada form atau dialog tidak mengirim mutation.
+- Modal/dialog mengelola focus dan mengembalikannya ke trigger saat ditutup.
+- Seluruh required action tetap tersedia pada supported screen sizes tanpa
   horizontal scrolling pada normal page content.
 
 ---
@@ -86,14 +90,14 @@ User story ini tidak mencakup:
 
 ### Public Holiday
 
-| Field       | Type                        | Required | Source | Rules |
-| ----------- | --------------------------- | -------: | ------ | ----- |
-| ID          | System-generated identifier | Ya       | System | Dibuat otomatis dan immutable |
-| Start Date  | Date-only                   | Ya       | User   | ISO `YYYY-MM-DD`; awal range inklusif |
-| End Date    | Date-only                   | Ya       | User   | ISO `YYYY-MM-DD`; akhir range inklusif dan tidak sebelum Start Date |
-| Description | String                      | Ya       | User   | Trimmed, tidak blank, maksimum 100 karakter |
-| Created At  | DateTime                    | Ya       | System | Dibuat otomatis dan immutable saat update |
-| Updated At  | DateTime                    | Ya       | System | Dibuat dan diperbarui otomatis |
+| Field       | Type                        | Required | Source | Rules                                                               |
+| ----------- | --------------------------- | -------: | ------ | ------------------------------------------------------------------- |
+| ID          | System-generated identifier |       Ya | System | Dibuat otomatis dan immutable                                       |
+| Start Date  | Date-only                   |       Ya | User   | ISO `YYYY-MM-DD`; awal range inklusif                               |
+| End Date    | Date-only                   |       Ya | User   | ISO `YYYY-MM-DD`; akhir range inklusif dan tidak sebelum Start Date |
+| Description | String                      |       Ya | User   | Trimmed, tidak blank, maksimum 100 karakter                         |
+| Created At  | DateTime                    |       Ya | System | Dibuat otomatis dan immutable saat update                           |
+| Updated At  | DateTime                    |       Ya | System | Dibuat dan diperbarui otomatis                                      |
 
 Public Holiday menyimpan kumpulan derived weekday dates sebagai bagian aggregate
 untuk lookup scheduler yang efisien. Public Holiday tidak menyimpan Team Member ID, Project ID, Role ID, Capacity,
@@ -108,58 +112,58 @@ sudah digunakan oleh Roles dan Members. Panjang divalidasi setelah trim.
 
 ### Date Range Rules
 
-* Start Date dan End Date wajib diisi, inklusif, dan merupakan date-only values.
-* End Date harus sama dengan atau setelah Start Date.
-* Pemilihan kedua yang lebih awal mengganti Start Date; tanggal yang sama menghasilkan range satu hari.
-* Sabtu dan Minggu adalah holiday default dan dilewati saat membuat derived dates.
-* Range yang tidak memiliki satu pun weekday ditolak dengan `NO_WORKING_DATES`.
-* API menggunakan ISO `YYYY-MM-DD` yang merepresentasikan tanggal kalender valid.
-* Date harus tetap sama pada frontend, backend, database, dan lintas timezone;
+- Start Date dan End Date wajib diisi, inklusif, dan merupakan date-only values.
+- End Date harus sama dengan atau setelah Start Date.
+- Pemilihan kedua yang lebih awal mengganti Start Date; tanggal yang sama menghasilkan range satu hari.
+- Sabtu dan Minggu adalah holiday default dan dilewati saat membuat derived dates.
+- Range yang tidak memiliki satu pun weekday ditolak dengan `NO_WORKING_DATES`.
+- API menggunakan ISO `YYYY-MM-DD` yang merepresentasikan tanggal kalender valid.
+- Date harus tetap sama pada frontend, backend, database, dan lintas timezone;
   serialisasi tidak boleh menggeser ke hari sebelumnya atau berikutnya.
-* Tanggal lampau, hari ini, dan tanggal masa depan boleh dibuat, ditampilkan,
+- Tanggal lampau, hari ini, dan tanggal masa depan boleh dibuat, ditampilkan,
   diubah, dan dihapus.
-* Tidak ada pembatasan future date.
+- Tidak ada pembatasan future date.
 
 ### Description Rules
 
-* Description wajib diisi dan harus human-readable.
-* Leading dan trailing whitespace di-trim sebelum persistence.
-* Nilai kosong atau hanya whitespace ditolak.
-* Panjang maksimum setelah trim adalah `100` karakter.
-* Internal casing, punctuation, dan wording pengguna dipertahankan.
+- Description wajib diisi dan harus human-readable.
+- Leading dan trailing whitespace di-trim sebelum persistence.
+- Nilai kosong atau hanya whitespace ditolak.
+- Panjang maksimum setelah trim adalah `100` karakter.
+- Internal casing, punctuation, dan wording pengguna dipertahankan.
 
 ### Identity and Timestamp Rules
 
-* ID dibuat sistem dan tidak dapat diubah.
-* Update hanya dapat mengubah Date dan Description.
-* Created At tidak berubah setelah entity dibuat.
-* Updated At berubah setelah update berhasil.
-* Timestamp dikelola sistem dan tidak diterima dari request create/update.
+- ID dibuat sistem dan tidak dapat diubah.
+- Update hanya dapat mengubah Date dan Description.
+- Created At tidak berubah setelah entity dibuat.
+- Updated At berubah setelah update berhasil.
+- Timestamp dikelola sistem dan tidak diterima dari request create/update.
 
 ### Mutation and Delete Rules
 
-* Create, update, dan delete harus atomic; failure tidak boleh meninggalkan
+- Create, update, dan delete harus atomic; failure tidak boleh meninggalkan
   partial confirmed state.
-* Delete Public Holiday menggunakan hard delete untuk MVP.
-* Delete memerlukan confirmation yang menyebut Date dan Description.
-* Cancel tidak mengirim delete request.
-* Setelah delete berhasil, Public Holiday tidak dapat diambil kembali.
-* Duplicate submission dicegah selama mutation yang sama masih berjalan.
-* Failure mempertahankan form draft dan memberikan recovery action yang jelas.
-* Mutation berhasil memperbarui list yang terlihat tanpa hard refresh.
-* Semua cache list Public Holiday yang affected, filtered maupun unfiltered,
+- Delete Public Holiday menggunakan hard delete untuk MVP.
+- Delete memerlukan confirmation yang menyebut Date dan Description.
+- Cancel tidak mengirim delete request.
+- Setelah delete berhasil, Public Holiday tidak dapat diambil kembali.
+- Duplicate submission dicegah selama mutation yang sama masih berjalan.
+- Failure mempertahankan form draft dan memberikan recovery action yang jelas.
+- Mutation berhasil memperbarui list yang terlihat tanpa hard refresh.
+- Semua cache list Public Holiday yang affected, filtered maupun unfiltered,
   diinvalidasi atau direfresh.
-* Versioned invalidation atau established equivalent mencegah response lama yang
+- Versioned invalidation atau established equivalent mencegah response lama yang
   masih in-flight mengembalikan stale data setelah mutation.
 
 ### Duplicate-Date Rule
 
-* Satu weekday Date hanya boleh dimiliki satu Public Holiday aggregate.
-* Jika satu saja weekday dalam range sudah digunakan, seluruh create/update ditolak secara atomic dengan `409 Conflict` dan code
+- Satu weekday Date hanya boleh dimiliki satu Public Holiday aggregate.
+- Jika satu saja weekday dalam range sudah digunakan, seluruh create/update ditolak secara atomic dengan `409 Conflict` dan code
   `PUBLIC_HOLIDAY_DATE_ALREADY_EXISTS`.
-* Update ke Date milik Public Holiday lain ditolak dengan conflict yang sama.
-* Update mengganti seluruh range dan derived dates dalam satu transaction.
-* Concurrent writes harus tetap menjaga uniqueness setiap weekday Date.
+- Update ke Date milik Public Holiday lain ditolak dengan conflict yang sama.
+- Update mengganti seluruh range dan derived dates dalam satu transaction.
+- Concurrent writes harus tetap menjaga uniqueness setiap weekday Date.
 
 ---
 
@@ -167,56 +171,58 @@ sudah digunakan oleh Roles dan Members. Panjang divalidasi setelah trim.
 
 Untuk satu Team Member pada satu tanggal, urutan resolution adalah:
 
-1. Jika Date adalah Public Holiday, resolved capacity adalah `0`.
+1. Jika Date adalah Public Holiday, Resolved Daily Capacity adalah `0`.
 2. Jika bukan Public Holiday dan Capacity Override berlaku, gunakan override.
 3. Jika tidak, gunakan Team Member Daily Capacity.
-4. Team Member Buffer diterapkan terhadap resolved capacity untuk menghasilkan
+4. Terapkan Member Buffer terhadap Resolved Daily Capacity untuk menghasilkan
+   Execution Capacity.
+5. Terapkan owning Project Buffer terhadap Execution Capacity untuk menghasilkan
    Commitment Capacity.
 
 Konsekuensi:
 
-* Public Holiday memiliki precedence lebih tinggi daripada Capacity Override.
-* Capacity Override tidak dapat membuat Team Member available pada Public Holiday.
-* Execution Capacity dan Commitment Capacity adalah `0` bagi seluruh Team Member
+- Public Holiday memiliki precedence lebih tinggi daripada Capacity Override.
+- Capacity Override tidak dapat membuat Team Member available pada Public Holiday.
+- Execution Capacity dan Commitment Capacity adalah `0` bagi seluruh Team Member
   dan seluruh project pada Public Holiday.
-* Public Holiday hanya memengaruhi capacity resolution pada Date terkait.
-* Public Holiday tidak mengubah atau menghapus Daily Capacity, Buffer, maupun
+- Public Holiday hanya memengaruhi capacity resolution pada Date terkait.
+- Public Holiday tidak mengubah atau menghapus Daily Capacity, Buffer, maupun
   Capacity Override.
-* Create, update, dan delete tidak otomatis menjalankan Scheduling Engine.
-* Data Public Holiday terbaru yang sudah dikonfirmasi tersedia bagi Scheduling
+- Create, update, dan delete tidak otomatis menjalankan Scheduling Engine.
+- Data Public Holiday terbaru yang sudah dikonfirmasi tersedia bagi Scheduling
   Engine pada perhitungan berikutnya.
 
 ---
 
 ## 9. List Behaviour
 
-* List menggunakan backend pagination dengan page default `1`, page size default
+- List menggunakan backend pagination dengan page default `1`, page size default
   `5`, dan maksimum page size `100`.
-* Response menyediakan `page`, `pageSize`, dan `total`.
-* UI menampilkan current page, previous/next availability, visible result range,
+- Response menyediakan `page`, `pageSize`, dan `total`.
+- UI menampilkan current page, previous/next availability, visible result range,
   dan total.
-* Active/upcoming (`End Date >= today`) ditampilkan sebelum expired. Di dalam
+- Active/upcoming (`End Date >= today`) ditampilkan sebelum expired. Di dalam
   masing-masing group urutan deterministik adalah Start Date ASC, End Date ASC,
   lalu ID ASC. `today` mengikuti `APP_TIMEZONE` dan tidak ada batas masa depan.
-* Optional filter **Holiday Date** menggunakan exact-date match dan dijalankan
+- Optional filter **Holiday Date** menggunakan exact-date match dan dijalankan
   backend sebelum count, limit, serta offset.
-* Tanpa Holiday Date, normal paginated list ditampilkan.
-* Perubahan atau Clear Holiday Date mereset page ke `1`.
-* Holiday Date dipertahankan selama pagination dan setelah mutation ketika masih
+- Tanpa Holiday Date, normal paginated list ditampilkan.
+- Perubahan atau Clear Holiday Date mereset page ke `1`.
+- Holiday Date dipertahankan selama pagination dan setelah mutation ketika masih
   applicable.
-* Holiday Date menjadi bagian dari request-cache identity.
-* Explicit Clear action tersedia ketika filter aktif.
-* Text search dan date-range filter tidak tersedia pada story ini.
-* Current page dipertahankan setelah mutation bila masih valid.
-* Jika delete item terakhir membuat current page invalid, UI berpindah ke last
+- Holiday Date menjadi bagian dari request-cache identity.
+- Explicit Clear action tersedia ketika filter aktif.
+- Text search dan date-range filter tidak tersedia pada story ini.
+- Current page dipertahankan setelah mutation bila masih valid.
+- Jika delete item terakhir membuat current page invalid, UI berpindah ke last
   valid page; jika dataset kosong, page menjadi `1`.
-* Initial load menampilkan shape-preserving local skeleton atau loader.
-* Safe background refresh mempertahankan data yang masih berguna.
-* Normal empty state menjelaskan bahwa scheduler belum memiliki configured global
+- Initial load menampilkan shape-preserving local skeleton atau loader.
+- Safe background refresh mempertahankan data yang masih berguna.
+- Normal empty state menjelaskan bahwa scheduler belum memiliki configured global
   holidays dan menyediakan Add Public Holiday.
-* Filtered no-results state menyebut Holiday Date secara human-readable dan
+- Filtered no-results state menyebut Holiday Date secara human-readable dan
   menyediakan Clear. State ini tidak ditampilkan sebelum response selesai.
-* Load-error state berbeda dari empty/no-results, tidak mengekspos detail teknis,
+- Load-error state berbeda dari empty/no-results, tidak mengekspos detail teknis,
   dan menyediakan Retry.
 
 ---
@@ -419,8 +425,9 @@ memungkinkan
 
 **Given** Date bukan Public Holiday
 **When** capacity di-resolve
-**Then** Capacity Override digunakan bila berlaku; selain itu Daily Capacity
-digunakan; Buffer kemudian menghasilkan Commitment Capacity.
+**Then** Capacity Override digunakan bila berlaku; selain itu Daily Capacity digunakan
+**And** Member Buffer menghasilkan Execution Capacity
+**And** owning Project Buffer menghasilkan Commitment Capacity.
 
 ### AC-31 — Scheduler consistency
 
@@ -545,12 +552,12 @@ Status: `204 No Content`.
 
 ### Failure Status
 
-| Condition | Status |
-| --------- | -----: |
-| Invalid request, date, description, atau pagination | 400 Bad Request |
-| Public Holiday tidak ditemukan | 404 Not Found |
-| Date sudah digunakan Public Holiday lain | 409 Conflict |
-| Persistence atau dependency failure | 500 Internal Server Error |
+| Condition                                           |                    Status |
+| --------------------------------------------------- | ------------------------: |
+| Invalid request, date, description, atau pagination |           400 Bad Request |
+| Public Holiday tidak ditemukan                      |             404 Not Found |
+| Date sudah digunakan Public Holiday lain            |              409 Conflict |
+| Persistence atau dependency failure                 | 500 Internal Server Error |
 
 ---
 
@@ -566,19 +573,19 @@ Semua error menggunakan format repository:
 }
 ```
 
-| Error Code | Field | Condition |
-| ---------- | ----- | --------- |
-| `PUBLIC_HOLIDAY_START_DATE_REQUIRED` | `startDate` | Start Date tidak diisi |
-| `PUBLIC_HOLIDAY_END_DATE_REQUIRED` | `endDate` | End Date tidak diisi |
-| `INVALID_HOLIDAY_DATE` | `startDate`, `endDate`, atau `holidayDate` | Nilai bukan date-only ISO valid |
-| `PUBLIC_HOLIDAY_INVALID_DATE_RANGE` | `endDate` | End Date sebelum Start Date |
-| `PUBLIC_HOLIDAY_NO_WORKING_DATES` | `startDate` | Range hanya berisi Sabtu/Minggu |
-| `PUBLIC_HOLIDAY_DESCRIPTION_REQUIRED` | `description` | Description kosong setelah trim |
-| `PUBLIC_HOLIDAY_DESCRIPTION_TOO_LONG` | `description` | Description lebih dari 100 karakter setelah trim |
-| `PUBLIC_HOLIDAY_NOT_FOUND` | — | ID tidak tersedia |
-| `PUBLIC_HOLIDAY_DATE_ALREADY_EXISTS` | `startDate` | Sedikitnya satu weekday sudah digunakan aggregate lain; seluruh mutation ditolak |
-| `INVALID_PAGE` | `page` | Page tidak lebih besar dari 0 |
-| `INVALID_PAGE_SIZE` | `pageSize` | Page size di luar `1..100` |
+| Error Code                            | Field                                      | Condition                                                                        |
+| ------------------------------------- | ------------------------------------------ | -------------------------------------------------------------------------------- |
+| `PUBLIC_HOLIDAY_START_DATE_REQUIRED`  | `startDate`                                | Start Date tidak diisi                                                           |
+| `PUBLIC_HOLIDAY_END_DATE_REQUIRED`    | `endDate`                                  | End Date tidak diisi                                                             |
+| `INVALID_HOLIDAY_DATE`                | `startDate`, `endDate`, atau `holidayDate` | Nilai bukan date-only ISO valid                                                  |
+| `PUBLIC_HOLIDAY_INVALID_DATE_RANGE`   | `endDate`                                  | End Date sebelum Start Date                                                      |
+| `PUBLIC_HOLIDAY_NO_WORKING_DATES`     | `startDate`                                | Range hanya berisi Sabtu/Minggu                                                  |
+| `PUBLIC_HOLIDAY_DESCRIPTION_REQUIRED` | `description`                              | Description kosong setelah trim                                                  |
+| `PUBLIC_HOLIDAY_DESCRIPTION_TOO_LONG` | `description`                              | Description lebih dari 100 karakter setelah trim                                 |
+| `PUBLIC_HOLIDAY_NOT_FOUND`            | —                                          | ID tidak tersedia                                                                |
+| `PUBLIC_HOLIDAY_DATE_ALREADY_EXISTS`  | `startDate`                                | Sedikitnya satu weekday sudah digunakan aggregate lain; seluruh mutation ditolak |
+| `INVALID_PAGE`                        | `page`                                     | Page tidak lebih besar dari 0                                                    |
+| `INVALID_PAGE_SIZE`                   | `pageSize`                                 | Page size di luar `1..100`                                                       |
 
 Internal error tidak mengekspos stack trace, query, database, atau infrastructure.
 Frontend memetakan error ke pesan yang dapat dipahami.
@@ -587,69 +594,69 @@ Frontend memetakan error ke pesan yang dapat dipahami.
 
 ## 13. Test Cases
 
-| ID | Scenario | Expected |
-| -- | -------- | -------- |
-| TC-1 | Buka Team Configuration > Public Holidays | Page terbuka dalam shared shell; menu aktif |
-| TC-2 | Tunda initial list response | Local skeleton tampil; empty/no-results belum tampil |
-| TC-3 | Muat active/upcoming dan expired ranges | Page size 5; group dan range ordering benar; metadata benar |
-| TC-4 | Dataset kosong | Global-holiday empty state dan Add action tampil |
-| TC-5 | List gagal lalu Retry berhasil | Safe error tampil, kemudian list pulih |
-| TC-6 | Buka Add | Date Range dan Description berlabel serta dapat dioperasikan |
-| TC-7 | Create range berisi weekday | `201`; weekend dilewati; aggregate dan visible list terbarui |
-| TC-8 | Start/End Date missing | structured required error; no mutation |
-| TC-9 | Date invalid, reversed, atau weekend-only | structured validation error; no mutation |
-| TC-10 | Description missing/whitespace-only | Required error; no mutation |
-| TC-11 | Description dengan outer whitespace/casing/punctuation | Outer whitespace di-trim; isi internal dipertahankan |
-| TC-12 | Description 100 dan 101 karakter | 100 diterima; 101 ditolak `PUBLIC_HOLIDAY_DESCRIPTION_TOO_LONG` |
-| TC-13 | Simpan/baca Date pada timezone berbeda | Date tetap identik |
-| TC-14 | Create holiday lampau, hari ini, masa depan | Semua diterima |
-| TC-15 | Edit Date Range | `200`; seluruh derived dates diganti secara atomic dan list terbarui |
-| TC-16 | Edit Description | ID/Created At tetap; Updated At berubah |
-| TC-17 | Update ID tidak ada | `404 PUBLIC_HOLIDAY_NOT_FOUND`; no mutation |
-| TC-18 | Buka Delete | Dialog memuat Date/Description; belum ada request |
-| TC-19 | Cancel Delete | Dialog tutup, focus kembali, no request |
-| TC-20 | Confirm Delete | `204`; hard delete; list terbarui |
-| TC-21 | Delete ID tidak ada | `404 PUBLIC_HOLIDAY_NOT_FOUND`; data lain utuh |
-| TC-22 | Klik Save/Delete berulang | Hanya satu mutation dikirim |
-| TC-23 | Backend form failure | Draft dan recovery action dipertahankan |
-| TC-24 | Dependency failure saat mutation | Transaction rollback; tidak ada partial state |
-| TC-25 | Lebih dari lima holidays dan invalid params | Pagination/navigation benar; invalid params ditolak sebelum query |
-| TC-26 | Mutation saat current page masih valid | Page dipertahankan |
-| TC-27 | Delete only item pada last page | Berpindah ke last valid page |
-| TC-28 | Filter exact Holiday Date | Hanya exact Date; total/offset filtered benar |
-| TC-29 | Ubah filter dari page selain 1 | Filtered request menggunakan page 1 |
-| TC-30 | Filter tanpa match | Human-readable no-results dan Clear tampil setelah response |
-| TC-31 | Clear filter | Unfiltered page 1 kembali |
-| TC-32 | Paginate dengan filter aktif | Holiday Date tetap dikirim |
-| TC-33 | Create/update/delete saat filter aktif | Filter tetap; filtered/unfiltered cache konsisten |
-| TC-34 | Response lama selesai setelah mutation | Stale response tidak merepopulasi cache |
-| TC-35 | Invalid `holidayDate` query | `400 INVALID_HOLIDAY_DATE`; repository tidak dipanggil |
-| TC-36 | Holiday dan override pada Date sama | Execution/Commitment Capacity semua Member adalah 0 |
-| TC-37 | Non-holiday dengan/tanpa override | Override lalu Daily Capacity digunakan sesuai precedence |
-| TC-38 | Mutation holiday lalu perhitungan berikutnya | Latest confirmed data terbaca; scheduler tidak auto-run |
-| TC-39 | Operasikan dengan keyboard/assistive tech | Controls, feedback, dan dialog focus accessible |
-| TC-40 | Uji supported viewport | Workflow usable tanpa normal horizontal scroll |
-| TC-41 | Create/update menggunakan Date yang sudah dipakai | `409 PUBLIC_HOLIDAY_DATE_ALREADY_EXISTS`; existing data utuh |
-| TC-42 | Update tanpa mengubah Date sendiri | Update berhasil tanpa self-conflict |
-| TC-43 | Dua concurrent create pada Date sama | Maksimal satu tersimpan; lainnya conflict |
+| ID    | Scenario                                               | Expected                                                                   |
+| ----- | ------------------------------------------------------ | -------------------------------------------------------------------------- |
+| TC-1  | Buka Team Configuration > Public Holidays              | Page terbuka dalam shared shell; menu aktif                                |
+| TC-2  | Tunda initial list response                            | Local skeleton tampil; empty/no-results belum tampil                       |
+| TC-3  | Muat active/upcoming dan expired ranges                | Page size 5; group dan range ordering benar; metadata benar                |
+| TC-4  | Dataset kosong                                         | Global-holiday empty state dan Add action tampil                           |
+| TC-5  | List gagal lalu Retry berhasil                         | Safe error tampil, kemudian list pulih                                     |
+| TC-6  | Buka Add                                               | Date Range dan Description berlabel serta dapat dioperasikan               |
+| TC-7  | Create range berisi weekday                            | `201`; weekend dilewati; aggregate dan visible list terbarui               |
+| TC-8  | Start/End Date missing                                 | structured required error; no mutation                                     |
+| TC-9  | Date invalid, reversed, atau weekend-only              | structured validation error; no mutation                                   |
+| TC-10 | Description missing/whitespace-only                    | Required error; no mutation                                                |
+| TC-11 | Description dengan outer whitespace/casing/punctuation | Outer whitespace di-trim; isi internal dipertahankan                       |
+| TC-12 | Description 100 dan 101 karakter                       | 100 diterima; 101 ditolak `PUBLIC_HOLIDAY_DESCRIPTION_TOO_LONG`            |
+| TC-13 | Simpan/baca Date pada timezone berbeda                 | Date tetap identik                                                         |
+| TC-14 | Create holiday lampau, hari ini, masa depan            | Semua diterima                                                             |
+| TC-15 | Edit Date Range                                        | `200`; seluruh derived dates diganti secara atomic dan list terbarui       |
+| TC-16 | Edit Description                                       | ID/Created At tetap; Updated At berubah                                    |
+| TC-17 | Update ID tidak ada                                    | `404 PUBLIC_HOLIDAY_NOT_FOUND`; no mutation                                |
+| TC-18 | Buka Delete                                            | Dialog memuat Date/Description; belum ada request                          |
+| TC-19 | Cancel Delete                                          | Dialog tutup, focus kembali, no request                                    |
+| TC-20 | Confirm Delete                                         | `204`; hard delete; list terbarui                                          |
+| TC-21 | Delete ID tidak ada                                    | `404 PUBLIC_HOLIDAY_NOT_FOUND`; data lain utuh                             |
+| TC-22 | Klik Save/Delete berulang                              | Hanya satu mutation dikirim                                                |
+| TC-23 | Backend form failure                                   | Draft dan recovery action dipertahankan                                    |
+| TC-24 | Dependency failure saat mutation                       | Transaction rollback; tidak ada partial state                              |
+| TC-25 | Lebih dari lima holidays dan invalid params            | Pagination/navigation benar; invalid params ditolak sebelum query          |
+| TC-26 | Mutation saat current page masih valid                 | Page dipertahankan                                                         |
+| TC-27 | Delete only item pada last page                        | Berpindah ke last valid page                                               |
+| TC-28 | Filter exact Holiday Date                              | Hanya exact Date; total/offset filtered benar                              |
+| TC-29 | Ubah filter dari page selain 1                         | Filtered request menggunakan page 1                                        |
+| TC-30 | Filter tanpa match                                     | Human-readable no-results dan Clear tampil setelah response                |
+| TC-31 | Clear filter                                           | Unfiltered page 1 kembali                                                  |
+| TC-32 | Paginate dengan filter aktif                           | Holiday Date tetap dikirim                                                 |
+| TC-33 | Create/update/delete saat filter aktif                 | Filter tetap; filtered/unfiltered cache konsisten                          |
+| TC-34 | Response lama selesai setelah mutation                 | Stale response tidak merepopulasi cache                                    |
+| TC-35 | Invalid `holidayDate` query                            | `400 INVALID_HOLIDAY_DATE`; repository tidak dipanggil                     |
+| TC-36 | Holiday dan override pada Date sama                    | Execution/Commitment Capacity semua Member adalah 0                        |
+| TC-37 | Non-holiday dengan/tanpa override                      | Override/Daily Capacity → Member Buffer → Project Buffer sesuai precedence |
+| TC-38 | Mutation holiday lalu perhitungan berikutnya           | Latest confirmed data terbaca; scheduler tidak auto-run                    |
+| TC-39 | Operasikan dengan keyboard/assistive tech              | Controls, feedback, dan dialog focus accessible                            |
+| TC-40 | Uji supported viewport                                 | Workflow usable tanpa normal horizontal scroll                             |
+| TC-41 | Create/update menggunakan Date yang sudah dipakai      | `409 PUBLIC_HOLIDAY_DATE_ALREADY_EXISTS`; existing data utuh               |
+| TC-42 | Update tanpa mengubah Date sendiri                     | Update berhasil tanpa self-conflict                                        |
+| TC-43 | Dua concurrent create pada Date sama                   | Maksimal satu tersimpan; lainnya conflict                                  |
 
 ### Acceptance Criteria Traceability
 
-| Acceptance Criteria | Test Case(s) |
-| ------------------- | ------------ |
-| AC-1 | TC-1 |
-| AC-2 | TC-3, TC-25 |
-| AC-3—AC-6 | TC-2, TC-4—TC-6 |
-| AC-7—AC-12 | TC-7—TC-14 |
-| AC-13 | TC-15, TC-16 |
-| AC-14—AC-17 | TC-18—TC-21 |
-| AC-18 | TC-8—TC-12, TC-35 |
-| AC-19—AC-20 | TC-22—TC-24 |
-| AC-21—AC-22 | TC-25—TC-27 |
-| AC-23—AC-28 | TC-28—TC-35 |
-| AC-29—AC-31 | TC-36—TC-38 |
-| AC-32—AC-33 | TC-39—TC-40 |
-| AC-34 | TC-41—TC-43 |
+| Acceptance Criteria | Test Case(s)      |
+| ------------------- | ----------------- |
+| AC-1                | TC-1              |
+| AC-2                | TC-3, TC-25       |
+| AC-3—AC-6           | TC-2, TC-4—TC-6   |
+| AC-7—AC-12          | TC-7—TC-14        |
+| AC-13               | TC-15, TC-16      |
+| AC-14—AC-17         | TC-18—TC-21       |
+| AC-18               | TC-8—TC-12, TC-35 |
+| AC-19—AC-20         | TC-22—TC-24       |
+| AC-21—AC-22         | TC-25—TC-27       |
+| AC-23—AC-28         | TC-28—TC-35       |
+| AC-29—AC-31         | TC-36—TC-38       |
+| AC-32—AC-33         | TC-39—TC-40       |
+| AC-34               | TC-41—TC-43       |
 
 ---
 
@@ -657,38 +664,38 @@ Frontend memetakan error ke pesan yang dapat dipahami.
 
 ### Domain Tests
 
-* Public Holiday creation and update.
-* Required and valid Start/End Date, inclusive range, reversed range, same-day,
+- Public Holiday creation and update.
+- Required and valid Start/End Date, inclusive range, reversed range, same-day,
   weekday generation, weekend skipping, dan weekend-only rejection.
-* Required, trimmed, non-blank Description.
-* Description boundaries 100/101 after trim.
-* Update preserves ID and Created At and changes Updated At.
-* Date-only semantics across timezone boundaries.
-* Capacity precedence contract when resolution component is introduced or
+- Required, trimmed, non-blank Description.
+- Description boundaries 100/101 after trim.
+- Update preserves ID and Created At and changes Updated At.
+- Date-only semantics across timezone boundaries.
+- Capacity precedence contract when resolution component is introduced or
   extended by this story.
 
 ### Application Tests
 
-* Paginated list and optional Holiday Date forwarding.
-* Get, create, update, and hard delete.
-* Not-found behavior.
-* Transaction boundary and rollback.
-* Latest confirmed holiday data available to capacity-resolution consumers.
-* Mutation does not invoke Scheduling Engine.
+- Paginated list and optional Holiday Date forwarding.
+- Get, create, update, and hard delete.
+- Not-found behavior.
+- Transaction boundary and rollback.
+- Latest confirmed holiday data available to capacity-resolution consumers.
+- Mutation does not invoke Scheduling Engine.
 
 ### Repository Integration Tests
 
-* Persist and retrieve entity.
-* Date-only aggregate dan derived-date persistence.
-* Active/upcoming-before-expired grouping dan Start/End/ID ordering.
-* Exact Holiday Date filtering before count, limit, and offset.
-* Pagination metadata.
-* Timestamp behavior.
-* Hard delete.
-* Transaction rollback bila salah satu derived date conflict.
-* Query plan and index support for exact Date lookup plus grouped range ordering.
-* PostgreSQL and future MySQL compatibility.
-* Unique child Date constraint, whole-range update, dan concurrent writes.
+- Persist and retrieve entity.
+- Date-only aggregate dan derived-date persistence.
+- Active/upcoming-before-expired grouping dan Start/End/ID ordering.
+- Exact Holiday Date filtering before count, limit, and offset.
+- Pagination metadata.
+- Timestamp behavior.
+- Hard delete.
+- Transaction rollback bila salah satu derived date conflict.
+- Query plan and index support for exact Date lookup plus grouped range ordering.
+- PostgreSQL and future MySQL compatibility.
+- Unique child Date constraint, whole-range update, dan concurrent writes.
 
 Automated repository tests use SQLite isolation where appropriate and must not
 delete or mutate local PostgreSQL data. Dialect-specific behavior still requires
@@ -696,27 +703,27 @@ the repository's supported database verification strategy.
 
 ### API Integration Tests
 
-* List, pagination, valid/invalid Holiday Date filter.
-* Get, create, update, and delete mappings and success statuses.
-* Start/End Date-only serialization dan bounded calendar-date endpoint.
-* Required/length validation and all documented structured errors.
-* Not-found behavior.
-* Database persistence and rollback.
-* Duplicate Date conflict response.
+- List, pagination, valid/invalid Holiday Date filter.
+- Get, create, update, and delete mappings and success statuses.
+- Start/End Date-only serialization dan bounded calendar-date endpoint.
+- Required/length validation and all documented structured errors.
+- Not-found behavior.
+- Database persistence and rollback.
+- Duplicate Date conflict response.
 
 ### Frontend Tests
 
-* Team Configuration navigation and stable application shell.
-* Initial loading, populated, empty, no-results, load-error, Retry, and safe
+- Team Configuration navigation and stable application shell.
+- Initial loading, populated, empty, no-results, load-error, Retry, and safe
   background refresh states.
-* Paginated list, page preservation, and page correction.
-* Add/Edit form validation, success, and failure with preserved draft.
-* Delete confirmation, cancellation, and success.
-* Duplicate-submission prevention and mutation feedback.
-* Holiday Date exact filter, reset, Clear, preservation, and cache identity.
-* Mutation cache invalidation and stale-response protection.
-* Shared range calendar interaction, weekend/public-holiday markings, dan click-outside behavior.
-* Keyboard accessibility, dialog focus management, and responsive behavior.
+- Paginated list, page preservation, and page correction.
+- Add/Edit form validation, success, and failure with preserved draft.
+- Delete confirmation, cancellation, and success.
+- Duplicate-submission prevention and mutation feedback.
+- Holiday Date exact filter, reset, Clear, preservation, and cache identity.
+- Mutation cache invalidation and stale-response protection.
+- Shared range calendar interaction, weekend/public-holiday markings, dan click-outside behavior.
+- Keyboard accessibility, dialog focus management, and responsive behavior.
 
 Tests berfokus pada observable behavior dan tidak hanya mengandalkan snapshots.
 
@@ -779,15 +786,15 @@ Tests berfokus pada observable behavior dan tidak hanya mengandalkan snapshots.
 
 Future implementation wajib menilai dan memperbarui:
 
-* `docs/project/architecture.md` untuk architecture project-specific Public
+- `docs/project/architecture.md` untuk architecture project-specific Public
   Holiday. Root `docs/architecture.md` tetap dinilai, tetapi sesuai ownership
   dokumentasi repository, reusable baseline hanya diubah bila standard lintas
   project berubah.
-* API documentation untuk endpoint, query, response, dan structured errors.
-* `README.md` hanya jika setup atau usage berubah.
-* `.env.example` hanya jika configuration baru diperkenalkan.
-* Story ini bila product rule lain berubah atau requirement baru dikonfirmasi.
-* `AGENTS.md` hanya jika terdapat durable project-wide rule baru.
+- API documentation untuk endpoint, query, response, dan structured errors.
+- `README.md` hanya jika setup atau usage berubah.
+- `.env.example` hanya jika configuration baru diperkenalkan.
+- Story ini bila product rule lain berubah atau requirement baru dikonfirmasi.
+- `AGENTS.md` hanya jika terdapat durable project-wide rule baru.
 
 Completion report harus menyebutkan dokumentasi yang diperbarui atau alasan
 mengapa suatu dokumen tidak perlu berubah.
@@ -796,29 +803,29 @@ mengapa suatu dokumen tidak perlu berubah.
 
 ## 17. Locked Product Decisions
 
-* Public Holiday adalah global scheduling constraint bagi seluruh Team Member
+- Public Holiday adalah global scheduling constraint bagi seluruh Team Member
   dan project.
-* Public Holidays memiliki page sendiri di group Team Configuration, bukan di Members.
-* Aggregate memiliki ID, Start Date, End Date, derived weekday Dates,
+- Public Holidays memiliki page sendiri di group Team Configuration, bukan di Members.
+- Aggregate memiliki ID, Start Date, End Date, derived weekday Dates,
   Description, Created At, dan Updated At.
-* Start/End Date adalah required date-only ISO; Description required, trimmed, maksimum
+- Start/End Date adalah required date-only ISO; Description required, trimmed, maksimum
   100 karakter berdasarkan konvensi repository.
-* Past, current, dan future dates boleh dikelola.
-* Public Holiday menghasilkan Execution Capacity dan Commitment Capacity `0` dan
+- Past, current, dan future dates boleh dikelola.
+- Public Holiday menghasilkan Execution Capacity dan Commitment Capacity `0` dan
   mengalahkan Capacity Override.
-* Daily Capacity, Buffer, dan Capacity Override records tidak dimodifikasi.
-* Mutation tidak otomatis menjalankan scheduler; latest confirmed data tersedia
+- Daily Capacity, Buffer, dan Capacity Override records tidak dimodifikasi.
+- Mutation tidak otomatis menjalankan scheduler; latest confirmed data tersedia
   pada calculation berikutnya.
-* CRUD lengkap tersedia; delete adalah confirmed hard delete.
-* Backend pagination default `5`, max `100`; active/upcoming lebih dulu, lalu
+- CRUD lengkap tersedia; delete adalah confirmed hard delete.
+- Backend pagination default `5`, max `100`; active/upcoming lebih dulu, lalu
   expired, dan tiap group diurut Start Date, End Date, ID ascending.
-* Optional exact-date Holiday Date filter tersedia; text search dan date range
+- Optional exact-date Holiday Date filter tersedia; text search dan date range
   tidak tersedia untuk MVP.
-* Satu weekday Date hanya boleh dimiliki satu Public Holiday; weekend dilewati;
+- Satu weekday Date hanya boleh dimiliki satu Public Holiday; weekend dilewati;
   conflict satu tanggal menolak seluruh transaction.
-* Calendar menandai weekend dan configured Public Holiday secara konsisten.
-* Today untuk grouping list mengikuti required `APP_TIMEZONE`.
-* Loading/error/empty/no-results, cache consistency, accessibility, dan
+- Calendar menandai weekend dan configured Public Holiday secara konsisten.
+- Today untuk grouping list mengikuti required `APP_TIMEZONE`.
+- Loading/error/empty/no-results, cache consistency, accessibility, dan
   responsive behavior mengikuti `AGENTS.md` serta shared project patterns.
 
 ---
@@ -826,3 +833,18 @@ mengapa suatu dokumen tidak perlu berubah.
 ## 18. Unresolved Questions
 
 Tidak ada unresolved question yang menghalangi implementasi story ini.
+
+---
+
+## Implementation Evidence for the US-6.1 Requirement Delta
+
+Concrete production paths, exact test names, per-AC local commands, and the
+Three-Level Confidence readiness mapping are maintained in
+`docs/project/automatic-scheduling-implementation-evidence.md`.
+
+- Code Inspection: `IMPLEMENTED BY CODE INSPECTION`
+- Unit/Integration: `AUTHORED — NOT RUN — LOCAL VALIDATION REQUIRED`
+- Acceptance-Level: `AUTHORED — NOT RUN — LOCAL VALIDATION REQUIRED`
+- Overall affected ACs: `IMPLEMENTED — LOCAL VALIDATION REQUIRED`
+
+No automated validation result is recorded in this story.

@@ -14,7 +14,8 @@ type Store interface {
 	List(context.Context, string) (*domain.Detail, error)
 	Candidates(context.Context, string, domain.Direction, string, int, int) (*domain.CandidatePage, error)
 	Create(context.Context, domain.Dependency, func(context.Context, []string) error) (*domain.Dependency, error)
-	Delete(context.Context, string, func(context.Context, []string) error) error
+	Delete(context.Context, string, time.Time, func(context.Context, []string) error) error
+	KeepAsManual(context.Context, string, time.Time, func(context.Context, []string) error) (*domain.Dependency, error)
 }
 
 type Scheduler interface {
@@ -93,8 +94,19 @@ func (s *Service) Create(ctx context.Context, blockingTaskID, blockedTaskID stri
 }
 
 func (s *Service) Delete(ctx context.Context, id string) error {
-	if err := s.store.Delete(ctx, id, s.scheduler.InvalidatePortfolio); err != nil {
+	if err := s.store.Delete(ctx, id, s.now(), s.scheduler.InvalidatePortfolio); err != nil {
 		return fmt.Errorf("delete dependency: %w", err)
 	}
 	return nil
+}
+
+func (s *Service) KeepAsManual(ctx context.Context, id string) (*domain.Dependency, error) {
+	value, err := s.store.KeepAsManual(ctx, id, s.now(), s.scheduler.InvalidatePortfolio)
+	if err != nil {
+		return nil, fmt.Errorf("keep dependency as manual: %w", err)
+	}
+	if value == nil {
+		return nil, errors.New("keep dependency as manual: store returned nil")
+	}
+	return value, nil
 }

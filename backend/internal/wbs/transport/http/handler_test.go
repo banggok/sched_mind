@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	dependencydomain "github.com/banggok/sched_mind/backend/internal/dependencies/domain"
 	"github.com/banggok/sched_mind/backend/internal/wbs/application"
 	"github.com/banggok/sched_mind/backend/internal/wbs/domain"
 )
@@ -19,6 +20,7 @@ type reopenServiceStub struct {
 	Service
 	reopen     func(context.Context, string, string) (*domain.Node, error)
 	executable func(context.Context, string, string, application.WriteExecutableInput) (*domain.Node, error)
+	preview    func(context.Context, string, string, application.PreviewExecutableInput) (*application.SchedulePreview, error)
 }
 
 func (s reopenServiceStub) Reopen(ctx context.Context, projectID, id string) (*domain.Node, error) {
@@ -30,6 +32,13 @@ func (s reopenServiceStub) UpdateExecutable(ctx context.Context, projectID, id s
 		return nil, errors.New("unexpected executable call")
 	}
 	return s.executable(ctx, projectID, id, input)
+}
+
+func (s reopenServiceStub) PreviewExecutableSchedule(ctx context.Context, projectID, id string, input application.PreviewExecutableInput) (*application.SchedulePreview, error) {
+	if s.preview == nil {
+		return nil, errors.New("unexpected preview call")
+	}
+	return s.preview(ctx, projectID, id, input)
 }
 
 func reopenMux(service Service) http.Handler {
@@ -200,4 +209,224 @@ func assertErrorCode(t *testing.T, response *httptest.ResponseRecorder, status i
 	if payload.Code != code {
 		t.Fatalf("code=%q want=%q body=%s", payload.Code, code, response.Body.String())
 	}
+}
+
+func TestExecutableUpdateAcceptsLagContractAndReturnsLag_US6_AC2(t *testing.T) {
+	captured := -1
+	service := reopenServiceStub{
+		reopen: func(context.Context, string, string) (*domain.Node, error) {
+			return nil, errors.New("unexpected reopen")
+		},
+		executable: func(_ context.Context, projectID, id string, input application.WriteExecutableInput) (*domain.Node, error) {
+			if projectID != "project" || id != "task" {
+				t.Fatalf("scope = %s/%s", projectID, id)
+			}
+			captured = input.LagDays
+			value := completedHTTPNode()
+			value.Executable.ActualEnd = nil
+			value.Executable.LagDays = input.LagDays
+			return value, nil
+		},
+	}
+	request := httptest.NewRequest(http.MethodPut, "/api/projects/project/wbs/task/executable", strings.NewReader(`{"lag":2}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	reopenMux(service).ServeHTTP(response, request)
+	if response.Code != http.StatusOK || captured != 2 || !strings.Contains(response.Body.String(), `"lag":2`) {
+		t.Fatalf("status=%d captured=%d body=%s", response.Code, captured, response.Body.String())
+	}
+}
+
+func TestExecutableUpdateRejectsMalformedLagWithoutCallingMutation_US6_AC3(t *testing.T) {
+	for _, body := range []string{`{"lag":-1}`, `{"lag":1.5}`, `{"lag":"1"}`, `{"lag":"1,5"}`} {
+		t.Run(body, func(t *testing.T) {
+			calls := 0
+			service := reopenServiceStub{
+				reopen: func(context.Context, string, string) (*domain.Node, error) {
+					return nil, errors.New("unexpected reopen")
+				},
+				executable: func(context.Context, string, string, application.WriteExecutableInput) (*domain.Node, error) {
+					calls++
+					return nil, errors.New("unexpected executable mutation")
+				},
+			}
+			request := httptest.NewRequest(http.MethodPut, "/api/projects/project/wbs/task/executable", strings.NewReader(body))
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			reopenMux(service).ServeHTTP(response, request)
+			assertErrorCode(t, response, http.StatusBadRequest, "INVALID_LAG")
+			if calls != 0 {
+				t.Fatalf("mutation calls = %d", calls)
+			}
+		})
+	}
+}
+
+func TestExecutablePreviewReturnsGeneratedDraftWithoutCallingConfirmedUpdate(t *testing.T) {
+	previewCalls, updateCalls := 0, 0
+	service := reopenServiceStub{
+		reopen: func(context.Context, string, string) (*domain.Node, error) {
+			return nil, errors.New("unexpected reopen")
+		},
+		executable: func(context.Context, string, string, application.WriteExecutableInput) (*domain.Node, error) {
+			updateCalls++
+			return nil, errors.New("unexpected confirmed update")
+		},
+		preview: func(_ context.Context, projectID, id string, input application.PreviewExecutableInput) (*application.SchedulePreview, error) {
+			previewCalls++
+			if projectID != "project" || id != "task" {
+				t.Fatalf("scope=%q/%q", projectID, id)
+			}
+			if input.RoleID == nil || *input.RoleID != "role" || input.AssigneeID == nil || *input.AssigneeID != "member" || input.EffortMinutes == nil || *input.EffortMinutes != 480 || input.LagDays != 2 {
+				t.Fatalf("input=%#v", input)
+			}
+			value := completedHTTPNode()
+			value.Executable.ActualEnd = nil
+			value.Executable.RoleID = input.RoleID
+			value.Executable.AssigneeID = input.AssigneeID
+			value.Executable.EffortMinutes = input.EffortMinutes
+			value.Executable.LagDays = input.LagDays
+			return &application.SchedulePreview{
+				Task: value,
+				Dependencies: dependencydomain.Detail{
+					BlockedBy: []dependencydomain.Item{{
+						Dependency: dependencydomain.Dependency{ID: "automatic-1", BlockingTaskID: "task-1", BlockedTaskID: "task", AutomaticOwned: true},
+						Task:       dependencydomain.Task{ID: "task-1", Name: "Task 1", ProjectID: "project", ProjectName: "Alpha"},
+					}},
+					Blocks: []dependencydomain.Item{},
+				},
+			}, nil
+		},
+	}
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/projects/project/wbs/task/executable/preview",
+		strings.NewReader(`{"roleId":"role","assigneeId":"member","effortHours":8,"lag":2}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+
+	reopenMux(service).ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK || previewCalls != 1 || updateCalls != 0 {
+		t.Fatalf("status=%d preview=%d update=%d body=%s", response.Code, previewCalls, updateCalls, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), `"executionTimeline"`) || !strings.Contains(response.Body.String(), `"lag":2`) || !strings.Contains(response.Body.String(), `"source":"automatic"`) || !strings.Contains(response.Body.String(), `"name":"Task 1"`) {
+		t.Fatalf("preview response=%s", response.Body.String())
+	}
+}
+
+func TestExecutablePreviewAllowsClearedAssigneeForDependencyReconciliation(t *testing.T) {
+	previewCalls := 0
+	reason := "Task requires an Assignee before it can be scheduled."
+	service := reopenServiceStub{
+		reopen: func(context.Context, string, string) (*domain.Node, error) {
+			return nil, errors.New("unexpected reopen")
+		},
+		preview: func(_ context.Context, projectID, id string, input application.PreviewExecutableInput) (*application.SchedulePreview, error) {
+			previewCalls++
+			if projectID != "project" || id != "task" || input.AssigneeID != nil || input.RoleID == nil || *input.RoleID != "role" || input.EffortMinutes == nil || *input.EffortMinutes != 480 || input.LagDays != 0 {
+				t.Fatalf("input=%#v scope=%q/%q", input, projectID, id)
+			}
+			value := completedHTTPNode()
+			value.Executable.ActualEnd = nil
+			value.Executable.AssigneeID = nil
+			value.Executable.ExecutionTimeline = domain.Timeline{}
+			value.Executable.CommitmentTimeline = domain.Timeline{}
+			value.Executable.ExecutionUnscheduledReason = &reason
+			value.Executable.CommitmentUnscheduledReason = &reason
+			return &application.SchedulePreview{
+				Task:         value,
+				Dependencies: dependencydomain.Detail{BlockedBy: []dependencydomain.Item{}, Blocks: []dependencydomain.Item{}},
+			}, nil
+		},
+	}
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/projects/project/wbs/task/executable/preview",
+		strings.NewReader(`{"roleId":"role","effortHours":8,"lag":0}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+
+	reopenMux(service).ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK || previewCalls != 1 {
+		t.Fatalf("status=%d preview=%d body=%s", response.Code, previewCalls, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), reason) || !strings.Contains(response.Body.String(), `"blockedBy":[]`) {
+		t.Fatalf("cleared-assignee preview response=%s", response.Body.String())
+	}
+}
+
+func TestExecutablePreviewRejectsUnknownOrMalformedDraftWithoutCallingService(t *testing.T) {
+	for _, body := range []string{
+		`{"name":"not-a-preview-field","roleId":"role","assigneeId":"member","effortHours":8,"lag":0}`,
+		`{"roleId":"role","assigneeId":"member","effortHours":8,"lag":-1}`,
+		`{"roleId":"role","assigneeId":"member","effortHours":8.333,"lag":0}`,
+	} {
+		t.Run(body, func(t *testing.T) {
+			calls := 0
+			service := reopenServiceStub{
+				reopen: func(context.Context, string, string) (*domain.Node, error) {
+					return nil, errors.New("unexpected reopen")
+				},
+				preview: func(context.Context, string, string, application.PreviewExecutableInput) (*application.SchedulePreview, error) {
+					calls++
+					return nil, errors.New("unexpected preview")
+				},
+			}
+			request := httptest.NewRequest(http.MethodPost, "/api/projects/project/wbs/task/executable/preview", strings.NewReader(body))
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			reopenMux(service).ServeHTTP(response, request)
+			if response.Code != http.StatusBadRequest || calls != 0 {
+				t.Fatalf("status=%d calls=%d body=%s", response.Code, calls, response.Body.String())
+			}
+		})
+	}
+}
+
+func TestExecutablePreviewMapsIncompleteDraftToStableValidationError(t *testing.T) {
+	service := reopenServiceStub{
+		reopen: func(context.Context, string, string) (*domain.Node, error) {
+			return nil, errors.New("unexpected reopen")
+		},
+		preview: func(context.Context, string, string, application.PreviewExecutableInput) (*application.SchedulePreview, error) {
+			return nil, domain.ErrSchedulePreviewIncomplete
+		},
+	}
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/projects/project/wbs/task/executable/preview",
+		strings.NewReader(`{"assigneeId":"member","effortHours":8,"lag":0}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+
+	reopenMux(service).ServeHTTP(response, request)
+
+	assertErrorCode(t, response, http.StatusBadRequest, "SCHEDULING_INPUT_INCOMPLETE")
+}
+
+func TestExecutablePreviewMapsUnavailableStateToStableConflict(t *testing.T) {
+	service := reopenServiceStub{
+		reopen: func(context.Context, string, string) (*domain.Node, error) {
+			return nil, errors.New("unexpected reopen")
+		},
+		preview: func(context.Context, string, string, application.PreviewExecutableInput) (*application.SchedulePreview, error) {
+			return nil, domain.ErrSchedulePreviewUnavailable
+		},
+	}
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/projects/project/wbs/task/executable/preview",
+		strings.NewReader(`{"roleId":"role","assigneeId":"member","effortHours":8,"lag":0}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+
+	reopenMux(service).ServeHTTP(response, request)
+
+	assertErrorCode(t, response, http.StatusConflict, "SCHEDULE_PREVIEW_UNAVAILABLE")
 }

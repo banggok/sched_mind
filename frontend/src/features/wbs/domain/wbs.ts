@@ -9,8 +9,11 @@ export interface WBSNode {
     roleId?: string;
     assigneeId?: string;
     effortMinutes?: number;
+    lagDays: number;
     executionTimeline: { start?: string; end?: string };
     commitmentTimeline: { start?: string; end?: string };
+    executionUnscheduledReason?: string;
+    commitmentUnscheduledReason?: string;
     actualEnd?: string;
   };
   children: WBSNode[];

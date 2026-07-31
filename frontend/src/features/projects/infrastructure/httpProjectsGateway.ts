@@ -1,4 +1,8 @@
 import { RequestCache } from "../../../shared/infrastructure/RequestCache";
+import {
+  advanceScheduleProjectionVersion,
+  currentScheduleProjectionVersion,
+} from "../../../shared/infrastructure/scheduleProjectionClock";
 import type { PageResult } from "../../../shared/application/pagination";
 import {
   ProjectOperationError,
@@ -13,10 +17,10 @@ interface ProjectDTO {
   startDate: string | null;
   endDate: string | null;
   autoCalculateDate: boolean;
-  autoDependencyByAssignee: boolean;
   automaticScheduling: boolean;
   schedulingStartDate: string | null;
   projectBuffer: number;
+  scheduleVersion: number;
   projectPriority: number;
   closedAt: string | null;
   createdAt: string;
@@ -39,9 +43,17 @@ interface ErrorDTO {
 
 export function createHTTPProjectsGateway(apiBaseURL: string): ProjectsGateway {
   const lists = new Map<string, RequestCache<PageResult<Project>>>();
-  const invalidate = () => {
+  let observedProjectionVersion = currentScheduleProjectionVersion();
+  const invalidate = (advance = false) => {
+    if (advance) advanceScheduleProjectionVersion();
+    observedProjectionVersion = currentScheduleProjectionVersion();
     lists.forEach((cache) => cache.invalidate());
     lists.clear();
+  };
+  const syncProjectionVersion = () => {
+    if (observedProjectionVersion !== currentScheduleProjectionVersion()) {
+      invalidate();
+    }
   };
   const mutation = async (
     path: string,
@@ -54,11 +66,13 @@ export function createHTTPProjectsGateway(apiBaseURL: string): ProjectsGateway {
       body: body ? JSON.stringify(body) : undefined,
     });
     const payload = await read<ItemDTO>(response);
-    invalidate();
+    invalidate(true);
     return mapProject(payload.data);
   };
   return {
     async list(query, signal) {
+      syncProjectionVersion();
+      const requestVersion = currentScheduleProjectionVersion();
       const parameters = new URLSearchParams({
         search: query.search,
         page: String(query.page),
@@ -71,6 +85,7 @@ export function createHTTPProjectsGateway(apiBaseURL: string): ProjectsGateway {
         const payload = await read<ListDTO>(
           await fetch(`${apiBaseURL}/projects?${parameters}`),
         );
+        rejectStaleProjection(requestVersion);
         return {
           items: payload.data.map(mapProject),
           page: payload.page,
@@ -80,13 +95,13 @@ export function createHTTPProjectsGateway(apiBaseURL: string): ProjectsGateway {
       }, signal);
     },
     async get(id) {
-      return mapProject(
-        (
-          await read<ItemDTO>(
-            await fetch(`${apiBaseURL}/projects/${encodeURIComponent(id)}`),
-          )
-        ).data,
+      syncProjectionVersion();
+      const requestVersion = currentScheduleProjectionVersion();
+      const payload = await read<ItemDTO>(
+        await fetch(`${apiBaseURL}/projects/${encodeURIComponent(id)}`),
       );
+      rejectStaleProjection(requestVersion);
+      return mapProject(payload.data);
     },
     create(name, automaticScheduling, schedulingStartDate, projectBuffer) {
       return mutation("/projects", "POST", {
@@ -132,9 +147,14 @@ export function createHTTPProjectsGateway(apiBaseURL: string): ProjectsGateway {
         { method: "DELETE" },
       );
       if (!response.ok) await throwError(response);
-      invalidate();
+      invalidate(true);
     },
   };
+}
+
+function rejectStaleProjection(requestVersion: number): void {
+  if (requestVersion === currentScheduleProjectionVersion()) return;
+  throw new DOMException("Stale schedule projection response", "AbortError");
 }
 
 async function read<T>(response: Response): Promise<T> {
@@ -165,10 +185,10 @@ function mapProject(dto: ProjectDTO): Project {
     startDate: dto.startDate ?? undefined,
     endDate: dto.endDate ?? undefined,
     autoCalculateDate: dto.autoCalculateDate,
-    autoDependencyByAssignee: dto.autoDependencyByAssignee,
     automaticScheduling: dto.automaticScheduling,
     schedulingStartDate: dto.schedulingStartDate ?? undefined,
     projectBuffer: dto.projectBuffer,
+    scheduleVersion: dto.scheduleVersion,
     priority: dto.projectPriority,
     closedAt: dto.closedAt ? new Date(dto.closedAt) : undefined,
     createdAt: new Date(dto.createdAt),

@@ -8,7 +8,7 @@ interface TeamMemberDTO {
   role: { id: string; name: string };
   dailyCapacity: number;
   bufferPercentage: number;
-  commitmentCapacity: number;
+  baseExecutionCapacity: number;
   createdAt: string;
   updatedAt: string;
 }

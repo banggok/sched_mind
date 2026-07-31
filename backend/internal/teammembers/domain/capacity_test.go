@@ -33,7 +33,7 @@ func TestDailyCapacityValidation(t *testing.T) {
 	}
 }
 
-func TestBufferAndCommitmentCapacity(t *testing.T) {
+func TestBufferAndBaseExecutionCapacity(t *testing.T) {
 	t.Parallel()
 	daily, err := NewDailyCapacity(8)
 	if err != nil {
@@ -52,8 +52,8 @@ func TestBufferAndCommitmentCapacity(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewBufferPercentage(%v) error = %v", test.buffer, err)
 		}
-		if got := CommitmentCapacity(daily, buffer); got != test.want {
-			t.Fatalf("CommitmentCapacity() = %v, want %v", got, test.want)
+		if got := BaseExecutionCapacity(daily, buffer); got != test.want {
+			t.Fatalf("BaseExecutionCapacity() = %v, want %v", got, test.want)
 		}
 	}
 
@@ -61,14 +61,14 @@ func TestBufferAndCommitmentCapacity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := CommitmentCapacity(sevenAndHalf, DefaultBufferPercentage()); got != 6 {
-		t.Fatalf("CommitmentCapacity() = %v, want 6", got)
+	if got := BaseExecutionCapacity(sevenAndHalf, DefaultBufferPercentage()); got != 6 {
+		t.Fatalf("BaseExecutionCapacity() = %v, want 6", got)
 	}
 	tenPercent, err := NewBufferPercentage(10)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := CommitmentCapacity(sevenAndHalf, tenPercent); got != 7 {
-		t.Fatalf("CommitmentCapacity() tie = %v, want 7", got)
+	if got := BaseExecutionCapacity(sevenAndHalf, tenPercent); got != 7 {
+		t.Fatalf("BaseExecutionCapacity() rounded = %v, want 7", got)
 	}
 }
