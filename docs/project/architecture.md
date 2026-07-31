@@ -201,6 +201,14 @@ GORM transaction through `shared/persistence.WithTransaction`, so nested
 scheduler work uses a savepoint on the same database transaction rather than an
 independent commit.
 
+The WBS create endpoint stores only structural input (`Name`, optional parent,
+and conversion confirmation). A root or child create that does not convert an
+existing executable node or retarget dependency endpoints therefore does not
+invoke portfolio scheduling and returns the new Task with empty generated
+dates. Create remains an atomic scheduling trigger when it performs executable-
+to-group conversion and moves executable state or dependency endpoints; a
+scheduler failure rolls back that conversion.
+
 The scheduler loads all Open and Locked Projects, validates unique Priority and
 WBS ordering, resolves manual and retained automatic dependency edges, and
 allocates Execution and Commitment independently. Capacity arithmetic uses
@@ -253,6 +261,10 @@ The WBS domain remains the only work-item model. Its frontend presents the
 feature as **Project Structure**, an Executable WBS as **Task**, and a Grouping
 WBS as **Group**. These labels are derived from child existence and never create
 or persist a separate type field.
+
+The approved US-4.3 implementation uses one frontend-only recursive read model over current confirmed WBS roots. View Group passes the selected subtree; Edit Project treats the Project as logical WBS level `0` and passes every top-level WBS root. One deterministic typed traversal returns Execution aggregate and coverage, Commitment aggregate and coverage, completed/total known Effort, percentage, and Task-without-Effort count. Timeline dates come only from complete Task pairs; completion comes only from Actual End; missing Effort is never coerced to zero. Integer minutes remain the arithmetic source so half-hour precision and percentage calculation do not accumulate floating-point error.
+
+The existing per-Project WBS tree contract already carries `children`, Effort, both timeline pairs, and Actual End, so US-4.3 adds no backend endpoint, persistence field, migration, or summary-specific production query. Edit Project reuses a fresh cached WBS tree or invokes the existing WBS read; its summary region owns local loading/error/Retry without blocking Project form draft or Save/Cancel. Existing Project `startDate`/`endDate` are not sufficient inputs for the two separate timeline summaries. The summary is not stored as an independent confirmed copy; it is derived again from the current confirmed roots/subtree. Existing versioned WBS cache invalidation prevents an older tree response from restoring stale summary values after a mutation. The WBS application gateway exposes an intentional confirmed-change subscription implemented by the shared projection clock, so open Group and Project summaries can request the same versioned tree again without presentation code importing infrastructure internals. Rollback-only Task schedule previews and unsaved drafts are deliberately excluded.
 
 The Dependency feature stores one directed Finish-to-Start relation between
 two executable WBS Tasks. Relations may cross active Projects, but Groups and
@@ -342,8 +354,7 @@ pagination, dialog, loading, and Toast primitives. Their list cache identity is
 `search/page/pageSize`; mutations invalidate every Project list entry so an
 older in-flight response cannot restore stale ordering or lifecycle state.
 
-Project Name and settings share the same Add/Edit dialog and persist through one
-atomic create or update operation; there is no separate Settings action. Status
+Project Name and settings share the same Add/Edit dialog and persist through one atomic create or update operation; there is no separate Settings action. Edit Project opts into the shared wide Dialog variant and composes the read-only US-4.3 whole-Project summary after Project fields; Add Project remains summary-free and may retain standard width. Summary loading/error is isolated from form mutation state and is excluded from the Project payload. Status
 remains outside the form and changes only through lifecycle command buttons.
 Open settings are editable, Locked settings remain visible but read-only while
 Name keeps its existing edit contract, and the complete Closed form is

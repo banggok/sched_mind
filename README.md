@@ -149,21 +149,11 @@ the other server and returns the exit status of the server that exited first.
 
 ## Validate
 
-```sh
-cd backend
-go fmt ./...
-go vet ./...
-go test ./...
-go test -race ./...
-cd ..
-```
+Run all backend and frontend validation steps from any directory:
 
 ```sh
-cd frontend
-npm run format:check
-npm run lint
-npm run typecheck
-npm test
-npm run build
-cd ..
+./scripts/validate.sh
 ```
+
+The script runs each validation step sequentially and stops immediately when a
+step fails. A successful run ends with `All validation steps passed.`

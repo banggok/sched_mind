@@ -218,9 +218,15 @@ func (calendar *allocationCalendar) reserveProjectedFixed(
 }
 
 func (calendar *allocationCalendar) reconstructFixed(task taskModel, start, end time.Time) ([]dailyAllocation, error) {
+	start = schedulingdomain.DateOnly(start)
+	end = schedulingdomain.DateOnly(end)
+	if end.Before(start) {
+		return nil, fmt.Errorf("%w: fixed task %s has end before start", schedulingdomain.ErrDataIntegrity, task.ID)
+	}
+
 	remaining := big.NewRat(int64(*task.EffortMinutes), 1)
 	allocations := make([]dailyAllocation, 0)
-	for date := schedulingdomain.DateOnly(start); !date.After(schedulingdomain.DateOnly(end)) && remaining.Sign() > 0; date = date.AddDate(0, 0, 1) {
+	for date := start; !date.After(end) && remaining.Sign() > 0; date = date.AddDate(0, 0, 1) {
 		available, err := calendar.remaining(*task.AssigneeID, task.ProjectID, date)
 		if err != nil {
 			return nil, err
@@ -234,6 +240,16 @@ func (calendar *allocationCalendar) reconstructFixed(task taskModel, start, end 
 		remaining.Sub(remaining, allocated)
 	}
 	if remaining.Sign() > 0 {
+		if task.ActualEnd != nil {
+			// Completion is immutable historical evidence, not a claim that the
+			// Task's planned Effort still fits today's capacity configuration.
+			// Keep any unresolved historical Effort on Actual End so the Task
+			// consumes no future capacity while the completed timeline remains
+			// usable by dependency and same-assignee readiness calculations.
+			allocation := calendar.add(task.ID, *task.AssigneeID, end, remaining, true)
+			allocations = append(allocations, allocation)
+			return allocations, nil
+		}
 		return nil, fmt.Errorf("%w: fixed task %s exceeds its locked/manual timeline capacity", schedulingdomain.ErrDataIntegrity, task.ID)
 	}
 	return allocations, nil

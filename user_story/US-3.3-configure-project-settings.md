@@ -220,7 +220,9 @@ This story does not implement the Forecast algorithm.
 ## 6. UI Behaviour
 
 - Project Name and Project Settings use one Add/Edit Project form.
-- There is no separate Settings action.
+- Because Project is WBS level `0`, Edit Project also includes the read-only Project Summary owned by US-4.3 after the Project fields; it is not a setting and is not submitted.
+- Edit Project uses the existing shared wide Dialog variant. Add Project has no confirmed Task subtree, omits Project Summary, and may retain the standard dialog width.
+- There is no separate Settings or Summary action.
 - Controls have visible labels and accessible descriptions.
 - Project Buffer is disabled while Automatic Scheduling is OFF.
 - Scheduling Start Date remains visible while OFF and may be edited.
@@ -230,6 +232,8 @@ This story does not implement the Forecast algorithm.
 - Duplicate Save is prevented.
 - Success updates confirmed settings and generated dates without hard refresh.
 - Failure preserves the previous confirmed settings and timelines.
+- Project Summary loading/error is isolated to its region, supports Retry, preserves form draft, and does not block valid settings Save/Cancel.
+- The wide dialog remains responsive and its summary sections stack before form actions when horizontal space is insufficient.
 
 ---
 
@@ -264,6 +268,11 @@ This story does not implement the Forecast algorithm.
 27. Automatic Scheduling without Scheduling Start Date never invents Task dates.
 28. Mutation state prevents duplicate Save, preserves draft on failure, and refreshes confirmed settings without hard reload.
 29. Controls, confirmation, warning, validation, and focus behaviour are keyboard-accessible and usable on supported viewports.
+30. Edit Project uses the existing shared wide Dialog variant and composes the US-4.3 whole-Project summary after Project fields and before form actions.
+31. Add Project does not display Project Summary and is not required to use the wide variant.
+32. Project Summary is read-only, excluded from Project create/update payloads, and does not alter Open/Locked/Closed settings permissions.
+33. Project Summary local loading/failure/Retry preserves draft and does not block otherwise valid Save/Cancel.
+34. On narrow supported viewports the wide Edit Project dialog remains within viewport padding, summary sections stack in semantic order, and form actions remain reachable without horizontal scrolling.
 
 ---
 
@@ -325,6 +334,8 @@ commands.
 - OFF→ON scheduler failure rolls back settings and dates.
 - Duplicate Save sends one mutation.
 - Old response cannot restore stale settings after success.
+- Project Summary loading failure and Retry do not clear settings draft or block Save.
+- Older WBS summary response cannot replace newer confirmed Project Summary.
 
 ### Regression
 
@@ -334,6 +345,8 @@ commands.
 - Project Buffer never changes Execution Capacity.
 - Member Buffer affects both Execution and Commitment through the formula chain.
 - Automatic dependency is not reconciled while OFF.
+- Edit Project wide layout and US-4.3 summary do not change Project update payload or lifecycle permissions.
+- Add Project remains summary-free.
 
 ---
 
@@ -343,7 +356,7 @@ commands.
 - Application save/cancel/transition coordination.
 - Repository decimal/date persistence.
 - API payload mapping and rejection of removed fields.
-- Frontend combined form, confirmation, warning, disabled/read-only states, and failure recovery.
+- Frontend combined form, confirmation, warning, disabled/read-only states, Project Summary composition, shared wide Dialog behaviour, local summary loading/Retry, and failure recovery.
 - US-6.1 integration for OFF→ON, rollback, generated dates, and auto dependency.
 - Concurrency and stale-response protection.
 - Acceptance-level tests for every changed observable rule.
@@ -355,9 +368,7 @@ inspection, unit/integration evidence, and acceptance-level evidence.
 
 ## 11. Documentation Impact
 
-Update architecture, Project Settings, API, and Scheduling Engine documentation
-for the single activation config, capacity formulas, concrete US-6.1
-coordination, rollback, and removal of `autoDependencyByAssignee`.
+Update architecture, Project Settings, API, and Scheduling Engine documentation for the single activation config, capacity formulas, concrete US-6.1 coordination, rollback, removal of `autoDependencyByAssignee`, and the US-4.3 wide Edit Project summary composition.
 
 ---
 
@@ -375,6 +386,8 @@ coordination, rollback, and removal of `autoDependencyByAssignee`.
 - Forecast always remains active.
 - Tasks with Actual End remain fixed during OFF→ON recalculation.
 - Locked and Closed Projects cannot modify Project Settings.
+- Edit Project also composes the read-only US-4.3 whole-Project summary and uses the shared wide Dialog variant; Add Project omits summary.
+- Project Summary is excluded from Project mutation payloads and its loading/error state does not block settings Save/Cancel.
 - Changes apply only after Save.
 - OFF→ON scheduling and settings persistence are atomic when an anchor exists.
 

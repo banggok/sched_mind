@@ -10,6 +10,7 @@ export class WBSOperationError extends Error {
 }
 export interface WBSGateway {
   tree(projectId: string, signal?: AbortSignal): Promise<WBSNode[]>;
+  subscribeToConfirmedChanges?(listener: () => void): () => void;
   create(
     projectId: string,
     parentId: string | undefined,

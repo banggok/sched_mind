@@ -12,6 +12,7 @@ import { RequestCache } from "../../../shared/infrastructure/RequestCache";
 import {
   advanceScheduleProjectionVersion,
   currentScheduleProjectionVersion,
+  subscribeScheduleProjectionVersion,
 } from "../../../shared/infrastructure/scheduleProjectionClock";
 
 const invalidResponseMessage = "WBS response is invalid. Try again.";
@@ -54,6 +55,7 @@ export function createHTTPWBSGateway(baseURL: string): WBSGateway {
     body: JSON.stringify(body),
   });
   return {
+    subscribeToConfirmedChanges: subscribeScheduleProjectionVersion,
     tree: async (projectId, signal) => {
       syncProjectionVersion();
       const cache = trees.get(projectId) ?? new RequestCache<WBSNode[]>();

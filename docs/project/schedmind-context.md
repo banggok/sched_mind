@@ -40,6 +40,7 @@ Detailed rules are owned by:
 - [US-3.3 Configure Project Settings](../../user_story/US-3.3-configure-project-settings.md)
 - [US-4.1 Manage WBS](../../user_story/US-4.1-manage-wbs.md)
 - [US-4.2 Reopen Completed Task](../../user_story/US-4.2-reopen-completed-task.md)
+- [US-4.3 View Group and Project Summary](../../user_story/US-4.3-view-group-summary.md)
 - [US-5.1 Manage Dependency](../../user_story/US-5.1-manage-dependency.md)
 - [US-6.1 Automatic Scheduling](../../user_story/US-6.1-automatic-scheduling.md)
 
@@ -120,6 +121,10 @@ scheduler as a rollback-only draft preview so generated dates are visible before
 Save; changing Assignee recalculates dates and dependency ownership, while
 clearing Assignee returns an unconfirmed missing-Assignee schedule and removes
 stale automatic ownership. The preview does not advance persisted schedule state.
+
+US-4.3 defines the approved View Group and Edit Project summary behaviour. Project is the logical WBS level `0`, so Edit Project recursively summarizes every confirmed Task across all top-level WBS roots; View Group summarizes only the selected subtree. Both contexts use one read-only calculation contract. Execution and Commitment ranges each use the earliest Start and latest End among Tasks with a complete pair, with separate scheduled-Task coverage. Effort Completion uses Actual End as the only completion source and compares completed known Effort with total known Effort; Tasks without Effort are excluded from the arithmetic and disclosed. The summary is not persisted on Group or Project and never consumes unconfirmed Task preview data.
+
+Edit Project composes this summary after Project fields using the existing shared wide Dialog variant. Add Project remains summary-free. If the Project WBS tree is not already fresh in cache, only the summary region loads or retries; Project form draft and Save/Cancel remain independent. Existing Project `startDate`/`endDate` are not substitutes for the separate recursive timeline summaries.
 
 Forecast coordination remains separate. Actual End and Reopen Task keep their
 existing Forecast callback and do not become full Execution/Commitment triggers.

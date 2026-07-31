@@ -1,4 +1,10 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+  type FormEvent,
+  type ReactNode,
+} from "react";
 import { Breadcrumb } from "../../../app/Breadcrumb";
 import { PageContent } from "../../../app/PageContent";
 import { Button } from "../../../shared/presentation/Button";
@@ -44,6 +50,7 @@ export function ProjectsPage({
   gateway,
   loadPublicHolidayDates,
   onManageWBS,
+  renderProjectSummary,
 }: {
   gateway: ProjectsGateway;
   loadPublicHolidayDates?(
@@ -51,6 +58,7 @@ export function ProjectsPage({
     endDate: string,
   ): Promise<string[]>;
   onManageWBS?(project: Project): void;
+  renderProjectSummary?(project: Project): ReactNode;
 }) {
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
@@ -341,6 +349,7 @@ export function ProjectsPage({
           loadPublicHolidayDates={loadPublicHolidayDates}
           onProjectBuffer={setProjectBuffer}
           onConfirmingEnable={setConfirmingEnable}
+          renderProjectSummary={renderProjectSummary}
           onClose={() => !submitting && setForm(undefined)}
           onSubmit={() => void submitForm()}
         />
@@ -464,6 +473,7 @@ function ProjectForm({
   loadPublicHolidayDates,
   onProjectBuffer,
   onConfirmingEnable,
+  renderProjectSummary,
   onClose,
   onSubmit,
 }: {
@@ -486,6 +496,7 @@ function ProjectForm({
   ): Promise<string[]>;
   onProjectBuffer(value: string): void;
   onConfirmingEnable(value: boolean): void;
+  renderProjectSummary?(project: Project): ReactNode;
   onClose(): void;
   onSubmit(): void;
 }) {
@@ -498,7 +509,11 @@ function ProjectForm({
   }
   return (
     <>
-      <Dialog titleID="project-form-title" onClose={onClose}>
+      <Dialog
+        titleID="project-form-title"
+        onClose={onClose}
+        wide={form.mode === "edit"}
+      >
         <h2 id="project-form-title" className="text-dialog-title font-black">
           {form.mode === "create"
             ? "Add project"
@@ -600,6 +615,23 @@ function ProjectForm({
             <p className="mt-4 text-sm font-semibold text-danger" role="alert">
               {operationError}
             </p>
+          ) : null}
+          {form.mode === "edit" && form.project ? (
+            <section
+              className="mt-7 min-w-0"
+              aria-labelledby="project-summary-title"
+            >
+              <h3 id="project-summary-title" className="text-xl font-extrabold">
+                Project Summary
+              </h3>
+              <div className="mt-4 min-w-0">
+                {renderProjectSummary?.(form.project) ?? (
+                  <p className="text-sm text-muted">
+                    Project summary is unavailable.
+                  </p>
+                )}
+              </div>
+            </section>
           ) : null}
           <div className="form-actions">
             <Button type="button" disabled={submitting} onClick={onClose}>

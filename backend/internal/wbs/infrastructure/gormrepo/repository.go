@@ -48,6 +48,7 @@ func (r *Repository) Create(ctx context.Context, id, p string, parent *string, n
 	err := r.tx(ctx, p, func(txContext context.Context, tx *gorm.DB, project projectModel) error {
 		var parentModel *nodeModel
 		var convertParentTask bool
+		var schedulingAffected bool
 		if parent != nil {
 			value, err := findNode(tx, p, *parent, true)
 			if err != nil {
@@ -66,6 +67,7 @@ func (r *Repository) Create(ctx context.Context, id, p string, parent *string, n
 				return err
 			}
 			convertParentTask = hasChildren == 0
+			schedulingAffected = convertParentTask && (hasData(value) || dependencies > 0)
 			if hasChildren == 0 && (hasData(value) || dependencies > 0) {
 				if !confirm {
 					return domain.ErrConversionRequired
@@ -103,7 +105,7 @@ func (r *Repository) Create(ctx context.Context, id, p string, parent *string, n
 				return err
 			}
 		}
-		if project.AutomaticScheduling {
+		if project.AutomaticScheduling && schedulingAffected {
 			if err := schedule(txContext, p); err != nil {
 				return err
 			}

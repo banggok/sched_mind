@@ -30,11 +30,11 @@ dibuka.
 
 Rules:
 
-* Tidak tersedia menu Capacity Override terpisah pada sidebar.
-* Team Member sudah diketahui dari konteks halaman dan tidak perlu dipilih ulang.
-* Form tidak menampilkan selector Team Member.
-* List hanya menampilkan Capacity Override milik Team Member tersebut.
-* Start Date dan End Date dipilih melalui satu field Date Range.
+- Tidak tersedia menu Capacity Override terpisah pada sidebar.
+- Team Member sudah diketahui dari konteks halaman dan tidak perlu dipilih ulang.
+- Form tidak menampilkan selector Team Member.
+- List hanya menampilkan Capacity Override milik Team Member tersebut.
+- Start Date dan End Date dipilih melalui satu field Date Range.
 
 ---
 
@@ -55,17 +55,17 @@ Engineering Lead dapat:
 
 User story ini tidak mencakup:
 
-* Menu sidebar khusus Capacity Override.
-* Pencarian Capacity Override.
-* Generic text search atau date-range filter. List hanya mendukung optional
+- Menu sidebar khusus Capacity Override.
+- Pencarian Capacity Override.
+- Generic text search atau date-range filter. List hanya mendukung optional
   single-date filter `Effective Date`.
-* Memindahkan Capacity Override ke Team Member lain.
-* Mengubah Daily Capacity dasar Team Member.
-* Mengelola Public Holiday.
-* Menjalankan Scheduling Engine secara otomatis setelah mutation.
-* Mendefinisikan algoritma penjadwalan atau menghitung ulang timeline pada saat
+- Memindahkan Capacity Override ke Team Member lain.
+- Mengubah Daily Capacity dasar Team Member.
+- Mengelola Public Holiday.
+- Menjalankan Scheduling Engine secara otomatis setelah mutation.
+- Mendefinisikan algoritma penjadwalan atau menghitung ulang timeline pada saat
   mutation.
-* Restore Capacity Override.
+- Restore Capacity Override.
 
 ---
 
@@ -73,16 +73,16 @@ User story ini tidak mencakup:
 
 ## Capacity Override
 
-| Field             | Type                        | Required | Source | Rules                                             |
-| ----------------- | --------------------------- | -------: | ------ | ------------------------------------------------- |
-| ID                | System-generated identifier |       Ya | System | Dibuat otomatis dan tidak dapat diubah            |
-| Team Member ID    | Identifier                  |       Ya | Context | Pemilik Capacity Override dan tidak dapat diubah |
-| Description       | String                      |       Ya | User   | Alasan override, trimmed, maksimum 100 karakter |
-| Start Date        | Date                        |       Ya | User   | Date-only dan inklusif                            |
-| End Date          | Date                        |       Ya | User   | Date-only, inklusif, dan tidak sebelum Start Date|
-| Capacity          | Decimal hours               |       Ya | User   | `0` sampai `24`, dalam increment `0.5` jam       |
-| Created At        | DateTime                    |       Ya | System | Dibuat otomatis                                  |
-| Updated At        | DateTime                    |       Ya | System | Diperbarui otomatis                              |
+| Field          | Type                        | Required | Source  | Rules                                             |
+| -------------- | --------------------------- | -------: | ------- | ------------------------------------------------- |
+| ID             | System-generated identifier |       Ya | System  | Dibuat otomatis dan tidak dapat diubah            |
+| Team Member ID | Identifier                  |       Ya | Context | Pemilik Capacity Override dan tidak dapat diubah  |
+| Description    | String                      |       Ya | User    | Alasan override, trimmed, maksimum 100 karakter   |
+| Start Date     | Date                        |       Ya | User    | Date-only dan inklusif                            |
+| End Date       | Date                        |       Ya | User    | Date-only, inklusif, dan tidak sebelum Start Date |
+| Capacity       | Decimal hours               |       Ya | User    | `0` sampai `24`, dalam increment `0.5` jam        |
+| Created At     | DateTime                    |       Ya | System  | Dibuat otomatis                                   |
+| Updated At     | DateTime                    |       Ya | System  | Diperbarui otomatis                               |
 
 Team Member ID merupakan bagian dari entity meskipun tidak ditampilkan sebagai
 field yang harus dipilih pada form. Nilainya berasal dari konteks Members.
@@ -93,83 +93,83 @@ field yang harus dipilih pada form. Nilainya berasal dari konteks Members.
 
 ## Description Rules
 
-* Description wajib diisi dan menjelaskan alasan kapasitas diubah, misalnya
+- Description wajib diisi dan menjelaskan alasan kapasitas diubah, misalnya
   cuti, training, atau support.
-* Leading dan trailing whitespace di-trim sebelum persistence.
-* Description tidak boleh kosong atau hanya whitespace setelah trim.
-* Panjang maksimum adalah `100` karakter setelah trim, mengikuti konvensi
+- Leading dan trailing whitespace di-trim sebelum persistence.
+- Description tidak boleh kosong atau hanya whitespace setelah trim.
+- Panjang maksimum adalah `100` karakter setelah trim, mengikuti konvensi
   master-data repository.
-* Internal casing, punctuation, dan wording pengguna dipertahankan.
+- Internal casing, punctuation, dan wording pengguna dipertahankan.
 
 ## Date Rules
 
-* Start Date wajib diisi.
-* End Date wajib diisi.
-* Start Date dan End Date merupakan date-only values.
-* Nilai API menggunakan format date-only `YYYY-MM-DD` yang valid.
-* Kedua batas tanggal bersifat inklusif.
-* Start Date boleh sama dengan End Date.
-* End Date tidak boleh lebih awal daripada Start Date.
-* Capacity Override boleh dibuat untuk tanggal lampau.
-* Tidak terdapat batas tanggal masa depan.
+- Start Date wajib diisi.
+- End Date wajib diisi.
+- Start Date dan End Date merupakan date-only values.
+- Nilai API menggunakan format date-only `YYYY-MM-DD` yang valid.
+- Kedua batas tanggal bersifat inklusif.
+- Start Date boleh sama dengan End Date.
+- End Date tidak boleh lebih awal daripada Start Date.
+- Capacity Override boleh dibuat untuk tanggal lampau.
+- Tidak terdapat batas tanggal masa depan.
 
 ## Date Range Interaction
 
-* Form menggunakan satu Date Range field yang membuka calendar.
-* Pilihan tanggal pertama menjadi Start Date.
-* Pilihan tanggal kedua yang lebih besar dari Start Date menjadi End Date.
-* Jika pilihan kedua lebih kecil dari Start Date, tanggal tersebut menggantikan
+- Form menggunakan satu Date Range field yang membuka calendar.
+- Pilihan tanggal pertama menjadi Start Date.
+- Pilihan tanggal kedua yang lebih besar dari Start Date menjadi End Date.
+- Jika pilihan kedua lebih kecil dari Start Date, tanggal tersebut menggantikan
   Start Date dan calendar tetap menunggu pilihan End Date.
-* Jika pilihan kedua sama dengan Start Date, Start Date dan End Date menggunakan
+- Jika pilihan kedua sama dengan Start Date, Start Date dan End Date menggunakan
   tanggal yang sama sehingga range berlangsung satu hari.
-* Calendar ditampilkan di bawah field ketika ruang viewport mencukupi dan
+- Calendar ditampilkan di bawah field ketika ruang viewport mencukupi dan
   otomatis berpindah ke atas ketika posisi bawah akan terpotong.
-* Calendar hanya berpindah ke atas jika seluruh popup muat di ruang atas. Jika
+- Calendar hanya berpindah ke atas jika seluruh popup muat di ruang atas. Jika
   ruang atas dan bawah sama-sama tidak cukup, calendar ditampilkan ke bawah
   dengan content yang dapat di-scroll agar bagian atas popup tidak terpotong.
-* Keputusan placement dan scroll dikunci selama calendar masih terbuka agar
+- Keputusan placement dan scroll dikunci selama calendar masih terbuka agar
   popup tidak berpindah saat user melakukan scroll atau memilih tanggal.
   Placement dihitung ulang setelah calendar ditutup dan dibuka kembali.
-* Posisi calendar dihitung ulang ketika viewport atau posisi scroll berubah.
+- Posisi calendar dihitung ulang ketika viewport atau posisi scroll berubah.
 
 ## Capacity Rules
 
-* Capacity wajib diisi.
-* Satuan Capacity adalah jam.
-* Capacity minimum adalah `0`.
-* Capacity maksimum adalah `24`.
-* Capacity harus menggunakan increment `0.5` jam.
-* Contoh valid: `0`, `0.5`, `6`, `7.5`, `24`.
-* Contoh tidak valid: `-0.5`, `7.2`, `24.5`.
+- Capacity wajib diisi.
+- Satuan Capacity adalah jam.
+- Capacity minimum adalah `0`.
+- Capacity maksimum adalah `24`.
+- Capacity harus menggunakan increment `0.5` jam.
+- Contoh valid: `0`, `0.5`, `6`, `7.5`, `24`.
+- Contoh tidak valid: `-0.5`, `7.2`, `24.5`.
 
 ## Capacity Form Interaction
 
-* Add dan Edit menggunakan mode form eksklusif. Selama form terbuka, list,
+- Add dan Edit menggunakan mode form eksklusif. Selama form terbuka, list,
   Effective Date filter, pagination, Add action, dan row actions tidak
   ditampilkan atau dapat dioperasikan.
-* Cancel menutup form dan mengembalikan list beserta filter dan pagination state
+- Cancel menutup form dan mengembalikan list beserta filter dan pagination state
   sebelumnya.
-* Capacity draft tidak diubah ketika pengguna masih mengetik.
-* Capacity input hanya menerima digit dan maksimal satu titik (`.`) sebagai
+- Capacity draft tidak diubah ketika pengguna masih mengetik.
+- Capacity input hanya menerima digit dan maksimal satu titik (`.`) sebagai
   pemisah desimal. Huruf, koma, tanda minus, dan titik tambahan diabaikan.
-* Ketika field kehilangan fokus, frontend membulatkan nilai ke kelipatan `0.5`
+- Ketika field kehilangan fokus, frontend membulatkan nilai ke kelipatan `0.5`
   terdekat.
-* Normalisasi yang sama dijalankan ulang saat submit, termasuk ketika field
+- Normalisasi yang sama dijalankan ulang saat submit, termasuk ketika field
   belum kehilangan fokus.
-* Setelah normalisasi, frontend tetap memvalidasi required value, minimum `0`,
+- Setelah normalisasi, frontend tetap memvalidasi required value, minimum `0`,
   maksimum `24`, dan increment `0.5`.
-* Jika submission gagal, nilai hasil normalisasi tetap tersedia di form.
-* Backend tidak melakukan auto-correction dan tetap menolak request API yang
+- Jika submission gagal, nilai hasil normalisasi tetap tersedia di form.
+- Backend tidak melakukan auto-correction dan tetap menolak request API yang
   tidak memenuhi increment `0.5`.
 
 ## Ownership Rules
 
-* Setiap Capacity Override dimiliki tepat oleh satu Team Member.
-* Team Member ditentukan dari parent resource pada endpoint dan konteks Members.
-* Ownership tidak dapat dipindahkan melalui update.
-* Update request tidak menerima `teamMemberId`.
-* Request update yang mengirim `teamMemberId` ditolak sebagai invalid request.
-* Periode yang sama boleh dimiliki oleh Team Member yang berbeda.
+- Setiap Capacity Override dimiliki tepat oleh satu Team Member.
+- Team Member ditentukan dari parent resource pada endpoint dan konteks Members.
+- Ownership tidak dapat dipindahkan melalui update.
+- Update request tidak menerima `teamMemberId`.
+- Request update yang mengirim `teamMemberId` ditolak sebagai invalid request.
+- Periode yang sama boleh dimiliki oleh Team Member yang berbeda.
 
 ## Overlap Rules
 
@@ -186,12 +186,12 @@ existing.endDate >= candidate.startDate
 
 Contoh:
 
-| Existing                  | Candidate                 | Result       |
-| ------------------------- | ------------------------- | ------------ |
-| 2026-07-03—2026-07-04     | 2026-07-04—2026-07-05     | Overlap      |
-| 2026-07-03—2026-07-04     | 2026-07-05—2026-07-06     | Allowed      |
-| 2026-07-03—2026-07-06     | 2026-07-04—2026-07-05     | Overlap      |
-| 2026-07-04—2026-07-04     | 2026-07-04—2026-07-04     | Overlap      |
+| Existing              | Candidate             | Result  |
+| --------------------- | --------------------- | ------- |
+| 2026-07-03—2026-07-04 | 2026-07-04—2026-07-05 | Overlap |
+| 2026-07-03—2026-07-04 | 2026-07-05—2026-07-06 | Allowed |
+| 2026-07-03—2026-07-06 | 2026-07-04—2026-07-05 | Overlap |
+| 2026-07-04—2026-07-04 | 2026-07-04—2026-07-04 | Overlap |
 
 Adjacent periods diperbolehkan ketika tidak berbagi tanggal. Saat update,
 Capacity Override yang sedang diubah harus dikecualikan dari pemeriksaan overlap
@@ -199,14 +199,14 @@ terhadap dirinya sendiri.
 
 ## Delete Rules
 
-* Delete menggunakan hard delete untuk MVP.
-* Direct Delete Capacity Override tetap hard delete.
-* Ketika parent Team Member dihapus, Capacity Override ikut di-soft-delete
+- Delete menggunakan hard delete untuk MVP.
+- Direct Delete Capacity Override tetap hard delete.
+- Ketika parent Team Member dihapus, Capacity Override ikut di-soft-delete
   secara atomik sebagai bagian dari lifecycle parent, bukan melalui direct
   Delete Capacity Override.
-* Delete harus dikonfirmasi oleh pengguna.
-* Cancel tidak mengirim request delete.
-* Setelah berhasil dihapus, Capacity Override tidak lagi dapat diambil.
+- Delete harus dikonfirmasi oleh pengguna.
+- Cancel tidak mengirim request delete.
+- Setelah berhasil dihapus, Capacity Override tidak lagi dapat diambil.
 
 ---
 
@@ -231,49 +231,49 @@ oleh Scheduling Engine pada eksekusi berikutnya.
 
 # List Behaviour
 
-* List selalu scoped ke satu Team Member.
-* List menggunakan backend pagination.
-* Default page adalah `1`.
-* Default page size adalah `5`.
-* Response menyediakan `page`, `pageSize`, dan `total`.
-* UI menampilkan halaman aktif, navigasi yang tersedia, serta rentang item dan
+- List selalu scoped ke satu Team Member.
+- List menggunakan backend pagination.
+- Default page adalah `1`.
+- Default page size adalah `5`.
+- Response menyediakan `page`, `pageSize`, dan `total`.
+- UI menampilkan halaman aktif, navigasi yang tersedia, serta rentang item dan
   total data.
-* Search tidak tersedia karena list sudah scoped ke satu Team Member dan
+- Search tidak tersedia karena list sudah scoped ke satu Team Member dan
   Capacity Override tidak memiliki nama human-readable yang perlu dicari.
-* Optional filter **Effective Date** menampilkan override dengan inclusive
+- Optional filter **Effective Date** menampilkan override dengan inclusive
   predicate `startDate <= effectiveDate AND endDate >= effectiveDate`.
-* Tanpa Effective Date, list paginated normal tetap ditampilkan.
-* Filter dijalankan backend dan tidak memuat dataset tanpa batas untuk difilter
+- Tanpa Effective Date, list paginated normal tetap ditampilkan.
+- Filter dijalankan backend dan tidak memuat dataset tanpa batas untuk difilter
   di frontend.
-* Mengubah atau menghapus Effective Date mereset pagination ke page `1`.
-* Effective Date dipertahankan saat berpindah page dan setelah mutation.
-* Effective Date menggunakan calendar yang konsisten dengan Date Range field,
+- Mengubah atau menghapus Effective Date mereset pagination ke page `1`.
+- Effective Date dipertahankan saat berpindah page dan setelah mutation.
+- Effective Date menggunakan calendar yang konsisten dengan Date Range field,
   tetapi selesai setelah satu tanggal dipilih.
-* Calendar Effective Date menggunakan month navigation dan viewport-aware
+- Calendar Effective Date menggunakan month navigation dan viewport-aware
   placement yang sama dengan calendar Date Range.
-* Ketika filter aktif tanpa hasil, UI menampilkan no-results state yang berbeda
+- Ketika filter aktif tanpa hasil, UI menampilkan no-results state yang berbeda
   dari empty state dan menyediakan Clear action.
-* Initial load menampilkan skeleton atau loader lokal yang mempertahankan bentuk
+- Initial load menampilkan skeleton atau loader lokal yang mempertahankan bentuk
   content.
-* Empty state berbeda dari error state.
-* Error state menjelaskan kegagalan dan menyediakan Retry.
-* Mutation yang berhasil memperbarui list dan metadata pagination tanpa hard
+- Empty state berbeda dari error state.
+- Error state menjelaskan kegagalan dan menyediakan Retry.
+- Mutation yang berhasil memperbarui list dan metadata pagination tanpa hard
   refresh.
-* Data yang masih berguna tetap terlihat selama background refresh jika aman.
-* List diurutkan berdasarkan Start Date secara ascending, kemudian End Date
+- Data yang masih berguna tetap terlihat selama background refresh jika aman.
+- List diurutkan berdasarkan Start Date secara ascending, kemudian End Date
   secara ascending, kemudian ID secara ascending.
-* Setiap list item menampilkan Description sebagai title.
-* Date range dan Capacity ditampilkan sebagai subtitle.
+- Setiap list item menampilkan Description sebagai title.
+- Date range dan Capacity ditampilkan sebagai subtitle.
 
 ## Effective Date Rules
 
-* Effective Date bersifat optional dan menggunakan date-only `YYYY-MM-DD`.
-* Tanggal sama dengan Start Date atau End Date termasuk match.
-* Tanggal di dalam period termasuk match; tanggal di luar period tidak match.
-* Invalid Effective Date query ditolak dengan structured `400 Bad Request` dan
+- Effective Date bersifat optional dan menggunakan date-only `YYYY-MM-DD`.
+- Tanggal sama dengan Start Date atau End Date termasuk match.
+- Tanggal di dalam period termasuk match; tanggal di luar period tidak match.
+- Invalid Effective Date query ditolak dengan structured `400 Bad Request` dan
   code `INVALID_EFFECTIVE_DATE`.
-* Filter dipertahankan selama pagination serta create, update, dan delete.
-* Mutation menginvalidasi seluruh cache list filtered dan unfiltered agar stale
+- Filter dipertahankan selama pagination serta create, update, dan delete.
+- Mutation menginvalidasi seluruh cache list filtered dan unfiltered agar stale
   response tidak dapat muncul kembali.
 
 ---
@@ -745,10 +745,10 @@ Status sukses: `200 OK`.
 
 Pagination rules:
 
-* `page` default `1` dan harus lebih besar dari `0`.
-* `pageSize` default `5` dan harus berada pada range `1` sampai `100` sesuai
+- `page` default `1` dan harus lebih besar dari `0`.
+- `pageSize` default `5` dan harus berada pada range `1` sampai `100` sesuai
   query convention repository.
-* `effectiveDate` optional. Jika ada, nilainya harus berupa date-only
+- `effectiveDate` optional. Jika ada, nilainya harus berupa date-only
   `YYYY-MM-DD` dan filtering dilakukan sebelum count serta pagination.
 
 ## Get Capacity Override
@@ -829,14 +829,14 @@ Status sukses: `204 No Content`.
 
 ## Status Kegagalan
 
-| Condition                              |          Status |
-| -------------------------------------- | --------------: |
-| Input atau pagination tidak valid      | 400 Bad Request |
-| Team Member tidak ditemukan            |   404 Not Found |
-| Capacity Override tidak ditemukan      |   404 Not Found |
-| Periode overlap                        |    409 Conflict |
-| Parent/member mismatch                 |   404 Not Found |
-| Persistence atau dependency failure    | 500 Internal Server Error |
+| Condition                           |                    Status |
+| ----------------------------------- | ------------------------: |
+| Input atau pagination tidak valid   |           400 Bad Request |
+| Team Member tidak ditemukan         |             404 Not Found |
+| Capacity Override tidak ditemukan   |             404 Not Found |
+| Periode overlap                     |              409 Conflict |
+| Parent/member mismatch              |             404 Not Found |
+| Persistence atau dependency failure | 500 Internal Server Error |
 
 ---
 
@@ -852,25 +852,25 @@ Seluruh API error menggunakan format konsisten:
 }
 ```
 
-| Error Code                                      | Field       | Condition                              |
-| ----------------------------------------------- | ----------- | -------------------------------------- |
-| `CAPACITY_OVERRIDE_START_DATE_REQUIRED`         | `startDate` | Start Date tidak diisi                 |
-| `CAPACITY_OVERRIDE_END_DATE_REQUIRED`           | `endDate`   | End Date tidak diisi                   |
-| `CAPACITY_OVERRIDE_INVALID_DATE`                 | `startDate` atau `endDate` | Nilai bukan date-only `YYYY-MM-DD` yang valid |
-| `CAPACITY_OVERRIDE_INVALID_DATE_RANGE`          | `endDate`   | End Date sebelum Start Date            |
-| `CAPACITY_OVERRIDE_CAPACITY_REQUIRED`           | `capacity`  | Capacity tidak diisi                   |
-| `CAPACITY_OVERRIDE_CAPACITY_NEGATIVE`           | `capacity`  | Capacity lebih kecil dari `0`          |
-| `CAPACITY_OVERRIDE_CAPACITY_EXCEEDS_LIMIT`      | `capacity`  | Capacity lebih besar dari `24`         |
-| `CAPACITY_OVERRIDE_CAPACITY_INVALID_INCREMENT`  | `capacity`  | Capacity bukan kelipatan `0.5`         |
-| `CAPACITY_OVERRIDE_DESCRIPTION_REQUIRED`        | `description` | Description kosong setelah trim       |
-| `CAPACITY_OVERRIDE_DESCRIPTION_TOO_LONG`        | `description` | Description melebihi 100 karakter     |
-| `CAPACITY_OVERRIDE_OVERLAPS`                    | —           | Periode overlap untuk Team Member sama |
-| `CAPACITY_OVERRIDE_NOT_FOUND`                   | —           | Capacity Override tidak ditemukan      |
-| `TEAM_MEMBER_NOT_FOUND`                         | —           | Parent Team Member tidak ditemukan     |
-| `INVALID_PAGE`                                  | `page`      | Page tidak valid                       |
-| `INVALID_PAGE_SIZE`                             | `pageSize`  | Page size tidak valid                  |
-| `INVALID_REQUEST`                               | —           | Update mengirim field yang tidak diterima |
-| `INVALID_EFFECTIVE_DATE`                        | `effectiveDate` | Filter bukan date-only `YYYY-MM-DD` yang valid |
+| Error Code                                     | Field                      | Condition                                      |
+| ---------------------------------------------- | -------------------------- | ---------------------------------------------- |
+| `CAPACITY_OVERRIDE_START_DATE_REQUIRED`        | `startDate`                | Start Date tidak diisi                         |
+| `CAPACITY_OVERRIDE_END_DATE_REQUIRED`          | `endDate`                  | End Date tidak diisi                           |
+| `CAPACITY_OVERRIDE_INVALID_DATE`               | `startDate` atau `endDate` | Nilai bukan date-only `YYYY-MM-DD` yang valid  |
+| `CAPACITY_OVERRIDE_INVALID_DATE_RANGE`         | `endDate`                  | End Date sebelum Start Date                    |
+| `CAPACITY_OVERRIDE_CAPACITY_REQUIRED`          | `capacity`                 | Capacity tidak diisi                           |
+| `CAPACITY_OVERRIDE_CAPACITY_NEGATIVE`          | `capacity`                 | Capacity lebih kecil dari `0`                  |
+| `CAPACITY_OVERRIDE_CAPACITY_EXCEEDS_LIMIT`     | `capacity`                 | Capacity lebih besar dari `24`                 |
+| `CAPACITY_OVERRIDE_CAPACITY_INVALID_INCREMENT` | `capacity`                 | Capacity bukan kelipatan `0.5`                 |
+| `CAPACITY_OVERRIDE_DESCRIPTION_REQUIRED`       | `description`              | Description kosong setelah trim                |
+| `CAPACITY_OVERRIDE_DESCRIPTION_TOO_LONG`       | `description`              | Description melebihi 100 karakter              |
+| `CAPACITY_OVERRIDE_OVERLAPS`                   | —                          | Periode overlap untuk Team Member sama         |
+| `CAPACITY_OVERRIDE_NOT_FOUND`                  | —                          | Capacity Override tidak ditemukan              |
+| `TEAM_MEMBER_NOT_FOUND`                        | —                          | Parent Team Member tidak ditemukan             |
+| `INVALID_PAGE`                                 | `page`                     | Page tidak valid                               |
+| `INVALID_PAGE_SIZE`                            | `pageSize`                 | Page size tidak valid                          |
+| `INVALID_REQUEST`                              | —                          | Update mengirim field yang tidak diterima      |
+| `INVALID_EFFECTIVE_DATE`                       | `effectiveDate`            | Filter bukan date-only `YYYY-MM-DD` yang valid |
 
 Error internal tidak boleh mengekspos stack trace, query, detail database, atau
 infrastructure. Frontend memetakan error menjadi pesan yang dapat dipahami dan
@@ -1317,33 +1317,33 @@ diwajibkan oleh AC-7, AC-20, serta AC-29.
 
 Wajib menguji:
 
-* Required Start Date dan End Date.
-* Required, trim, dan batas panjang Description `100` karakter.
-* Validasi date-only `YYYY-MM-DD`, termasuk tanggal kalender yang tidak valid.
-* Inclusive date range dan same-day period.
-* End Date sebelum Start Date.
-* Capacity `0`, nilai negatif, batas `24`, lebih dari `24`, dan increment `0.5`.
-* Overlap pada awal, akhir, enclosed, enclosing, dan same-day period.
-* Adjacent periods tidak dianggap overlap.
-* Update overlap check mengecualikan entity sendiri.
-* Ownership tidak berubah saat update.
-* Capacity Override tidak mengubah Daily Capacity dasar.
+- Required Start Date dan End Date.
+- Required, trim, dan batas panjang Description `100` karakter.
+- Validasi date-only `YYYY-MM-DD`, termasuk tanggal kalender yang tidak valid.
+- Inclusive date range dan same-day period.
+- End Date sebelum Start Date.
+- Capacity `0`, nilai negatif, batas `24`, lebih dari `24`, dan increment `0.5`.
+- Overlap pada awal, akhir, enclosed, enclosing, dan same-day period.
+- Adjacent periods tidak dianggap overlap.
+- Update overlap check mengecualikan entity sendiri.
+- Ownership tidak berubah saat update.
+- Capacity Override tidak mengubah Daily Capacity dasar.
 
 ## Application Tests
 
 Wajib menguji:
 
-* List dan get scoped berdasarkan Team Member.
-* Create, update, dan delete.
-* Team Member not found dan Capacity Override not found.
-* Parent/member mismatch tanpa mengungkap atau mengubah entity lain.
-* Reject overlapping create dan update.
-* Same period untuk Team Member berbeda.
-* Ownership tidak dapat dipindahkan.
-* Transaction rollback pada dependency failure.
-* Mutation tidak menjalankan Scheduling Engine.
-* Data terbaru tersedia untuk eksekusi Scheduling Engine berikutnya.
-* Optional Effective Date diteruskan tanpa mengubah inclusive semantics.
+- List dan get scoped berdasarkan Team Member.
+- Create, update, dan delete.
+- Team Member not found dan Capacity Override not found.
+- Parent/member mismatch tanpa mengungkap atau mengubah entity lain.
+- Reject overlapping create dan update.
+- Same period untuk Team Member berbeda.
+- Ownership tidak dapat dipindahkan.
+- Transaction rollback pada dependency failure.
+- Mutation tidak menjalankan Scheduling Engine.
+- Data terbaru tersedia untuk eksekusi Scheduling Engine berikutnya.
+- Optional Effective Date diteruskan tanpa mengubah inclusive semantics.
 
 Application unit tests menggunakan consumer-oriented repository test double dan
 tidak bergantung pada transport atau framework database.
@@ -1352,85 +1352,85 @@ tidak bergantung pada transport atau framework database.
 
 Wajib menguji:
 
-* Persist dan retrieve Capacity Override.
-* Team Member relationship dan scoped query.
-* Date-only dan decimal Capacity tersimpan secara presisi.
-* Created At dibuat otomatis dan tetap saat update; Updated At diperbarui saat
+- Persist dan retrieve Capacity Override.
+- Team Member relationship dan scoped query.
+- Date-only dan decimal Capacity tersimpan secara presisi.
+- Created At dibuat otomatis dan tetap saat update; Updated At diperbarui saat
   update.
-* Backend pagination serta total matching records.
-* Overlap detection untuk Team Member yang sama.
-* Period sama untuk Team Member berbeda.
-* Update self-exclusion.
-* Hard delete.
-* Concurrent overlapping create menjaga invariant.
-* Transaction rollback.
-* Query dan index strategy untuk parent-scoped list, overlap check, dan ordering
+- Backend pagination serta total matching records.
+- Overlap detection untuk Team Member yang sama.
+- Period sama untuk Team Member berbeda.
+- Update self-exclusion.
+- Hard delete.
+- Concurrent overlapping create menjaga invariant.
+- Transaction rollback.
+- Query dan index strategy untuk parent-scoped list, overlap check, dan ordering
   setelah ordering diputuskan.
-* Exact Start Date, inside period, exact End Date, before/after exclusion,
+- Exact Start Date, inside period, exact End Date, before/after exclusion,
   parent scope, filtered count/limit/offset, dan deterministic ordering.
-* Perilaku yang setara pada PostgreSQL dan MySQL sesuai database rules project.
+- Perilaku yang setara pada PostgreSQL dan MySQL sesuai database rules project.
 
 ## API Integration Tests
 
 Wajib menguji:
 
-* Seluruh nested HTTP method dan path.
-* Request dan response field mapping.
-* Required, trimmed, dan maximum-length Description.
-* Date-only serialization.
-* Invalid date-only value menghasilkan `CAPACITY_OVERRIDE_INVALID_DATE` dan field
+- Seluruh nested HTTP method dan path.
+- Request dan response field mapping.
+- Required, trimmed, dan maximum-length Description.
+- Date-only serialization.
+- Invalid date-only value menghasilkan `CAPACITY_OVERRIDE_INVALID_DATE` dan field
   yang tepat.
-* Success status `200`, `201`, dan `204`.
-* Seluruh minimum error code dan HTTP status.
-* Update body tidak menerima atau mengubah Team Member ID.
-* Parent/member mismatch.
-* Backend validation ketika frontend dilewati.
-* Pagination default `5`, metadata, invalid page, dan invalid page size.
-* Valid dan invalid Effective Date query serta filtered pagination metadata.
-* Overlap conflict dan not-found behavior.
-* Concurrent overlapping create.
-* Database persistence dan rollback.
+- Success status `200`, `201`, dan `204`.
+- Seluruh minimum error code dan HTTP status.
+- Update body tidak menerima atau mengubah Team Member ID.
+- Parent/member mismatch.
+- Backend validation ketika frontend dilewati.
+- Pagination default `5`, metadata, invalid page, dan invalid page size.
+- Valid dan invalid Effective Date query serta filtered pagination metadata.
+- Overlap conflict dan not-found behavior.
+- Concurrent overlapping create.
+- Database persistence dan rollback.
 
 ## Frontend Tests
 
 Wajib menguji:
 
-* Capacity Override diakses dari Members tanpa standalone sidebar menu.
-* Initial skeleton atau loader lokal.
-* Scoped list success.
-* Description sebagai list title serta Date dan Capacity sebagai subtitle.
-* Empty state dan Add action.
-* List error dan Retry.
-* Pagination default, visible range, serta previous/next navigation.
-* Tidak menampilkan search.
-* Create dan same-day override.
-* Satu Date Range field membuka calendar dan memilih Start Date serta End Date
+- Capacity Override diakses dari Members tanpa standalone sidebar menu.
+- Initial skeleton atau loader lokal.
+- Scoped list success.
+- Description sebagai list title serta Date dan Capacity sebagai subtitle.
+- Empty state dan Add action.
+- List error dan Retry.
+- Pagination default, visible range, serta previous/next navigation.
+- Tidak menampilkan search.
+- Create dan same-day override.
+- Satu Date Range field membuka calendar dan memilih Start Date serta End Date
   melalui dua pilihan tanggal.
-* Pilihan kedua yang lebih awal menggantikan Start Date dan tetap menunggu End
+- Pilihan kedua yang lebih awal menggantikan Start Date dan tetap menunggu End
   Date.
-* Pilihan kedua yang sama menghasilkan range satu hari.
-* Calendar berpindah ke atas ketika ruang viewport di bawah field tidak cukup.
-* Seluruh field validation dan boundary Capacity.
-* Description required, trim, maximum length, dan draft preservation.
-* Capacity draft tidak berubah saat diketik, dibulatkan ke increment `0.5` saat
+- Pilihan kedua yang sama menghasilkan range satu hari.
+- Calendar berpindah ke atas ketika ruang viewport di bawah field tidak cukup.
+- Seluruh field validation dan boundary Capacity.
+- Description required, trim, maximum length, dan draft preservation.
+- Capacity draft tidak berubah saat diketik, dibulatkan ke increment `0.5` saat
   blur, dan dinormalisasi ulang saat submit.
-* Capacity input menolak karakter selain digit dan satu titik desimal tanpa
+- Capacity input menolak karakter selain digit dan satu titik desimal tanpa
   menghapus draft valid yang sudah diketik.
-* Overlap error.
-* Edit form dan ownership tetap berasal dari context.
-* Add dan Edit menyembunyikan list, filter, pagination, Add action, serta row
+- Overlap error.
+- Edit form dan ownership tetap berasal dari context.
+- Add dan Edit menyembunyikan list, filter, pagination, Add action, serta row
   actions; Cancel memulihkan list state sebelumnya.
-* Delete confirmation, cancellation, dan success.
-* Not-found dan backend validation error mapping.
-* Failed submission mempertahankan draft.
-* Duplicate submission prevention.
-* Cache invalidation atau equivalent refresh setelah create, update, dan delete.
-* Loading feedback untuk setiap mutation.
-* Keyboard interaction, focus management, accessible labels, dan dynamic status.
-* Responsive behavior pada supported screen sizes.
-* Effective Date control, page reset, preservation selama pagination/mutation,
+- Delete confirmation, cancellation, dan success.
+- Not-found dan backend validation error mapping.
+- Failed submission mempertahankan draft.
+- Duplicate submission prevention.
+- Cache invalidation atau equivalent refresh setelah create, update, dan delete.
+- Loading feedback untuk setiap mutation.
+- Keyboard interaction, focus management, accessible labels, dan dynamic status.
+- Responsive behavior pada supported screen sizes.
+- Effective Date control, page reset, preservation selama pagination/mutation,
   no-results, Clear, filtered retry, dan filtered cache invalidation.
-* Effective Date menggunakan shared calendar pattern, memilih satu tanggal, dan
+- Effective Date menggunakan shared calendar pattern, memilih satu tanggal, dan
   mempertahankan viewport-aware placement yang sama dengan Date Range.
 
 ---

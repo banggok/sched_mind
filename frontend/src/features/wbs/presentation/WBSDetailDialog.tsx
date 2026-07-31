@@ -12,12 +12,14 @@ import type {
   WBSGateway,
 } from "../application/wbsGateway";
 import type { WBSNode } from "../domain/wbs";
+import { summarizeWBS } from "../domain/wbsSummary";
 import { Alert } from "../../../shared/presentation/Alert";
 import { Button } from "../../../shared/presentation/Button";
 import { CalendarPopover } from "../../../shared/presentation/CalendarPopover";
 import { Dialog } from "../../../shared/presentation/Dialog";
 import { formatDateOnly } from "../../../shared/presentation/formatDateOnly";
 import { FormField } from "../../../shared/presentation/FormField";
+import { WBSSummary } from "./WBSSummary";
 import {
   isDecimalDraft,
   parseDecimalDraft,
@@ -346,10 +348,13 @@ export function WBSDetailDialog({
       </p>
       {node.hasChildren ? (
         <>
-          <Alert tone="success" className="mt-5">
-            This group contains {node.children.length} direct item items. Task
-            details are managed on tasks inside this group.
-          </Alert>
+          <div className="mt-5">
+            <WBSSummary
+              summary={summarizeWBS(node.children)}
+              subject="group"
+              idPrefix={`group-${node.id}-summary`}
+            />
+          </div>
           <div className="mt-6 flex justify-end">
             <Button onClick={onClose}>Close</Button>
           </div>

@@ -613,6 +613,74 @@ func acceptanceDatabase(t *testing.T) *gorm.DB {
 	return database
 }
 
+func TestCreateWBSAcceptanceSkipsSchedulerForNameOnlyTaskWhenProjectHasCompletedHistoricalOverCapacityTask_US6_AC29_US4_AC23(t *testing.T) {
+	database := acceptanceDatabase(t)
+	now := time.Date(2026, 8, 1, 8, 0, 0, 0, time.UTC)
+	anchor := mustDate("2026-08-03")
+	roleID, memberID := "role", "member"
+	if err := database.Create(&acceptanceRoleRecord{ID: roleID, Name: "Engineer"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Create(&acceptanceMemberRecord{
+		ID: memberID, Name: "Rani", RoleID: roleID,
+		DailyCapacity: "5", BufferPercentage: "0", CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Create(&acceptanceProjectRecord{
+		ID: "project", Name: "Project", NameKey: "project", Status: "open", Priority: 1,
+		AutomaticScheduling: true, AutoCalculateDate: true, SchedulingStartDate: &anchor,
+		ProjectBuffer: 0, CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	historicalEffort := 600
+	if err := database.Create(&acceptanceTaskRecord{
+		ID: "completed", ProjectID: "project", ParentKey: "", Name: "Completed", NameKey: "completed",
+		Position: 1, RoleID: &roleID, AssigneeID: &memberID, EffortMinutes: &historicalEffort,
+		ExecutionStart: &anchor, ExecutionEnd: &anchor, CommitmentStart: &anchor, CommitmentEnd: &anchor,
+		ActualEnd: &anchor, CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	scheduler := schedulingapplication.NewService(NewWithDependencies(
+		database,
+		func() time.Time { return now },
+		func() (string, error) { return "automatic", nil },
+	))
+	wbsService := wbsapplication.NewServiceWithDependencies(
+		wbsgormrepo.New(database),
+		scheduler,
+		func() time.Time { return now.Add(time.Hour) },
+		func() (string, error) { return "new-task", nil },
+	)
+
+	created, err := wbsService.Create(context.Background(), "project", nil, "New Task", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created == nil || created.ID != "new-task" {
+		t.Fatalf("created WBS = %#v, want new-task", created)
+	}
+	storedCompleted := loadAcceptanceTask(t, database, "completed")
+	assertDate(t, "completed execution start", storedCompleted.ExecutionStart, "2026-08-03")
+	assertDate(t, "completed execution end", storedCompleted.ExecutionEnd, "2026-08-03")
+	assertDate(t, "completed Actual End", storedCompleted.ActualEnd, "2026-08-03")
+	storedNewTask := loadAcceptanceTask(t, database, "new-task")
+	if storedNewTask.AssigneeID != nil ||
+		storedNewTask.EffortMinutes != nil ||
+		storedNewTask.ExecutionStart != nil ||
+		storedNewTask.ExecutionEnd != nil ||
+		storedNewTask.CommitmentStart != nil ||
+		storedNewTask.CommitmentEnd != nil ||
+		storedNewTask.ExecutionUnscheduledReason != nil ||
+		storedNewTask.CommitmentUnscheduledReason != nil {
+		t.Fatalf("new Task projection = %#v, want empty unscheduled state without scheduler projection", storedNewTask)
+	}
+}
+
 func TestAutomaticSchedulingWorkflowGeneratesDatesOwnershipAndLag_AC2_AC9_AC11_AC16_AC22_AC23_AC24_AC27_AC28_AC35_AC37(t *testing.T) {
 	database := acceptanceDatabase(t)
 	now := time.Date(2026, 8, 1, 8, 0, 0, 0, time.UTC)
