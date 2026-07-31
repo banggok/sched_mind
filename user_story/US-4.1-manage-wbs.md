@@ -1,8 +1,10 @@
 # US-4.1 Manage WBS
 
-> **Product decision update — US-6.1:** WBS mutations use the concrete
-> portfolio scheduler when Automatic Scheduling is ON. Dependency remains owned
-> by US-5.1; Task Lag and generated timeline algorithms are owned by US-6.1.
+> **Product decision updates — US-6.1 and US-4.3:** WBS mutations use the
+> concrete portfolio scheduler when Automatic Scheduling is ON. Dependency
+> remains owned by US-5.1; Task Lag and generated timeline algorithms are owned
+> by US-6.1. View Group and Edit Project may display the recursive read-only summary owned by
+> US-4.3 without making executable attributes belong to the Group or writable aggregate fields belong to Project.
 
 ## User Story
 
@@ -40,6 +42,7 @@ entity types.
 - Forecast Scheduler
 - Dependency editor and graph rules; owned by US-5.1
 - Lag validation and calculation; owned by US-6.1
+- Recursive Group and whole-Project timeline/effort-completion summary; owned by US-4.3
 
 ---
 
@@ -48,7 +51,9 @@ entity types.
 - Unlimited WBS hierarchy.
 - Leaf node automatically becomes Executable WBS.
 - Parent node automatically becomes Grouping WBS.
-- Grouping WBS cannot own executable attributes.
+- Grouping WBS cannot own executable attributes. A Group may display the
+  read-only recursive descendant summary defined by US-4.3; the summary is not
+  persisted on the Group.
 - When adding the first child to an Executable WBS, display a warning and move executable attributes to the first child.
 - Manual Execution/Commitment Timeline is editable only when Automatic Scheduling is OFF.
 - Actual End is only available on Executable WBS.
@@ -105,10 +110,11 @@ entity types.
 17. With Automatic Scheduling ON, a successful delete invokes concrete portfolio recalculation and refreshes affected generated dates.
 18. With Automatic Scheduling OFF, successful deletion preserves remaining manual dates.
 19. Executable WBS supports Role, Assignee, Effort, Manual Execution Timeline, Manual Commitment Timeline and Actual End.
-20. Grouping WBS cannot edit executable fields.
+20. Grouping WBS cannot own or edit executable fields; View Group may display
+    the read-only recursive descendant summary defined by US-4.3.
 21. Manual timeline is editable only when Automatic Scheduling is OFF.
 22. Actual End is only available for Executable WBS.
-23. With Automatic Scheduling ON, create, sibling reorder, Assignee change, Effort change, and structural conversion invoke concrete portfolio recalculation.
+23. With Automatic Scheduling ON, a root or child Task created only with Name and without structural conversion persists with empty generated dates and does not invoke concrete portfolio recalculation. Create that converts an existing Executable WBS and moves executable data or dependency endpoints, sibling reorder, Assignee change, Effort change, Lag change, and other established structural conversions still invoke concrete portfolio recalculation.
 24. Rename and Role-only changes do not invoke scheduling when Assignee is unchanged.
 25. WBS mutation and required scheduling are atomic; scheduling failure rolls back hierarchy, executable data, generated dates, and confirmed UI state.
 26. On an Open unfinished automatic Task, blur previews generated dates and automatic dependency ownership without persisting the Task when Role, valid Effort, and valid Lag are present. Assignee may be selected or explicitly cleared: a selected Assignee previews its reconciled schedule, while a cleared Assignee still calls preview to remove stale automatic ownership and return a missing-Assignee unscheduled projection. Missing or invalid Role, Effort, or Lag makes no preview request.
@@ -119,9 +125,9 @@ entity types.
 
 ### Happy Path
 
-- Create root WBS.
-- Create nested WBS.
-- Convert Executable to Grouping.
+- Create root WBS with Name only and verify scheduler is not invoked and generated dates remain empty.
+- Create nested WBS under an existing Group with Name only and verify scheduler is not invoked.
+- Convert Executable to Grouping and verify concrete scheduling still runs when executable data or dependency endpoints move.
 - Rename WBS.
 - Move a leaf to another Grouping WBS.
 - Move a Grouping WBS together with its full subtree.
@@ -139,6 +145,8 @@ entity types.
 ### Validation
 
 - Attempt executable fields on Grouping WBS.
+- Verify View Group summary remains derived/read-only and does not create Group
+  executable state.
 - Add child to Executable containing data without confirming conversion.
 - Edit manual timeline while Automatic Scheduling is ON.
 - Move a node under itself.
@@ -193,6 +201,8 @@ not claim completion from a no-op adapter after US-6.1 is implemented.
 - Task is represented by Executable WBS.
 - Unlimited hierarchy.
 - Automatic Grouping/Executable conversion.
+- Group and whole-Project summary is a recursive read-only projection from descendant Tasks
+  owned by US-4.3; it is neither a Group executable attribute nor writable Project state.
 - A node and its subtree may move to any valid parent within the same Project.
 - Tree cycles and cross-Project moves are prohibited.
 - Only leaf WBS nodes may be deleted; parents must have all children moved or deleted first.
@@ -279,10 +289,13 @@ duplicate their domain rules.
 
 ### Scheduling Contracts
 
-With Automatic Scheduling ON, create root, create child, sibling reorder, move,
-delete, Assignee change, Effort change, and structural conversion invoke the
-concrete portfolio scheduler from US-6.1. Rename and Role-only changes do not
-when Assignee is unchanged. Cancelled, failed, and manual-mode mutations do not
+With Automatic Scheduling ON, creating a root or child using only Name does
+not invoke the concrete portfolio scheduler and leaves generated dates empty.
+Create invokes the scheduler only when it also converts an existing Executable
+WBS and moves executable data or dependency endpoints. Sibling reorder, move,
+delete, Assignee change, Effort change, Lag change, and other established
+structural conversions continue to invoke the concrete portfolio scheduler from
+US-6.1. Rename and Role-only changes do not when Assignee is unchanged. Cancelled, failed, and manual-mode mutations do not
 invoke it. Actual End invokes a separate Forecast recalculation contract. WBS
 mutation and required scheduling must commit or roll back atomically.
 
@@ -321,6 +334,13 @@ retarget failure rolls back both hierarchy and graph.
 A completed leaf or subtree containing completed descendants may be moved.
 Structural movement may change only parent/path and sibling position; completed
 executable fields and Actual End remain immutable.
+
+
+### Group and Project Summary Ownership
+
+US-4.3 owns the observable View Group and Edit Project summary. It recursively aggregates confirmed descendant Task Execution/Commitment timelines, separate schedule coverage, and Actual-End-based completed known Effort. Project is treated as logical WBS level `0`; all top-level WBS roots and descendants are included. US-4.1 continues to own the WBS tree and Group/Task conversion invariants.
+
+The summary does not weaken the rule that Grouping WBS cannot own executable attributes. No aggregate date, Effort, percentage, or completion value is persisted on Group or added as writable Project state. The existing complete WBS tree read contract is reused; a new backend endpoint or summary-specific production query requires separate approval.
 
 ### Capacity Allocation
 

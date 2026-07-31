@@ -22,6 +22,7 @@ run_step "Backend: go test ./..." go test ./...
 run_step "Backend: go test -race ./..." go test -race ./...
 
 cd "$project_root/frontend"
+run_step "Frontend: npx prettier --write ." npx prettier --write .
 run_step "Frontend: npm run format:check" npm run format:check
 run_step "Frontend: npm run lint" npm run lint
 run_step "Frontend: npm run typecheck" npm run typecheck

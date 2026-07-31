@@ -361,6 +361,50 @@ func TestEligibilityFixedReservationsAndClosedExclusion_AC4_AC30_AC31_AC32_AC34(
 		assertDate(t, "successor start", loadScheduledTask(t, database, "successor").ExecutionStart, "2026-08-10")
 	})
 
+	t.Run("completed historical effort may exceed current capacity without blocking recalculation", func(t *testing.T) {
+		repository, database := schedulerRepository(t)
+		seedProject(t, database, automaticProject("project", 1, "2026-08-03", 0))
+		seedMember(t, database, "member", "5", "0")
+
+		completed := schedulableTask("completed", "project", 1, "member", 600, 0)
+		completed.ExecutionStart = datePointer(mustDate("2026-08-03"))
+		completed.ExecutionEnd = datePointer(mustDate("2026-08-03"))
+		completed.CommitmentStart = datePointer(mustDate("2026-08-03"))
+		completed.CommitmentEnd = datePointer(mustDate("2026-08-03"))
+		completed.ActualEnd = datePointer(mustDate("2026-08-03"))
+		seedTask(t, database, completed)
+		seedTask(t, database, schedulableTask("new-task", "project", 2, "member", 300, 0))
+
+		if err := repository.RecalculatePortfolio(context.Background(), nil); err != nil {
+			t.Fatal(err)
+		}
+
+		storedCompleted := loadScheduledTask(t, database, "completed")
+		assertDate(t, "completed execution start", storedCompleted.ExecutionStart, "2026-08-03")
+		assertDate(t, "completed execution end", storedCompleted.ExecutionEnd, "2026-08-03")
+		assertDate(t, "new task starts after completed Actual End", loadScheduledTask(t, database, "new-task").ExecutionStart, "2026-08-04")
+	})
+
+	t.Run("locked timeline still rejects effort that exceeds fixed capacity", func(t *testing.T) {
+		repository, database := schedulerRepository(t)
+		project := automaticProject("locked", 1, "2026-08-03", 0)
+		project.Status = "locked"
+		seedProject(t, database, project)
+		seedMember(t, database, "member", "5", "0")
+
+		locked := schedulableTask("locked-task", "locked", 1, "member", 600, 0)
+		locked.ExecutionStart = datePointer(mustDate("2026-08-03"))
+		locked.ExecutionEnd = datePointer(mustDate("2026-08-03"))
+		locked.CommitmentStart = datePointer(mustDate("2026-08-03"))
+		locked.CommitmentEnd = datePointer(mustDate("2026-08-03"))
+		seedTask(t, database, locked)
+
+		err := repository.RecalculatePortfolio(context.Background(), nil)
+		if !errors.Is(err, schedulingdomain.ErrDataIntegrity) {
+			t.Fatalf("error = %v, want ErrDataIntegrity", err)
+		}
+	})
+
 	t.Run("locked dates reserve capacity while closed project is excluded", func(t *testing.T) {
 		repository, database := schedulerRepository(t)
 		lockedProject := automaticProject("locked", 1, "2026-08-03", 0)

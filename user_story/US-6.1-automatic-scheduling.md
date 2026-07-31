@@ -241,8 +241,7 @@ Automatic Scheduling = ON
 
 Successful confirmed mutations berikut menjalankan portfolio recalculation sesuai affected scope:
 
-- Create Executable WBS.
-- Create child yang menghasilkan atau memindahkan Executable WBS.
+- Create child yang mengonversi Executable WBS existing dan memindahkan executable data atau me-retarget dependency endpoint.
 - Sibling reorder.
 - Move WBS atau subtree.
 - Delete Executable WBS.
@@ -254,6 +253,8 @@ Successful confirmed mutations berikut menjalankan portfolio recalculation sesua
 - Manual dependency delete.
 - Project Priority Move Up/Down.
 - Automatic Scheduling `OFF → ON`.
+
+Create root atau child yang hanya menyimpan Name, tidak mengonversi Executable WBS existing, dan tidak memindahkan dependency endpoint tidak menjalankan scheduler. Mutation tersebut menyimpan Task baru dengan generated Execution dan Commitment dates kosong. Scheduler baru berjalan ketika mutation berikutnya mengubah scheduling input yang telah menjadi trigger, seperti Assignee, Effort, atau Lag, atau ketika create sekaligus melakukan structural conversion yang memengaruhi scheduling. Keberadaan completed Task pada Project tidak mengubah rule ini.
 
 Rename dan Role-only change tetap tidak menjalankan scheduler bila tidak mengubah Assignee.
 
@@ -291,6 +292,7 @@ Task dapat menerima generated dates jika:
 - unfinished (`Actual End == null`);
 - mempunyai Assignee;
 - mempunyai valid Effort;
+- mempunyai valid Lag;
 - owning Project active;
 - Automatic Scheduling ON pada owning Project;
 - Project Scheduling Start Date tersedia.
@@ -301,6 +303,16 @@ Jika satu input wajib tidak tersedia:
 - generated Execution dan Commitment dates kosong;
 - UI menampilkan safe unscheduled reason;
 - scheduler tidak mengarang Assignee, Effort, atau Start Date.
+
+Task eligibility dan mutation trigger adalah dua contract berbeda. Create root
+atau child pada US-4.1 hanya menerima structural input dan Name, sehingga create
+tersebut tidak menjalankan scheduler hanya untuk menghasilkan unscheduled
+projection. Scheduler berjalan ketika confirmed Task mutation membuat Task
+memenuhi scheduling input, atau ketika scheduling input pada Task yang sudah
+memiliki generated state/automatic ownership diubah atau dikosongkan sehingga
+stale dates dan ownership harus direconcile. Pada setiap run, scheduler
+mengevaluasi complete confirmed Task state, termasuk Project Scheduling Start
+Date.
 
 ### 8.2 Project Scheduling Start Date
 
@@ -1124,10 +1136,17 @@ For `8`, `30%`, and `20%`, Raw Commitment is `4.48` and rounded Commitment is `4
 **When** Lag or Effort changes successfully
 **Then** affected automatic dependency and both timelines are recalculated.
 
-### AC-29 — WBS and Project Priority triggers remain active
+### AC-29 — WBS create and structural triggers
 
-**When** established WBS create/reorder/move/delete/conversion or Project Priority Move succeeds
-**Then** concrete portfolio scheduling replaces the prior no-op port behaviour.
+**Given** Automatic Scheduling ON
+**When** root atau child Task dibuat hanya dengan Name tanpa structural conversion
+**Then** Task berhasil dibuat
+**And** concrete portfolio scheduler tidak dipanggil
+**And** generated Execution dan Commitment dates Task baru tetap kosong
+**And** existing Task, dependency, allocation, dan timeline tidak berubah.
+
+**When** create child mengonversi Executable WBS existing dan memindahkan executable data atau dependency endpoint, atau established reorder/move/delete/conversion atau Project Priority Move berhasil
+**Then** concrete portfolio scheduling tetap berjalan sesuai affected scope.
 
 ### AC-30 — Completed Task behaviour
 
@@ -1211,7 +1230,7 @@ For `8`, `30%`, and `20%`, Raw Commitment is `4.48` and rounded Commitment is `4
 
 | ID    | Scenario                                          | Expected Result                                                   |
 | ----- | ------------------------------------------------- | ----------------------------------------------------------------- |
-| TC-1  | Automatic Scheduling ON and Task create           | Concrete schedule runs; generated dates returned                  |
+| TC-1  | Automatic Scheduling ON and Name-only Task create | Task persists; scheduler is not invoked; generated dates stay empty |
 | TC-2  | Automatic Scheduling OFF and Task edit            | Manual dates unchanged; no auto dependency regeneration           |
 | TC-3  | Add Task form                                     | Lag defaults `0`                                                  |
 | TC-4  | Valid Lag save                                    | Integer persists                                                  |
@@ -1276,6 +1295,7 @@ For `8`, `30%`, and `20%`, Raw Commitment is `4.48` and rounded Commitment is `4
 | TC-63 | Two preview requests resolve out of order         | Only the newest draft preview remains visible                      |
 | TC-64 | Save while preview is in flight                   | Preview is aborted; one confirmed mutation persists and schedules  |
 | TC-65 | Assignee explicitly cleared then blurred          | Preview API runs; stale automatic ownership is removed; Task shows missing-Assignee unscheduled projection |
+| TC-66 | Create child converts executable parent or retargets dependency | Concrete portfolio scheduler runs atomically; failure rolls back conversion |
 
 ---
 
@@ -1299,7 +1319,9 @@ For `8`, `30%`, and `20%`, Raw Commitment is `4.48` and rounded Commitment is `4
 
 ### 21.2 Application Tests
 
-- Every established scheduler trigger.
+- Name-only root/child create skips scheduler and preserves empty generated dates.
+- Structural-conversion create remains an established scheduler trigger and rolls back on failure.
+- Every other established scheduler trigger.
 - Automatic Scheduling ON/OFF branching.
 - Portfolio affected-scope calculation.
 - Assignee old/new queue reconciliation.
@@ -1499,7 +1521,7 @@ Implementation must assess and update:
 - Automatic Scheduling ON is the only activation config for concrete auto scheduling and auto dependency.
 - Assignee change triggers Auto Dependency reconciliation.
 - Dependency mutation triggers schedule recalculation.
-- Effort, Lag, relevant WBS mutation, and Project Priority mutation retain their established scheduler triggers.
+- Effort, Lag, scheduling-relevant WBS mutation, and Project Priority mutation retain their established scheduler triggers. Name-only Task create is explicitly not a scheduling-relevant mutation.
 - Scheduler fills Execution Start/End.
 - Commitment Start/End are independently recalculated using lower Commitment Capacity.
 - Public Holiday/weekend → Capacity `0`; otherwise Capacity Override → Daily Capacity.

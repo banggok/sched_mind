@@ -67,7 +67,10 @@ Reopen Task bukan pembuatan Task pengganti, bukan perubahan Project Status, dan 
 - Mengubah Locked Project menjadi Open.
 - Menghapus atau membuat ulang dependency.
 - Mengubah Effort menjadi remaining effort.
-- Menyimpan percentage complete atau remaining effort.
+- Menyimpan percentage complete atau remaining effort pada Task atau Group.
+  US-4.3 boleh menampilkan derived read-only Effort Completion dari current
+  descendant Task data; nilai tersebut tidak dipersist dan bukan remaining
+  effort.
 - Menghitung ulang Execution Timeline.
 - Menghitung ulang Commitment Timeline.
 - Mengimplementasikan Forecast scheduling algorithm.
@@ -770,6 +773,10 @@ Clarify that:
 ### US-3.3 Configure Project Settings
 
 US-3.1 lifecycle rules are authoritative. Any wording that suggests a Locked Project can or must be changed back to Open is obsolete because `Locked → Open` is not an allowed Project transition. This story must not implement such a transition.
+
+### US-4.3 View Group and Project Summary
+
+Clarify that a successful confirmed Reopen may change every ancestor Group's and the owning Project's derived Effort Completion summary because Actual End is removed. The reopened Task's original Effort remains in total known Effort but leaves completed known Effort. No persisted percentage, remaining-effort field, new Forecast calculation, Group mutation, or Project aggregate mutation is introduced. Existing WBS cache invalidation must allow open or subsequently opened Group/Project summaries to refresh without a browser hard reload.
 
 ### Architecture/API Documentation
 

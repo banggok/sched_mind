@@ -15,6 +15,7 @@ import { ProjectsPage } from "../features/projects/presentation/ProjectsPage";
 import type { Project } from "../features/projects/domain/project";
 import { createHTTPWBSGateway } from "../features/wbs/infrastructure/httpWBSGateway";
 import { WBSPanel } from "../features/wbs/presentation/WBSPanel";
+import { ProjectWBSSummary } from "../features/wbs/presentation/ProjectWBSSummary";
 import { createHTTPDependenciesGateway } from "../features/dependencies/infrastructure/httpDependenciesGateway";
 
 const apiBaseURL = requiredEnvironment(
@@ -65,6 +66,13 @@ export function App() {
           gateway={projectsGateway}
           loadPublicHolidayDates={publicHolidaysGateway.calendar}
           onManageWBS={setWBSProject}
+          renderProjectSummary={(project) => (
+            <ProjectWBSSummary
+              key={project.id}
+              projectId={project.id}
+              gateway={wbsGateway}
+            />
+          )}
         />
       ) : activePage === "public-holidays" ? (
         <PublicHolidaysPage gateway={publicHolidaysGateway} />

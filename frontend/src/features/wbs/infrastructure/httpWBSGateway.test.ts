@@ -44,12 +44,17 @@ describe("HTTP WBS gateway tree cache", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
     const gateway = createHTTPWBSGateway("/api");
+    const confirmedChange = vi.fn();
+    expect(gateway.subscribeToConfirmedChanges).toBeTypeOf("function");
+    const unsubscribe = gateway.subscribeToConfirmedChanges?.(confirmedChange);
     await gateway.tree("project");
     await gateway.tree("project");
     expect(fetchMock).toHaveBeenCalledTimes(1);
     await gateway.create("project", undefined, "Task", false);
+    expect(confirmedChange).toHaveBeenCalledTimes(1);
     await gateway.tree("project");
     expect(fetchMock).toHaveBeenCalledTimes(3);
+    unsubscribe?.();
   });
 
   it("US-6.1 AC-2 AC-27 sends Task Lag through the API lag field", async () => {
@@ -207,6 +212,8 @@ describe("HTTP WBS gateway tree cache", () => {
       );
     vi.stubGlobal("fetch", fetchMock);
     const gateway = createHTTPWBSGateway("/api");
+    const confirmedChange = vi.fn();
+    const unsubscribe = gateway.subscribeToConfirmedChanges?.(confirmedChange);
 
     await gateway.tree("project");
     const preview = await gateway.previewExecutableSchedule("project", "task", {
@@ -242,6 +249,8 @@ describe("HTTP WBS gateway tree cache", () => {
         task: expect.objectContaining({ id: "task-1", name: "Task 1" }),
       }),
     ]);
+    expect(confirmedChange).not.toHaveBeenCalled();
+    unsubscribe?.();
   });
 });
 

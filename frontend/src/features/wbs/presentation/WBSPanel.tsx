@@ -52,12 +52,22 @@ export function WBSPanel({
   const [detail, setDetail] = useState<WBSNode>();
   const [conversion, setConversion] = useState(false);
   useEffect(() => {
+    return gateway.subscribeToConfirmedChanges?.(() =>
+      setReload((value) => value + 1),
+    );
+  }, [gateway]);
+  useEffect(() => {
     const controller = new AbortController();
     setLoading(true);
     setError("");
     void gateway
       .tree(project.id, controller.signal)
-      .then(setTree)
+      .then((confirmedTree) => {
+        setTree(confirmedTree);
+        setDetail((current) =>
+          current ? findNode(confirmedTree, current.id) : undefined,
+        );
+      })
       .catch((reason: unknown) => {
         if (!(reason instanceof DOMException && reason.name === "AbortError"))
           setError("Project structure could not be loaded. Try again.");
@@ -482,6 +492,17 @@ function TreeNode({
     </li>
   );
 }
+function findNode(nodes: WBSNode[], id: string): WBSNode | undefined {
+  const pending = [...nodes];
+  while (pending.length > 0) {
+    const node = pending.pop();
+    if (!node) continue;
+    if (node.id === id) return node;
+    pending.push(...node.children);
+  }
+  return undefined;
+}
+
 function flatten(nodes: WBSNode[]): WBSNode[] {
   return nodes.flatMap((node) => [node, ...flatten(node.children)]);
 }

@@ -116,6 +116,11 @@ memenuhi story ini.
 - Add/Edit Project menggunakan combined form dari US-3.3: Project Name,
   Automatic Scheduling, Scheduling Start Date, dan Project Buffer. Status dan
   Priority tidak dipilih user; Priority ditetapkan sistem pada posisi terendah.
+- Karena Project adalah WBS level `0`, Edit Project juga composes the read-only
+  whole-Project summary owned by US-4.3. Add Project does not display it.
+- Edit Project uses the existing shared wide Dialog variant so settings and the
+  summary are not constrained to the standard dialog width; Add Project may
+  retain the standard width.
 - Draft dipertahankan setelah validation atau backend failure.
 - Controls terkait dinonaktifkan selama mutation untuk mencegah duplicate
   submission tanpa memblokir seluruh page.
@@ -537,6 +542,15 @@ state.
 **Then** request ditolak dengan `PROJECT_HAS_CHILDREN`
 **And** Project tetap tersedia; lifecycle penyelesaian menggunakan Closed.
 
+### AC-25 — Edit Project whole-Project summary and width
+
+**Given** Project adalah logical WBS level `0`
+**When** Engineering Lead membuka Edit Project
+**Then** form composes the read-only whole-Project summary owned by US-4.3 from every confirmed Task in the Project
+**And** summary is absent from Add Project
+**And** Edit Project uses the existing shared wide Dialog variant while preserving responsive viewport behaviour
+**And** summary loading/failure does not change Project lifecycle, validation, or mutation rules.
+
 ---
 
 ## 15. API Contract
@@ -884,6 +898,7 @@ mengekspos stack trace, SQL, database, atau infrastructure detail.
 - Cache invalidation and stale-response protection.
 - Keyboard interaction, dialog focus, status accessibility, dan responsive
   layout.
+- Edit Project uses the shared wide Dialog variant and composes the US-4.3 whole-Project summary, including empty/loading/failure/Retry states without form draft, Save/Cancel, focus, or lifecycle regression.
 
 Tests verify observable behaviour and do not rely only on snapshots.
 
@@ -969,14 +984,14 @@ Future implementation must assess and update:
   reveals a contradiction.
 - `AGENTS.md` only if a durable cross-project rule is introduced.
 
-No existing documentation other than this new story is changed by authoring
-this requirement.
+This requirement is synchronized with US-3.3, US-4.1, US-4.2, US-4.3, and project architecture/context documentation. US-4.3 remains authoritative for summary calculations and loading/copy rules.
 
 ---
 
 ## 21. Locked Product Decisions
 
-- Project is the root planning entity in Epic 3.
+- Project is the root planning entity and logical WBS level `0`; no root WBS record is created.
+- Edit Project composes the read-only whole-Project summary owned by US-4.3 and uses the shared wide Dialog variant; Add Project does not display summary.
 - Visible navigation and page label is Projects under Project group.
 - Fields include ID, Name, Status, Start Date, End Date, Automatic Scheduling,
   Scheduling Start Date, Project Buffer, Created At, and Updated At; Project

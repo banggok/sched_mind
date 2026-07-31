@@ -22,9 +22,9 @@ Role merupakan master data sederhana.
 
 Role tidak memiliki atribut:
 
-* Grade
-* Squad
-* Department
+- Grade
+- Squad
+- Department
 
 ---
 
@@ -41,23 +41,23 @@ Role tidak memiliki atribut:
 
 ### Name Rules
 
-* Minimum 1 karakter setelah whitespace di awal dan akhir dihapus.
-* Maksimum 100 karakter.
-* Tidak boleh hanya berisi whitespace.
-* Tidak boleh duplikat secara case-insensitive.
-* Sistem menyimpan nama setelah proses trim.
-* Karakter huruf, angka, spasi, tanda hubung, garis miring, dan tanda kurung diperbolehkan.
-* ID role tidak berubah ketika nama role diubah.
+- Minimum 1 karakter setelah whitespace di awal dan akhir dihapus.
+- Maksimum 100 karakter.
+- Tidak boleh hanya berisi whitespace.
+- Tidak boleh duplikat secara case-insensitive.
+- Sistem menyimpan nama setelah proses trim.
+- Karakter huruf, angka, spasi, tanda hubung, garis miring, dan tanda kurung diperbolehkan.
+- ID role tidak berubah ketika nama role diubah.
 
 Contoh nama valid:
 
-* Backend
-* Frontend
-* Android
-* iOS
-* QA
-* Backend Engineer
-* QA Automation
+- Backend
+- Frontend
+- Android
+- iOS
+- QA
+- Backend Engineer
+- QA Automation
 
 ---
 
@@ -351,11 +351,11 @@ Seluruh error API menggunakan format konsisten:
 
 Contoh error code:
 
-* `ROLE_NAME_REQUIRED`
-* `ROLE_NAME_TOO_LONG`
-* `ROLE_NAME_ALREADY_EXISTS`
-* `ROLE_NOT_FOUND`
-* `ROLE_IN_USE`
+- `ROLE_NAME_REQUIRED`
+- `ROLE_NAME_TOO_LONG`
+- `ROLE_NAME_ALREADY_EXISTS`
+- `ROLE_NOT_FOUND`
+- `ROLE_IN_USE`
 
 ---
 
@@ -367,9 +367,9 @@ Contoh error code:
 
 Role berikut tersedia:
 
-* QA
-* Backend
-* Frontend
+- QA
+- Backend
+- Frontend
 
 **Steps**
 
@@ -380,9 +380,10 @@ Role berikut tersedia:
 1. Sistem menampilkan tiga role.
 2. Role ditampilkan dengan urutan:
 
-   * Backend
-   * Frontend
-   * QA
+   - Backend
+   - Frontend
+   - QA
+
 3. Tidak ada data yang hilang atau terduplikasi.
 
 ---
@@ -602,8 +603,8 @@ Role `Backend` tersedia.
 
 Role berikut tersedia:
 
-* Backend
-* Frontend
+- Backend
+- Frontend
 
 **Steps**
 
@@ -768,53 +769,53 @@ Codex wajib membuat automated test pada minimal tiga lapisan berikut.
 
 Menguji:
 
-* Nama role wajib diisi.
-* Nama role di-trim.
-* Panjang maksimum nama.
-* Rename mempertahankan ID.
-* Rule normalisasi nama.
+- Nama role wajib diisi.
+- Nama role di-trim.
+- Panjang maksimum nama.
+- Rename mempertahankan ID.
+- Rule normalisasi nama.
 
 ## Application / Service Test
 
 Menguji:
 
-* Create role.
-* Update role.
-* Delete unused role.
-* Reject duplicate role.
-* Reject deleting role in use.
-* Not-found handling.
-* Concurrent duplicate protection.
+- Create role.
+- Update role.
+- Delete unused role.
+- Reject duplicate role.
+- Reject deleting role in use.
+- Not-found handling.
+- Concurrent duplicate protection.
 
 ## API / Integration Test
 
 Menguji:
 
-* HTTP status.
-* Request dan response body.
-* Error response format.
-* Database persistence.
-* Unique constraint case-insensitive.
-* Referential integrity terhadap team member.
-* Backend search dan pagination, termasuk metadata serta default page size.
+- HTTP status.
+- Request dan response body.
+- Error response format.
+- Database persistence.
+- Unique constraint case-insensitive.
+- Referential integrity terhadap team member.
+- Backend search dan pagination, termasuk metadata serta default page size.
 
 ## Frontend Test
 
 Menguji:
 
-* Render list.
-* Skeleton saat initial load dan selama remote search.
-* Search list, clear search, dan no-results state.
-* Pagination dan reset ke halaman pertama setelah search berubah.
-* Empty state.
-* Create form.
-* Inline validation.
-* Edit role.
-* Delete confirmation.
-* Cancel deletion.
-* Error saat role sedang digunakan.
-* Refresh daftar setelah mutation berhasil.
-* Rename role memperbarui nama role pada daftar dan form Edit Member tanpa hard refresh.
+- Render list.
+- Skeleton saat initial load dan selama remote search.
+- Search list, clear search, dan no-results state.
+- Pagination dan reset ke halaman pertama setelah search berubah.
+- Empty state.
+- Create form.
+- Inline validation.
+- Edit role.
+- Delete confirmation.
+- Cancel deletion.
+- Error saat role sedang digunakan.
+- Refresh daftar setelah mutation berhasil.
+- Rename role memperbarui nama role pada daftar dan form Edit Member tanpa hard refresh.
 
 ---
 
