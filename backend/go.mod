@@ -1,6 +1,6 @@
 module github.com/banggok/sched_mind/backend
 
-go 1.24
+go 1.23
 
 require (
 	gorm.io/driver/postgres v1.6.0
