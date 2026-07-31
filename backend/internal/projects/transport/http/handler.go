@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/banggok/sched_mind/backend/internal/projects/domain"
+	schedulingdomain "github.com/banggok/sched_mind/backend/internal/scheduling/domain"
 	"github.com/banggok/sched_mind/backend/internal/shared/httpjson"
 	"github.com/banggok/sched_mind/backend/internal/shared/listing"
 )
@@ -56,20 +57,20 @@ type settingsRequest struct {
 	ProjectBuffer       *int    `json:"projectBuffer"`
 }
 type item struct {
-	ID                       string     `json:"id"`
-	Name                     string     `json:"name"`
-	Status                   string     `json:"status"`
-	StartDate                *string    `json:"startDate"`
-	EndDate                  *string    `json:"endDate"`
-	AutoCalculateDate        bool       `json:"autoCalculateDate"`
-	AutoDependencyByAssignee bool       `json:"autoDependencyByAssignee"`
-	AutomaticScheduling      bool       `json:"automaticScheduling"`
-	SchedulingStartDate      *string    `json:"schedulingStartDate"`
-	ProjectBuffer            int        `json:"projectBuffer"`
-	ProjectPriority          int        `json:"projectPriority"`
-	ClosedAt                 *time.Time `json:"closedAt"`
-	CreatedAt                time.Time  `json:"createdAt"`
-	UpdatedAt                time.Time  `json:"updatedAt"`
+	ID                  string     `json:"id"`
+	Name                string     `json:"name"`
+	Status              string     `json:"status"`
+	StartDate           *string    `json:"startDate"`
+	EndDate             *string    `json:"endDate"`
+	AutoCalculateDate   bool       `json:"autoCalculateDate"`
+	AutomaticScheduling bool       `json:"automaticScheduling"`
+	SchedulingStartDate *string    `json:"schedulingStartDate"`
+	ProjectBuffer       int        `json:"projectBuffer"`
+	ScheduleVersion     int64      `json:"scheduleVersion"`
+	ProjectPriority     int        `json:"projectPriority"`
+	ClosedAt            *time.Time `json:"closedAt"`
+	CreatedAt           time.Time  `json:"createdAt"`
+	UpdatedAt           time.Time  `json:"updatedAt"`
 }
 type itemResponse struct {
 	Data item `json:"data"`
@@ -226,7 +227,7 @@ func mapItem(value domain.Project) item {
 		utc := value.ClosedAt.UTC()
 		closedAt = &utc
 	}
-	return item{value.ID, value.Name, string(value.Status), dateString(value.StartDate), dateString(value.EndDate), value.AutoCalculateDate, value.AutoDependencyByAssignee, value.AutomaticScheduling, dateString(value.SchedulingStartDate), value.ProjectBuffer, value.Priority, closedAt, value.CreatedAt.UTC(), value.UpdatedAt.UTC()}
+	return item{value.ID, value.Name, string(value.Status), dateString(value.StartDate), dateString(value.EndDate), value.AutoCalculateDate, value.AutomaticScheduling, dateString(value.SchedulingStartDate), value.ProjectBuffer, value.ScheduleVersion, value.Priority, closedAt, value.CreatedAt.UTC(), value.UpdatedAt.UTC()}
 }
 
 func parseDate(w http.ResponseWriter, value *string) (*time.Time, bool) {
@@ -280,6 +281,10 @@ func writeError(w http.ResponseWriter, err error) {
 		status, code, message = 409, "PROJECT_SETTINGS_READ_ONLY", domain.ErrSettingsReadOnly.Error()
 	case errors.Is(err, domain.ErrProjectBufferInvalid):
 		status, code, message, field = 400, "PROJECT_BUFFER_INVALID", domain.ErrProjectBufferInvalid.Error(), "projectBuffer"
+	case errors.Is(err, schedulingdomain.ErrConcurrentConflict):
+		status, code, message = 409, "SCHEDULING_CONFLICT", "The schedule changed concurrently. Refresh and try again."
+	case errors.Is(err, schedulingdomain.ErrDataIntegrity), errors.Is(err, schedulingdomain.ErrNoConvergence):
+		status, code, message = 409, "SCHEDULING_DATA_INTEGRITY_CONFLICT", "The portfolio schedule is inconsistent and was not changed."
 	}
 	httpjson.Write(w, status, errorResponse{code, message, field})
 }

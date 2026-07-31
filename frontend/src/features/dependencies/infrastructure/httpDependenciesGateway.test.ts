@@ -8,6 +8,8 @@ function detail(completed: boolean) {
     blockedBy: [
       {
         id: "incoming-link",
+        source: "manual",
+        manualRemovable: true,
         task: {
           id: "reopened-task",
           name: "Build API",
@@ -102,5 +104,95 @@ describe("dependency cache invalidation after Task reopen", () => {
       gateway.candidates("other-task", "blockedBy", "", 1, 5),
     ).resolves.toEqual({ items: [], page: 1, pageSize: 5, totalItems: 0 });
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("automatic dependency ownership contract", () => {
+  it("US-6.1 AC-23 AC-24 maps shared ownership once with scheduler expected start", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            data: {
+              blockedBy: [],
+              blocks: [
+                {
+                  id: "shared-link",
+                  source: "both",
+                  manualRemovable: true,
+                  task: {
+                    id: "blocked",
+                    name: "Build API",
+                    projectId: "project",
+                    projectName: "Alpha",
+                    hierarchyPath: "Alpha > Build API",
+                    completed: false,
+                    expectedStart: "2026-08-10",
+                  },
+                },
+              ],
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      ),
+    );
+    const gateway = createHTTPDependenciesGateway("/api");
+
+    const result = await gateway.list("blocking");
+
+    expect(result.blocks).toEqual([
+      expect.objectContaining({
+        id: "shared-link",
+        source: "both",
+        manualRemovable: true,
+        task: expect.objectContaining({ expectedStart: "2026-08-10" }),
+      }),
+    ]);
+  });
+
+  it("US-6.1 AC-25 keeps an automatic relation as manual through the dedicated command", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const gateway = createHTTPDependenciesGateway("/api");
+
+    await gateway.keepAsManual("automatic/link");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/dependencies/automatic%2Flink/keep-manual",
+      { method: "POST" },
+    );
+  });
+
+  it("US-6.1 AC-23 rejects a dependency source outside manual, automatic, or both", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            data: {
+              blockedBy: [
+                {
+                  id: "invalid",
+                  source: "manual+automatic",
+                  manualRemovable: true,
+                  task: detail(false).blockedBy[0].task,
+                },
+              ],
+              blocks: [],
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      ),
+    );
+    const gateway = createHTTPDependenciesGateway("/api");
+
+    await expect(gateway.list("task")).rejects.toThrow(
+      "Dependency response is invalid.",
+    );
   });
 });

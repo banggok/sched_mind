@@ -17,10 +17,10 @@ describe("HTTP projects gateway", () => {
               startDate: null,
               endDate: null,
               autoCalculateDate: true,
-              autoDependencyByAssignee: true,
               automaticScheduling: true,
               schedulingStartDate: "2026-08-03",
               projectBuffer: 20,
+              scheduleVersion: 3,
               projectPriority: 1,
               closedAt: null,
               createdAt: "2026-07-26T00:00:00Z",
@@ -47,6 +47,7 @@ describe("HTTP projects gateway", () => {
       name: "Alpha",
       priority: 1,
       schedulingStartDate: "2026-08-03",
+      scheduleVersion: 3,
     });
   });
 

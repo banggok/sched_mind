@@ -76,7 +76,7 @@ func (s *Service) Update(ctx context.Context, id, name string, automaticScheduli
 	if err := domain.ValidateProjectBuffer(projectBuffer); err != nil {
 		return nil, err
 	}
-	value, err := s.store.UpdateDetails(ctx, id, name, automaticScheduling, schedulingStartDate, projectBuffer, s.now(), s.scheduler.RecalculateProjectSchedule)
+	value, err := s.store.UpdateDetails(ctx, id, name, automaticScheduling, schedulingStartDate, projectBuffer, s.now(), s.scheduler.RecalculateProjectSchedule, s.scheduler.MarkProjectUnscheduled)
 	if err != nil {
 		return nil, fmt.Errorf("update project: %w", err)
 	}
@@ -87,7 +87,7 @@ func (s *Service) Update(ctx context.Context, id, name string, automaticScheduli
 }
 
 func (s *Service) ChangeStatus(ctx context.Context, id string, target domain.Status) (*domain.Project, error) {
-	value, err := s.store.ChangeStatus(ctx, id, target, s.now())
+	value, err := s.store.ChangeStatus(ctx, id, target, s.now(), s.scheduler.RecalculateActiveProjects)
 	if err != nil {
 		return nil, fmt.Errorf("change project status: %w", err)
 	}
@@ -115,7 +115,7 @@ func (s *Service) UpdateSettings(ctx context.Context, id string, automaticSchedu
 	if err := domain.ValidateProjectBuffer(projectBuffer); err != nil {
 		return nil, err
 	}
-	value, err := s.store.UpdateSettings(ctx, id, automaticScheduling, schedulingStartDate, projectBuffer, s.now(), s.scheduler.RecalculateProjectSchedule)
+	value, err := s.store.UpdateSettings(ctx, id, automaticScheduling, schedulingStartDate, projectBuffer, s.now(), s.scheduler.RecalculateProjectSchedule, s.scheduler.MarkProjectUnscheduled)
 	if err != nil {
 		return nil, fmt.Errorf("update project settings: %w", err)
 	}

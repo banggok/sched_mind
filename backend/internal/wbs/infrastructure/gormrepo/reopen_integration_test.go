@@ -35,6 +35,8 @@ type reopenDependencyRecord struct {
 	ID             string `gorm:"primaryKey"`
 	BlockingTaskID string
 	BlockedTaskID  string
+	ManualOwned    bool
+	AutomaticOwned bool
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
 }
@@ -85,8 +87,8 @@ func seedReopenGraph(t *testing.T, db *gorm.DB, status string) nodeModel {
 		t.Fatal(err)
 	}
 	links := []reopenDependencyRecord{
-		{ID: "incoming-link", BlockingTaskID: "incoming", BlockedTaskID: "task", CreatedAt: created, UpdatedAt: updated},
-		{ID: "outgoing-link", BlockingTaskID: "task", BlockedTaskID: "outgoing", CreatedAt: created, UpdatedAt: updated},
+		{ID: "incoming-link", BlockingTaskID: "incoming", BlockedTaskID: "task", ManualOwned: true, CreatedAt: created, UpdatedAt: updated},
+		{ID: "outgoing-link", BlockingTaskID: "task", BlockedTaskID: "outgoing", ManualOwned: true, CreatedAt: created, UpdatedAt: updated},
 	}
 	if err := db.Create(&links).Error; err != nil {
 		t.Fatal(err)
@@ -253,6 +255,7 @@ func TestRepositoryReopenRefreshesDependencyProjectionAndCurrentCompletionRules_
 	seedReopenGraph(t, db, "open")
 	dependencies := dependencyrepo.New(db)
 	ctx := context.Background()
+	dependencyMutationAt := time.Date(2026, 7, 29, 9, 0, 0, 0, time.UTC)
 
 	beforeDetail, err := dependencies.List(ctx, "outgoing")
 	if err != nil {
@@ -268,7 +271,7 @@ func TestRepositoryReopenRefreshesDependencyProjectionAndCurrentCompletionRules_
 	if containsDependencyCandidate(beforeCandidates.Items, "task") {
 		t.Fatal("completed Task was eligible as a blocked candidate before Reopen")
 	}
-	if err := dependencies.Delete(ctx, "incoming-link", func(context.Context, []string) error { return nil }); !errors.Is(err, dependencydomain.ErrCompletedHistory) {
+	if err := dependencies.Delete(ctx, "incoming-link", dependencyMutationAt, func(context.Context, []string) error { return nil }); !errors.Is(err, dependencydomain.ErrCompletedHistory) {
 		t.Fatalf("completed dependency history error=%v", err)
 	}
 
@@ -290,7 +293,7 @@ func TestRepositoryReopenRefreshesDependencyProjectionAndCurrentCompletionRules_
 	if !containsDependencyCandidate(afterCandidates.Items, "task") {
 		t.Fatalf("reopened Task missing from blocked candidates: %#v", afterCandidates.Items)
 	}
-	if err := dependencies.Delete(ctx, "incoming-link", func(context.Context, []string) error { return nil }); err != nil {
+	if err := dependencies.Delete(ctx, "incoming-link", dependencyMutationAt.Add(time.Minute), func(context.Context, []string) error { return nil }); err != nil {
 		t.Fatalf("historical restriction did not use current Actual End: %v", err)
 	}
 }

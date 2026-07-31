@@ -9,7 +9,7 @@ export interface TeamMember {
   role: TeamMemberRole;
   dailyCapacity: number;
   bufferPercentage: number;
-  commitmentCapacity: number;
+  baseExecutionCapacity: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -107,12 +107,14 @@ export function normalizeTeamMemberInput(
   };
 }
 
-export function calculateCommitmentCapacity(
+export function calculateBaseExecutionCapacity(
   dailyCapacity: number,
   bufferPercentage: number,
 ): number {
-  const raw = dailyCapacity * (1 - bufferPercentage / 100);
-  return Math.floor(raw * 2 + 0.5 + Number.EPSILON) / 2;
+  const dailyHalfHours = Math.round(dailyCapacity * 2);
+  const bufferBasisPoints = Math.round(bufferPercentage * 100);
+  const rawHalfHours = (dailyHalfHours * (10_000 - bufferBasisPoints)) / 10_000;
+  return Math.round(rawHalfHours) / 2;
 }
 
 export function sortTeamMembers(members: TeamMember[]): TeamMember[] {

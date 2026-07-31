@@ -31,11 +31,11 @@ type Project struct {
 	StartDate                *time.Time
 	EndDate                  *time.Time
 	AutoCalculateDate        bool
-	AutoDependencyByAssignee bool
 	AutomaticScheduling      bool
 	SchedulingStartDate      *time.Time
 	ProjectBuffer            int
 	Priority                 int
+	ScheduleVersion          int64
 	ClosedAt                 *time.Time
 	LockedExecutionSnapshot  *string
 	LockedCommitmentSnapshot *string
@@ -51,10 +51,10 @@ func NewProject(id, name string, priority int, now time.Time) (*Project, error) 
 	if priority < 1 {
 		return nil, ErrPriorityInvalid
 	}
-	return &Project{ID: id, Name: normalized, Status: StatusOpen, AutoCalculateDate: true, AutoDependencyByAssignee: true, AutomaticScheduling: true, ProjectBuffer: DefaultProjectBuffer, Priority: priority, CreatedAt: now, UpdatedAt: now}, nil
+	return &Project{ID: id, Name: normalized, Status: StatusOpen, AutoCalculateDate: true, AutomaticScheduling: true, ProjectBuffer: DefaultProjectBuffer, Priority: priority, CreatedAt: now, UpdatedAt: now}, nil
 }
 
-func Rehydrate(id, name string, status Status, startDate, endDate *time.Time, autoCalculateDate, autoDependencyByAssignee, automaticScheduling bool, schedulingStartDate *time.Time, projectBuffer, priority int, closedAt *time.Time, executionSnapshot, commitmentSnapshot *string, createdAt, updatedAt time.Time) (*Project, error) {
+func Rehydrate(id, name string, status Status, startDate, endDate *time.Time, autoCalculateDate, automaticScheduling bool, schedulingStartDate *time.Time, projectBuffer, priority int, scheduleVersion int64, closedAt *time.Time, executionSnapshot, commitmentSnapshot *string, createdAt, updatedAt time.Time) (*Project, error) {
 	if _, err := NormalizeName(name); err != nil {
 		return nil, err
 	}
@@ -67,7 +67,7 @@ func Rehydrate(id, name string, status Status, startDate, endDate *time.Time, au
 	if err := ValidateProjectBuffer(projectBuffer); err != nil {
 		return nil, err
 	}
-	return &Project{ID: id, Name: name, Status: status, StartDate: startDate, EndDate: endDate, AutoCalculateDate: autoCalculateDate, AutoDependencyByAssignee: autoDependencyByAssignee, AutomaticScheduling: automaticScheduling, SchedulingStartDate: cloneDate(schedulingStartDate), ProjectBuffer: projectBuffer, Priority: priority, ClosedAt: closedAt, LockedExecutionSnapshot: executionSnapshot, LockedCommitmentSnapshot: commitmentSnapshot, CreatedAt: createdAt, UpdatedAt: updatedAt}, nil
+	return &Project{ID: id, Name: name, Status: status, StartDate: startDate, EndDate: endDate, AutoCalculateDate: autoCalculateDate, AutomaticScheduling: automaticScheduling, SchedulingStartDate: cloneDate(schedulingStartDate), ProjectBuffer: projectBuffer, Priority: priority, ScheduleVersion: scheduleVersion, ClosedAt: closedAt, LockedExecutionSnapshot: executionSnapshot, LockedCommitmentSnapshot: commitmentSnapshot, CreatedAt: createdAt, UpdatedAt: updatedAt}, nil
 }
 
 func ValidateProjectBuffer(value int) error {

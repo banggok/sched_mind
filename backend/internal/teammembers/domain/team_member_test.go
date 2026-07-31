@@ -41,7 +41,7 @@ func TestTeamMemberValidationAndUpdate(t *testing.T) {
 	if member.ID != "member-1" || !member.CreatedAt.Equal(now) {
 		t.Fatal("Update() changed immutable identity or creation time")
 	}
-	if member.RoleID != "role-2" || member.CommitmentCapacity() != 7 {
+	if member.RoleID != "role-2" || member.BaseExecutionCapacity() != 7 {
 		t.Fatal("Update() did not apply role or capacity values")
 	}
 }

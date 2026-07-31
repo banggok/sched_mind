@@ -19,12 +19,15 @@ type Timeline struct {
 }
 
 type ExecutableFields struct {
-	RoleID             *string
-	AssigneeID         *string
-	EffortMinutes      *int
-	ExecutionTimeline  Timeline
-	CommitmentTimeline Timeline
-	ActualEnd          *time.Time
+	RoleID                      *string
+	AssigneeID                  *string
+	EffortMinutes               *int
+	LagDays                     int
+	ExecutionTimeline           Timeline
+	CommitmentTimeline          Timeline
+	ExecutionUnscheduledReason  *string
+	CommitmentUnscheduledReason *string
+	ActualEnd                   *time.Time
 }
 
 type Node struct {
@@ -64,7 +67,7 @@ func New(id, projectID string, parentID *string, name string, position int, now 
 func (node Node) IsExecutable() bool { return !node.HasChildren }
 func (node Node) HasExecutableData() bool {
 	f := node.Executable
-	return f.RoleID != nil || f.AssigneeID != nil || f.EffortMinutes != nil || f.ExecutionTimeline.Start != nil || f.ExecutionTimeline.End != nil || f.CommitmentTimeline.Start != nil || f.CommitmentTimeline.End != nil || f.ActualEnd != nil
+	return f.RoleID != nil || f.AssigneeID != nil || f.EffortMinutes != nil || f.LagDays != 0 || f.ExecutionTimeline.Start != nil || f.ExecutionTimeline.End != nil || f.CommitmentTimeline.Start != nil || f.CommitmentTimeline.End != nil || f.ExecutionUnscheduledReason != nil || f.CommitmentUnscheduledReason != nil || f.ActualEnd != nil
 }
 
 func (node *Node) Rename(name string, now time.Time) error {
@@ -80,6 +83,9 @@ func (node *Node) Rename(name string, now time.Time) error {
 }
 
 func ValidateExecutable(fields ExecutableFields, automaticScheduling bool, projectOpen bool) error {
+	if fields.LagDays < 0 {
+		return ErrLagInvalid
+	}
 	if fields.EffortMinutes != nil && (*fields.EffortMinutes < 30 || *fields.EffortMinutes%30 != 0) {
 		return ErrEffortInvalid
 	}
@@ -115,6 +121,12 @@ func (node *Node) UpdateExecutable(fields ExecutableFields, automaticScheduling 
 	}
 	if err := ValidateExecutable(fields, automaticScheduling, projectOpen); err != nil {
 		return err
+	}
+	if automaticScheduling {
+		fields.ExecutionTimeline = node.Executable.ExecutionTimeline
+		fields.CommitmentTimeline = node.Executable.CommitmentTimeline
+		fields.ExecutionUnscheduledReason = node.Executable.ExecutionUnscheduledReason
+		fields.CommitmentUnscheduledReason = node.Executable.CommitmentUnscheduledReason
 	}
 	node.Executable, node.UpdatedAt = cloneFields(fields), now
 	return nil
@@ -152,6 +164,8 @@ func cloneFields(value ExecutableFields) ExecutableFields {
 	value.EffortMinutes = cloneInt(value.EffortMinutes)
 	value.ExecutionTimeline = cloneTimeline(value.ExecutionTimeline)
 	value.CommitmentTimeline = cloneTimeline(value.CommitmentTimeline)
+	value.ExecutionUnscheduledReason = cloneString(value.ExecutionUnscheduledReason)
+	value.CommitmentUnscheduledReason = cloneString(value.CommitmentUnscheduledReason)
 	if value.ActualEnd != nil {
 		v := dateOnly(*value.ActualEnd)
 		value.ActualEnd = &v

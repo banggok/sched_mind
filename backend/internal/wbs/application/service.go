@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
+	dependencydomain "github.com/banggok/sched_mind/backend/internal/dependencies/domain"
 	"github.com/banggok/sched_mind/backend/internal/shared/identity"
 	"github.com/banggok/sched_mind/backend/internal/wbs/domain"
 )
@@ -14,7 +16,30 @@ type WriteExecutableInput struct {
 	Name                  *string
 	RoleID, AssigneeID    *string
 	EffortMinutes         *int
+	LagDays               int
 	Execution, Commitment domain.Timeline
+}
+
+type PreviewExecutableInput struct {
+	RoleID, AssigneeID *string
+	EffortMinutes      *int
+	LagDays            int
+}
+
+type SchedulePreview struct {
+	Task         *domain.Node
+	Dependencies dependencydomain.Detail
+}
+
+func (input PreviewExecutableInput) Validate() error {
+	if input.LagDays < 0 {
+		return domain.ErrLagInvalid
+	}
+	if input.RoleID == nil || strings.TrimSpace(*input.RoleID) == "" ||
+		input.EffortMinutes == nil {
+		return domain.ErrSchedulePreviewIncomplete
+	}
+	return nil
 }
 
 type Store interface {
@@ -23,6 +48,7 @@ type Store interface {
 	Create(context.Context, string, string, *string, string, bool, time.Time, func(context.Context, string) error, func(context.Context, []string) error) (*domain.Node, error)
 	Rename(context.Context, string, string, string, time.Time) (*domain.Node, error)
 	UpdateExecutable(context.Context, string, string, WriteExecutableInput, time.Time, func(context.Context, string) error) (*domain.Node, error)
+	PreviewExecutableSchedule(context.Context, string, string, PreviewExecutableInput, time.Time, func(context.Context, string) error) (*SchedulePreview, error)
 	Complete(context.Context, string, string, time.Time, time.Time, func(context.Context, string) error) (*domain.Node, error)
 	Reopen(context.Context, string, string, time.Time, func(context.Context, string) error) (*domain.Node, error)
 	Reorder(context.Context, string, string, domain.Direction, time.Time, func(context.Context, string) error) error
@@ -109,6 +135,20 @@ func (s *Service) UpdateExecutable(ctx context.Context, p, id string, input Writ
 	}
 	if value == nil {
 		return nil, errors.New("update executable WBS: store returned nil")
+	}
+	return value, nil
+}
+
+func (s *Service) PreviewExecutableSchedule(ctx context.Context, p, id string, input PreviewExecutableInput) (*SchedulePreview, error) {
+	if err := input.Validate(); err != nil {
+		return nil, err
+	}
+	value, err := s.store.PreviewExecutableSchedule(ctx, p, id, input, s.now(), s.scheduler.RecalculateProjectSchedule)
+	if err != nil {
+		return nil, fmt.Errorf("preview executable WBS schedule: %w", err)
+	}
+	if value == nil || value.Task == nil {
+		return nil, errors.New("preview executable WBS schedule: store returned nil")
 	}
 	return value, nil
 }

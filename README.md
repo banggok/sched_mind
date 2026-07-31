@@ -155,6 +155,7 @@ go fmt ./...
 go vet ./...
 go test ./...
 go test -race ./...
+cd ..
 ```
 
 ```sh
@@ -164,4 +165,5 @@ npm run lint
 npm run typecheck
 npm test
 npm run build
+cd ..
 ```

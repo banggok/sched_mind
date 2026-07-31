@@ -148,19 +148,20 @@ Project Management is an independent `projects` feature boundary. A Project is
 WBS level `0`; creation does not create a separate WBS row. PostgreSQL stores a
 normalized `name_key` for case-insensitive uniqueness and indexed prefix
 search, a unique positive integer Priority, nullable derived dates, lifecycle
-status, Closed At, and nullable locked baseline snapshots. Until WBS and
-timeline tables exist, the snapshots are nullable and close correctly rejects
-every newly created zero-leaf Project. Lock also rejects a zero-leaf Project,
-because there is no task timeline to protect. No provisional WBS or scheduler
-data is created by the Project feature.
+status, Closed At, a monotonic `schedule_version`, and nullable locked baseline
+snapshots. Lock and Close traverse descendant executable leaves from
+`wbs_nodes`; zero-leaf transitions are rejected. Lock serializes the current
+Execution and Commitment leaf timelines into immutable snapshots before the
+portfolio scheduler treats the Project as fixed reservations.
 
 Active Projects (`open` and `locked`) precede Closed Projects and order by
 Priority. Closed Projects order by Closed At descending and ID ascending.
 Priority Move Up/Down locks the active ordering, swaps with the adjacent active
-Project in one transaction, and invokes the minimal scheduling application
-port before commit. The current composition supplies a no-op adapter because
-the Scheduling Engine is outside implemented scope; application and repository
-tests enforce failure rollback for the future adapter.
+Project in one transaction, and invokes the concrete portfolio scheduler before
+commit. Lock, Close, and Closed-to-Open status changes use the same schedule
+mutation lock and transaction context. Scheduler failure rolls back the status,
+Closed At, snapshots, Priority, generated dates, dependency ownership, and daily
+allocation projection together.
 
 Project endpoints are:
 
@@ -187,20 +188,42 @@ anchor, the setting is retained but scheduling is not invoked. Disabling
 preserves existing timeline data.
 
 Scheduling Start Date is the only Project scheduling anchor. Automatic
-Scheduling may be configured without it, but no adapter may invent task dates;
-generated Execution and Commitment timelines remain empty and clients expose a
-validation warning. Executable WBS contains no Earliest Start, Start Constraint,
-or Task Anchor. Epic 6 will combine the Project anchor with predecessor
-readiness, availability, capacity, holidays, and lag. This foundation adds no
-scheduling calculation. Reads and writes continue to use the Project primary
-key, so the nullable non-filtered date column needs no index.
+Scheduling may be configured without it, but the scheduler never invents Task
+dates; it clears generated dates and stores an explicit unscheduled reason.
+Executable WBS contains no Earliest Start, Start Constraint, or Task Anchor.
+Lag belongs to the Task and is applied after the Project/dependency readiness
+anchor while zero-capacity dates are skipped.
 
-The production scheduling adapter remains no-op until Epic 6 implements task
-timelines and the concrete Scheduling Engine. Persistence and coordination are
-available now; timeline recalculation and Actual End preservation are not yet
-production capabilities. The update locks and filters by Project primary key,
-which is already indexed, so this single-row query requires no additional
-index.
+The production composition creates `internal/scheduling/application.Service`
+over the GORM scheduler repository and injects that same service into Project,
+WBS, and Dependency application services. Mutation repositories propagate their
+GORM transaction through `shared/persistence.WithTransaction`, so nested
+scheduler work uses a savepoint on the same database transaction rather than an
+independent commit.
+
+The scheduler loads all Open and Locked Projects, validates unique Priority and
+WBS ordering, resolves manual and retained automatic dependency edges, and
+allocates Execution and Commitment independently. Capacity arithmetic uses
+`math/big.Rat`: weekend/Public Holiday resolves to zero, otherwise Capacity
+Override replaces Member Daily Capacity, Member Buffer produces raw Execution
+Capacity and rounds it to the nearest `0.5` hour. Commitment Capacity is
+calculated independently after both Member Buffer and Project Buffer, then
+rounded to the nearest `0.5` hour. Allocation is
+inclusive-date, whole-Task, contiguous, and non-preemptive. Same-assignee
+successors may consume remaining capacity on the predecessor End Date;
+different-assignee successors begin on the next positive-capacity date.
+
+`task_schedule_allocations` stores exact decimal allocation and remaining
+capacity by Task, timeline, assignee, and date. Its primary key prevents duplicate
+Task/date projection. `projects.schedule_version` is updated optimistically.
+Every scheduling mutation first acquires the process-wide re-entrant
+serialization context, then opens or reuses its database transaction, then takes
+the PostgreSQL transaction-level advisory lock before row locks. Nested scheduler
+callbacks inherit both the serialization marker and transaction context, avoiding
+mutex/database lock-order inversion. SQLite test infrastructure intentionally
+treats the advisory lock as a no-op.
+Frontend gateways share a projection clock so an older in-flight Project, WBS,
+or Dependency response cannot repopulate state after a scheduling mutation.
 
 ## Frontend stack and structure
 
@@ -236,17 +259,20 @@ two executable WBS Tasks. Relations may cross active Projects, but Groups and
 Tasks belonging to Closed Projects cannot become new endpoints. Completed
 Tasks may be blockers; completed Tasks cannot become newly blocked, and an
 existing relation whose blocked Task is completed is historical read-only.
-Dependency editing in Phase 1 is composed into the contextual Edit Task dialog
-in Project Structure. Its feature contract is reusable by a future Task Grid;
-this implementation does not introduce a Gantt or scheduling algorithm.
+Dependency editing is composed into the contextual Edit Task dialog in Project
+Structure. One endpoint pair is persisted once with `manual_owned` and
+`automatic_owned` flags. The API projects the source as `manual`, `automatic`,
+or `both`; deleting a shared relation removes manual ownership only, while an
+automatic-only relation is read-only through generic delete and may be retained
+as manual.
 
-Dependency creation serializes active-portfolio graph mutations by locking
-active Project rows in deterministic ID order. It validates the complete graph
-inside the transaction, rejects direct and indirect cycles with a safe path,
-and relies on the composite unique constraint for concurrent duplicates.
-Successful create/delete invokes the portfolio invalidation port when an
-affected Project uses Automatic Scheduling. The adapter remains no-op until
-Epic 6.
+Dependency mutation serializes active-portfolio graph changes, validates the
+complete directed graph, rejects direct and indirect cycles with a safe path,
+and relies on the endpoint-pair unique constraint for concurrent duplicates.
+When any affected Project uses Automatic Scheduling, create, manual unlink, and
+keep-as-manual invoke concrete portfolio recalculation in the same transaction.
+Automatic reconciliation may change only automatic ownership; manual ownership
+and relation identity are preserved.
 
 Task deletion explicitly hard-deletes incoming and outgoing relations in the
 owning WBS transaction; foreign-key cascade is intentionally not used. When an
@@ -294,6 +320,22 @@ Task name and executable fields share one Edit Task dialog and one atomic
 indexed primary key; sibling-name uniqueness remains protected by the existing
 parent/name unique index. Group rename stays on the structural rename endpoint.
 No additional query or index is required for the combined Task update.
+
+For an Open unfinished Task with Automatic Scheduling enabled, Role, Assignee,
+Effort, and Lag blur events may request
+`POST .../executable/preview`. This endpoint is calculation-only: it applies the
+current draft inside the normal schedule-mutation serialization boundary, runs
+the concrete portfolio scheduler using the same database transaction, reads the
+generated Task projection plus the Task's dependency projection, and then
+deliberately rolls back the transaction. A cleared Assignee is still a valid
+preview input: the scheduler removes assignment-owned automatic dependencies,
+recalculates downstream work, and returns the Task as unscheduled with the safe
+missing-Assignee reason. Temporary Task fields, dependency ownership, daily
+allocations, Project dates, and schedule versions therefore never become
+confirmed state. The frontend renders preview dependency rows as
+unconfirmed and read-only, cancels or resolution-orders superseded preview
+requests, and does not invalidate confirmed WBS caches. The existing atomic
+`PUT .../executable` remains the only operation that persists the draft.
 
 Projects use the same feature-layer boundaries and shared list, search,
 pagination, dialog, loading, and Toast primitives. Their list cache identity is

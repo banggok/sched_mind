@@ -27,6 +27,7 @@ function DialogFixture() {
 
 function NestedDialogFixture() {
   const [nestedOpen, setNestedOpen] = useState(false);
+  const [confirmationOpen, setConfirmationOpen] = useState(false);
   return (
     <Dialog titleID="parent-dialog-title" onClose={() => undefined}>
       <h2 id="parent-dialog-title">Parent dialog</h2>
@@ -40,7 +41,20 @@ function NestedDialogFixture() {
           onClose={() => setNestedOpen(false)}
         >
           <h3 id="nested-dialog-title">Nested dialog</h3>
-          <button type="button">Nested action</button>
+          <button type="button" onClick={() => setConfirmationOpen(true)}>
+            Open confirmation
+          </button>
+          {confirmationOpen ? (
+            <Dialog
+              nested
+              kind="alertdialog"
+              titleID="confirmation-title"
+              onClose={() => setConfirmationOpen(false)}
+            >
+              <h4 id="confirmation-title">Confirmation</h4>
+              <button type="button">Confirm action</button>
+            </Dialog>
+          ) : null}
         </Dialog>
       ) : null}
     </Dialog>
@@ -74,9 +88,57 @@ describe("Dialog", () => {
 
     const nested = screen.getByRole("dialog", { name: "Nested dialog" });
     const nestedOverlay = nested.parentElement;
+    expect(parent.getAttribute("aria-hidden")).toBe("true");
+    expect(parent.getAttribute("aria-modal")).toBeNull();
+    expect(nested.dataset.dialogActive).toBe("true");
     expect(parent.contains(nested)).toBe(false);
     expect(nestedOverlay?.className).toContain("dialog-overlay-nested");
+    expect(nestedOverlay?.dataset.dialogDepth).toBe("1");
+    expect(nestedOverlay?.style.getPropertyValue("--dialog-layer-offset")).toBe(
+      "0",
+    );
     expect(nestedOverlay?.parentElement).toBe(document.body);
+  });
+
+  it("MVF-01 assigns a higher semantic layer to a dialog nested inside another nested dialog", async () => {
+    const user = userEvent.setup();
+    render(<NestedDialogFixture />);
+
+    const parent = screen.getByRole("dialog", { name: "Parent dialog" });
+    expect(parent.parentElement?.dataset.dialogDepth).toBe("0");
+    await user.click(
+      within(parent).getByRole("button", { name: "Open nested dialog" }),
+    );
+
+    const nested = screen.getByRole("dialog", { name: "Nested dialog" });
+    await user.click(
+      within(nested).getByRole("button", { name: "Open confirmation" }),
+    );
+
+    const confirmation = screen.getByRole("alertdialog", {
+      name: "Confirmation",
+    });
+    const confirmationOverlay = confirmation.parentElement;
+    expect(nested.contains(confirmation)).toBe(false);
+    expect(confirmationOverlay?.parentElement).toBe(document.body);
+    expect(confirmationOverlay?.dataset.dialogDepth).toBe("2");
+    expect(
+      confirmationOverlay?.style.getPropertyValue("--dialog-layer-offset"),
+    ).toBe("1");
+    expect(nested.getAttribute("aria-hidden")).toBe("true");
+    expect(nested.getAttribute("aria-modal")).toBeNull();
+    expect(confirmation.dataset.dialogActive).toBe("true");
+    expect(document.activeElement?.closest('[role="alertdialog"]')).toBe(
+      confirmation,
+    );
+
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(nested.getAttribute("aria-hidden")).toBeNull();
+    expect(nested.getAttribute("aria-modal")).toBe("true");
+    expect(document.activeElement).toBe(
+      within(nested).getByRole("button", { name: "Open confirmation" }),
+    );
   });
 
   it("manages initial focus, traps tab navigation, and restores focus", async () => {

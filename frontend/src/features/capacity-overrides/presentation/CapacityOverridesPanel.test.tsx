@@ -10,7 +10,7 @@ const member = {
   role: { id: "r", name: "Backend" },
   dailyCapacity: 8,
   bufferPercentage: 20,
-  commitmentCapacity: 6.5,
+  baseExecutionCapacity: 6.5,
   createdAt: new Date(),
   updatedAt: new Date(),
 };

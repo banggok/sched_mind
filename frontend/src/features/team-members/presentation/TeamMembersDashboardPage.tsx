@@ -13,7 +13,7 @@ import {
 } from "../application/teamMemberManagement";
 import type { TeamMembersGateway } from "../application/teamMembersGateway";
 import {
-  calculateCommitmentCapacity,
+  calculateBaseExecutionCapacity,
   normalizeTeamMemberInput,
   type TeamMember,
 } from "../domain/teamMember";
@@ -247,7 +247,9 @@ export function TeamMembersDashboardPage({
                     <p className="text-sm text-muted">
                       {member.role.name} · {member.dailyCapacity}h daily ·{" "}
                       {member.bufferPercentage}% buffer ·{" "}
-                      <strong>{member.commitmentCapacity}h commitment</strong>
+                      <strong>
+                        {member.baseExecutionCapacity}h base execution
+                      </strong>
                     </p>
                   </div>
                   <div className="flex flex-wrap gap-2">
@@ -428,8 +430,11 @@ export function TeamMembersDashboardPage({
               </label>
             </div>
             <p className="mt-4 rounded-control bg-brand-soft p-3 text-sm font-bold">
-              Commitment capacity:{" "}
-              {commitmentPreview(form.dailyCapacity, form.bufferPercentage)}{" "}
+              Base execution capacity:{" "}
+              {baseExecutionCapacityPreview(
+                form.dailyCapacity,
+                form.bufferPercentage,
+              )}{" "}
               hours/day
             </p>
             <div className="form-actions">
@@ -518,7 +523,10 @@ function filterRoles(
   );
 }
 
-function commitmentPreview(dailyDraft: string, bufferDraft: string): string {
+function baseExecutionCapacityPreview(
+  dailyDraft: string,
+  bufferDraft: string,
+): string {
   const daily = parseDecimalDraft(dailyDraft);
   const buffer = parseDecimalDraft(bufferDraft);
   if (
@@ -529,5 +537,5 @@ function commitmentPreview(dailyDraft: string, bufferDraft: string): string {
   ) {
     return "—";
   }
-  return String(calculateCommitmentCapacity(daily, buffer));
+  return String(calculateBaseExecutionCapacity(daily, buffer));
 }

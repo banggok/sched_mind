@@ -4,16 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	capacityoverrideapplication "github.com/banggok/sched_mind/backend/internal/capacityoverrides/application"
-	capacityoverridegormrepo "github.com/banggok/sched_mind/backend/internal/capacityoverrides/infrastructure/gormrepo"
-	dependencyapplication "github.com/banggok/sched_mind/backend/internal/dependencies/application"
-	dependencygormrepo "github.com/banggok/sched_mind/backend/internal/dependencies/infrastructure/gormrepo"
-	projectapplication "github.com/banggok/sched_mind/backend/internal/projects/application"
-	projectgormrepo "github.com/banggok/sched_mind/backend/internal/projects/infrastructure/gormrepo"
-	publicholidayapplication "github.com/banggok/sched_mind/backend/internal/publicholidays/application"
-	publicholidaygormrepo "github.com/banggok/sched_mind/backend/internal/publicholidays/infrastructure/gormrepo"
-	wbsapplication "github.com/banggok/sched_mind/backend/internal/wbs/application"
-	wbsgormrepo "github.com/banggok/sched_mind/backend/internal/wbs/infrastructure/gormrepo"
 	"log"
 	"net/http"
 	"os"
@@ -21,13 +11,25 @@ import (
 	"syscall"
 	"time"
 
+	capacityoverrideapplication "github.com/banggok/sched_mind/backend/internal/capacityoverrides/application"
+	capacityoverridegormrepo "github.com/banggok/sched_mind/backend/internal/capacityoverrides/infrastructure/gormrepo"
+	dependencyapplication "github.com/banggok/sched_mind/backend/internal/dependencies/application"
+	dependencygormrepo "github.com/banggok/sched_mind/backend/internal/dependencies/infrastructure/gormrepo"
 	"github.com/banggok/sched_mind/backend/internal/httpapi"
+	projectapplication "github.com/banggok/sched_mind/backend/internal/projects/application"
+	projectgormrepo "github.com/banggok/sched_mind/backend/internal/projects/infrastructure/gormrepo"
+	publicholidayapplication "github.com/banggok/sched_mind/backend/internal/publicholidays/application"
+	publicholidaygormrepo "github.com/banggok/sched_mind/backend/internal/publicholidays/infrastructure/gormrepo"
 	roleapplication "github.com/banggok/sched_mind/backend/internal/roles/application"
 	rolegormrepo "github.com/banggok/sched_mind/backend/internal/roles/infrastructure/gormrepo"
 	rolepostgres "github.com/banggok/sched_mind/backend/internal/roles/infrastructure/postgres"
+	schedulingapplication "github.com/banggok/sched_mind/backend/internal/scheduling/application"
+	schedulinggormrepo "github.com/banggok/sched_mind/backend/internal/scheduling/infrastructure/gormrepo"
 	teammemberapplication "github.com/banggok/sched_mind/backend/internal/teammembers/application"
 	teammembergormrepo "github.com/banggok/sched_mind/backend/internal/teammembers/infrastructure/gormrepo"
 	teammemberpostgres "github.com/banggok/sched_mind/backend/internal/teammembers/infrastructure/postgres"
+	wbsapplication "github.com/banggok/sched_mind/backend/internal/wbs/application"
+	wbsgormrepo "github.com/banggok/sched_mind/backend/internal/wbs/infrastructure/gormrepo"
 )
 
 func main() {
@@ -146,12 +148,14 @@ func run(config *configuration) (runError error) {
 		publicHolidayRepository,
 		func() time.Time { return time.Now().In(config.location) },
 	)
+	schedulingRepository := schedulinggormrepo.New(database)
+	schedulingService := schedulingapplication.NewService(schedulingRepository)
 	projectRepository := projectgormrepo.New(database)
-	projectService := projectapplication.NewService(projectRepository, projectapplication.NoopScheduler{})
+	projectService := projectapplication.NewService(projectRepository, schedulingService)
 	wbsRepository := wbsgormrepo.New(database)
-	wbsService := wbsapplication.NewService(wbsRepository, wbsapplication.NoopScheduler{})
+	wbsService := wbsapplication.NewService(wbsRepository, schedulingService)
 	dependencyRepository := dependencygormrepo.New(database)
-	dependencyService := dependencyapplication.NewService(dependencyRepository, dependencyapplication.NoopScheduler{})
+	dependencyService := dependencyapplication.NewService(dependencyRepository, schedulingService)
 
 	server := &http.Server{
 		Addr:    config.address,

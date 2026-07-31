@@ -49,14 +49,14 @@ type roleResponse struct {
 }
 
 type teamMemberResponse struct {
-	ID                 string       `json:"id"`
-	Name               string       `json:"name"`
-	Role               roleResponse `json:"role"`
-	DailyCapacity      float64      `json:"dailyCapacity"`
-	BufferPercentage   float64      `json:"bufferPercentage"`
-	CommitmentCapacity float64      `json:"commitmentCapacity"`
-	CreatedAt          string       `json:"createdAt"`
-	UpdatedAt          string       `json:"updatedAt"`
+	ID                    string       `json:"id"`
+	Name                  string       `json:"name"`
+	Role                  roleResponse `json:"role"`
+	DailyCapacity         float64      `json:"dailyCapacity"`
+	BufferPercentage      float64      `json:"bufferPercentage"`
+	BaseExecutionCapacity float64      `json:"baseExecutionCapacity"`
+	CreatedAt             string       `json:"createdAt"`
+	UpdatedAt             string       `json:"updatedAt"`
 }
 
 type listResponse struct {
@@ -183,14 +183,14 @@ func decodeInput(
 func mapResponse(record application.TeamMemberRecord) teamMemberResponse {
 	member := record.Member
 	return teamMemberResponse{
-		ID:                 member.ID,
-		Name:               member.Name,
-		Role:               roleResponse{ID: member.RoleID, Name: record.RoleName},
-		DailyCapacity:      member.DailyCapacity.Hours(),
-		BufferPercentage:   member.BufferPercentage.Percentage(),
-		CommitmentCapacity: member.CommitmentCapacity(),
-		CreatedAt:          member.CreatedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
-		UpdatedAt:          member.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
+		ID:                    member.ID,
+		Name:                  member.Name,
+		Role:                  roleResponse{ID: member.RoleID, Name: record.RoleName},
+		DailyCapacity:         member.DailyCapacity.Hours(),
+		BufferPercentage:      member.BufferPercentage.Percentage(),
+		BaseExecutionCapacity: member.BaseExecutionCapacity(),
+		CreatedAt:             member.CreatedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
+		UpdatedAt:             member.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
 	}
 }
 

@@ -13,7 +13,8 @@ import (
 type storeStub struct {
 	items    map[string]domain.Project
 	move     func(context.Context, string, domain.PriorityDirection, time.Time, func(context.Context) error) (*domain.Project, error)
-	settings func(context.Context, string, bool, *time.Time, int, time.Time, func(context.Context, string) error) (*domain.Project, error)
+	status   func(context.Context, string, domain.Status, time.Time, func(context.Context) error) (*domain.Project, error)
+	settings func(context.Context, string, bool, *time.Time, int, time.Time, func(context.Context, string) error, func(context.Context, string, string) error) (*domain.Project, error)
 }
 
 func newStoreStub() *storeStub { return &storeStub{items: map[string]domain.Project{}} }
@@ -42,7 +43,7 @@ func (s *storeStub) CreateNext(_ context.Context, id, name string, automatic boo
 	s.items[id] = *value
 	return value, nil
 }
-func (s *storeStub) UpdateDetails(ctx context.Context, id, name string, automatic bool, anchor *time.Time, buffer int, now time.Time, schedule func(context.Context, string) error) (*domain.Project, error) {
+func (s *storeStub) UpdateDetails(ctx context.Context, id, name string, automatic bool, anchor *time.Time, buffer int, now time.Time, schedule func(context.Context, string) error, markUnscheduled func(context.Context, string, string) error) (*domain.Project, error) {
 	value := s.items[id]
 	wasAutomatic := value.AutomaticScheduling
 	if err := value.Rename(name, now); err != nil {
@@ -53,8 +54,12 @@ func (s *storeStub) UpdateDetails(ctx context.Context, id, name string, automati
 			return nil, err
 		}
 	}
-	if !wasAutomatic && automatic {
-		if err := schedule(ctx, id); err != nil {
+	if automatic && (!wasAutomatic || anchor != nil) {
+		if anchor == nil {
+			if err := markUnscheduled(ctx, id, "missing anchor"); err != nil {
+				return nil, err
+			}
+		} else if err := schedule(ctx, id); err != nil {
 			return nil, err
 		}
 	}
@@ -68,7 +73,10 @@ func (s *storeStub) DeleteChildless(_ context.Context, id string) error {
 	delete(s.items, id)
 	return nil
 }
-func (s *storeStub) ChangeStatus(_ context.Context, id string, target domain.Status, now time.Time) (*domain.Project, error) {
+func (s *storeStub) ChangeStatus(ctx context.Context, id string, target domain.Status, now time.Time, schedule func(context.Context) error) (*domain.Project, error) {
+	if s.status != nil {
+		return s.status(ctx, id, target, now, schedule)
+	}
 	value, ok := s.items[id]
 	if !ok {
 		return nil, domain.ErrNotFound
@@ -82,22 +90,32 @@ func (s *storeStub) ChangeStatus(_ context.Context, id string, target domain.Sta
 func (s *storeStub) MovePriority(ctx context.Context, id string, direction domain.PriorityDirection, now time.Time, schedule func(context.Context) error) (*domain.Project, error) {
 	return s.move(ctx, id, direction, now, schedule)
 }
-func (s *storeStub) UpdateSettings(ctx context.Context, id string, automatic bool, anchor *time.Time, buffer int, now time.Time, schedule func(context.Context, string) error) (*domain.Project, error) {
+func (s *storeStub) UpdateSettings(ctx context.Context, id string, automatic bool, anchor *time.Time, buffer int, now time.Time, schedule func(context.Context, string) error, markUnscheduled func(context.Context, string, string) error) (*domain.Project, error) {
 	if s.settings != nil {
-		return s.settings(ctx, id, automatic, anchor, buffer, now, schedule)
+		return s.settings(ctx, id, automatic, anchor, buffer, now, schedule, markUnscheduled)
 	}
 	value := s.items[id]
 	if err := value.UpdateSettings(automatic, anchor, buffer, now); err != nil {
 		return nil, err
+	}
+	if automatic {
+		if anchor == nil {
+			if err := markUnscheduled(ctx, id, "missing anchor"); err != nil {
+				return nil, err
+			}
+		} else if err := schedule(ctx, id); err != nil {
+			return nil, err
+		}
 	}
 	s.items[id] = value
 	return &value, nil
 }
 
 type schedulerStub struct {
-	err       error
-	calls     int
-	projectID string
+	err               error
+	calls             int
+	projectID         string
+	unscheduledReason string
 }
 
 func (s *schedulerStub) RecalculateActiveProjects(context.Context) error { s.calls++; return s.err }
@@ -105,6 +123,33 @@ func (s *schedulerStub) RecalculateProjectSchedule(_ context.Context, id string)
 	s.calls++
 	s.projectID = id
 	return s.err
+}
+func (s *schedulerStub) MarkProjectUnscheduled(_ context.Context, id, reason string) error {
+	s.calls++
+	s.projectID = id
+	s.unscheduledReason = reason
+	return s.err
+}
+
+func TestServiceStatusCoordinatesPortfolioScheduler(t *testing.T) {
+	store := newStoreStub()
+	scheduler := &schedulerStub{}
+	store.status = func(ctx context.Context, id string, target domain.Status, now time.Time, schedule func(context.Context) error) (*domain.Project, error) {
+		if id != "p1" || target != domain.StatusLocked || now.IsZero() {
+			t.Fatalf("status command = %s %s %v", id, target, now)
+		}
+		if err := schedule(ctx); err != nil {
+			return nil, err
+		}
+		value, _ := domain.NewProject(id, "Alpha", 1, now)
+		value.Status = target
+		return value, nil
+	}
+	service := NewServiceWithDependencies(store, scheduler, time.Now, func() (string, error) { return "unused", nil })
+	value, err := service.ChangeStatus(context.Background(), "p1", domain.StatusLocked)
+	if err != nil || value == nil || value.Status != domain.StatusLocked || scheduler.calls != 1 {
+		t.Fatalf("status: %#v %v scheduler=%#v", value, err, scheduler)
+	}
 }
 
 func TestServiceSettingsCoordinatesProjectScheduler(t *testing.T) {

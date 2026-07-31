@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	dependencydomain "github.com/banggok/sched_mind/backend/internal/dependencies/domain"
 	"github.com/banggok/sched_mind/backend/internal/wbs/domain"
 )
 
@@ -142,3 +143,163 @@ func TestReopenRejectsNilStoreResultAsContractViolation_AC11(t *testing.T) {
 		t.Fatalf("value=%#v err=%v", value, err)
 	}
 }
+
+type previewStoreStub struct {
+	Store
+	preview func(context.Context, string, string, PreviewExecutableInput, time.Time, func(context.Context, string) error) (*SchedulePreview, error)
+}
+
+func (s previewStoreStub) PreviewExecutableSchedule(ctx context.Context, projectID, id string, input PreviewExecutableInput, now time.Time, schedule func(context.Context, string) error) (*SchedulePreview, error) {
+	return s.preview(ctx, projectID, id, input, now, schedule)
+}
+
+func TestPreviewExecutableScheduleRejectsIncompleteDraftWithoutStoreCall(t *testing.T) {
+	roleID, assigneeID, effortMinutes := "role", "member", 480
+	cases := []struct {
+		name  string
+		input PreviewExecutableInput
+	}{
+		{name: "missing role", input: PreviewExecutableInput{AssigneeID: &assigneeID, EffortMinutes: &effortMinutes}},
+		{name: "blank role", input: PreviewExecutableInput{RoleID: ptrString(" "), AssigneeID: &assigneeID, EffortMinutes: &effortMinutes}},
+		{name: "missing effort", input: PreviewExecutableInput{RoleID: &roleID, AssigneeID: &assigneeID}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			storeCalls := 0
+			store := previewStoreStub{preview: func(context.Context, string, string, PreviewExecutableInput, time.Time, func(context.Context, string) error) (*SchedulePreview, error) {
+				storeCalls++
+				return nil, errors.New("unexpected store call")
+			}}
+			service := NewServiceWithDependencies(store, &schedulerSpy{}, time.Now, func() (string, error) { return "unused", nil })
+
+			value, err := service.PreviewExecutableSchedule(context.Background(), "project", "task", tc.input)
+			if value != nil || !errors.Is(err, domain.ErrSchedulePreviewIncomplete) || storeCalls != 0 {
+				t.Fatalf("value=%#v err=%v store calls=%d", value, err, storeCalls)
+			}
+		})
+	}
+}
+
+func TestPreviewExecutableScheduleAllowsClearedAssigneeToReconcileDraft(t *testing.T) {
+	now := time.Date(2026, 7, 31, 10, 16, 0, 0, time.UTC)
+	roleID, effortMinutes := "role", 480
+	reason := "Task requires an Assignee before it can be scheduled."
+	scheduler := &schedulerSpy{}
+	storeCalls := 0
+	store := previewStoreStub{preview: func(ctx context.Context, projectID, id string, input PreviewExecutableInput, gotNow time.Time, schedule func(context.Context, string) error) (*SchedulePreview, error) {
+		storeCalls++
+		if projectID != "project" || id != "task" || gotNow != now {
+			t.Fatalf("unexpected preview scope: %q %q %v", projectID, id, gotNow)
+		}
+		if input.RoleID == nil || *input.RoleID != roleID || input.AssigneeID != nil || input.EffortMinutes == nil || *input.EffortMinutes != effortMinutes {
+			t.Fatalf("cleared-assignee preview input=%#v", input)
+		}
+		if err := schedule(ctx, projectID); err != nil {
+			return nil, err
+		}
+		return &SchedulePreview{
+			Task: &domain.Node{
+				ID:        id,
+				ProjectID: projectID,
+				Name:      "Build API",
+				Executable: domain.ExecutableFields{
+					RoleID:                     &roleID,
+					EffortMinutes:              &effortMinutes,
+					ExecutionUnscheduledReason: &reason,
+				},
+				Children: []domain.Node{},
+			},
+			Dependencies: dependencydomain.Detail{BlockedBy: []dependencydomain.Item{}, Blocks: []dependencydomain.Item{}},
+		}, nil
+	}}
+	service := NewServiceWithDependencies(store, scheduler, func() time.Time { return now }, func() (string, error) { return "unused", nil })
+
+	value, err := service.PreviewExecutableSchedule(context.Background(), "project", "task", PreviewExecutableInput{
+		RoleID:        &roleID,
+		AssigneeID:    nil,
+		EffortMinutes: &effortMinutes,
+		LagDays:       0,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if storeCalls != 1 || scheduler.scheduleCalls != 1 {
+		t.Fatalf("store calls=%d scheduler calls=%d", storeCalls, scheduler.scheduleCalls)
+	}
+	if value == nil || value.Task == nil || value.Task.Executable.AssigneeID != nil || value.Task.Executable.ExecutionTimeline.Start != nil || value.Task.Executable.ExecutionUnscheduledReason == nil || *value.Task.Executable.ExecutionUnscheduledReason != reason {
+		t.Fatalf("cleared-assignee preview=%#v", value)
+	}
+	if len(value.Dependencies.BlockedBy) != 0 || len(value.Dependencies.Blocks) != 0 {
+		t.Fatalf("cleared-assignee dependencies=%#v", value.Dependencies)
+	}
+}
+
+func TestPreviewExecutableScheduleUsesDraftWithoutCallingConfirmedMutation(t *testing.T) {
+	now := time.Date(2026, 7, 31, 6, 13, 0, 0, time.UTC)
+	roleID, assigneeID, effortMinutes := "role", "member", 480
+	scheduler := &schedulerSpy{}
+	storeCalls := 0
+	store := previewStoreStub{preview: func(ctx context.Context, projectID, id string, input PreviewExecutableInput, gotNow time.Time, schedule func(context.Context, string) error) (*SchedulePreview, error) {
+		storeCalls++
+		if projectID != "project" || id != "task" || gotNow != now {
+			t.Fatalf("unexpected preview scope: %q %q %v", projectID, id, gotNow)
+		}
+		if input.RoleID == nil || *input.RoleID != roleID || input.AssigneeID == nil || *input.AssigneeID != assigneeID || input.EffortMinutes == nil || *input.EffortMinutes != effortMinutes || input.LagDays != 2 {
+			t.Fatalf("preview input=%#v", input)
+		}
+		if err := schedule(ctx, projectID); err != nil {
+			return nil, err
+		}
+		start := time.Date(2026, 8, 3, 0, 0, 0, 0, time.UTC)
+		end := time.Date(2026, 8, 4, 0, 0, 0, 0, time.UTC)
+		return &SchedulePreview{
+			Task: &domain.Node{
+				ID:        id,
+				ProjectID: projectID,
+				Name:      "Build API",
+				Executable: domain.ExecutableFields{
+					RoleID:            &roleID,
+					AssigneeID:        &assigneeID,
+					EffortMinutes:     &effortMinutes,
+					LagDays:           2,
+					ExecutionTimeline: domain.Timeline{Start: &start, End: &end},
+				},
+				Children: []domain.Node{},
+			},
+			Dependencies: dependencydomain.Detail{
+				BlockedBy: []dependencydomain.Item{{
+					Dependency: dependencydomain.Dependency{
+						ID:             "automatic-1",
+						BlockingTaskID: "task-1",
+						BlockedTaskID:  id,
+						AutomaticOwned: true,
+					},
+					Task: dependencydomain.Task{ID: "task-1", Name: "Task 1"},
+				}},
+				Blocks: []dependencydomain.Item{},
+			},
+		}, nil
+	}}
+	service := NewServiceWithDependencies(store, scheduler, func() time.Time { return now }, func() (string, error) { return "unused", nil })
+
+	value, err := service.PreviewExecutableSchedule(context.Background(), "project", "task", PreviewExecutableInput{
+		RoleID:        &roleID,
+		AssigneeID:    &assigneeID,
+		EffortMinutes: &effortMinutes,
+		LagDays:       2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if storeCalls != 1 || scheduler.scheduleCalls != 1 {
+		t.Fatalf("store calls=%d scheduler calls=%d", storeCalls, scheduler.scheduleCalls)
+	}
+	if value == nil || value.Task == nil || value.Task.Executable.ExecutionTimeline.Start == nil || value.Task.Executable.ExecutionTimeline.End == nil {
+		t.Fatalf("preview value=%#v", value)
+	}
+	if len(value.Dependencies.BlockedBy) != 1 || value.Dependencies.BlockedBy[0].Dependency.ID != "automatic-1" {
+		t.Fatalf("preview dependencies=%#v", value.Dependencies)
+	}
+}
+
+func ptrString(value string) *string { return &value }

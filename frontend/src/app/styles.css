@@ -292,7 +292,8 @@ select:disabled {
   inset: 0;
   z-index: var(--layer-dialog);
   display: grid;
-  place-items: center;
+  align-items: safe center;
+  justify-items: center;
   overflow-y: auto;
   padding: 1.25rem;
   background: rgb(12 22 45 / 0.45);
@@ -300,7 +301,7 @@ select:disabled {
 }
 
 .dialog-overlay-nested {
-  z-index: var(--layer-nested-dialog);
+  z-index: calc(var(--layer-nested-dialog) + var(--dialog-layer-offset, 0));
 }
 
 .dialog-panel {

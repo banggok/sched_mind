@@ -20,12 +20,14 @@ future context are not permission to implement them.
 
 The current product manages:
 
-- Roles used to classify Members and future work;
-- Members with a Role, Daily Capacity, Buffer, and derived Commitment Capacity;
+- Roles used to classify Members and Tasks;
+- Members with a Role, Daily Capacity, Buffer, and half-hour-rounded Base Execution Capacity preview;
 - date-bounded Capacity Overrides scoped to one Member;
 - Public Holidays used as global zero-capacity dates;
-- Projects with priority and Open, Locked, or Closed lifecycle;
-- Project-specific Automatic Scheduling and Project Buffer settings;
+- Projects with priority, Open/Locked/Closed lifecycle, and Automatic Scheduling settings;
+- WBS Groups and executable Tasks with Assignee, Effort, Lag, and generated timelines;
+- manual, automatic, and shared dependency ownership;
+- concrete portfolio-level Execution and Commitment scheduling;
 - a technical backend health indicator.
 
 Detailed rules are owned by:
@@ -36,6 +38,10 @@ Detailed rules are owned by:
 - [US-2.2 Manage Public Holiday](../../user_story/US-2.2-manage-public-holiday.md)
 - [US-3.1 Create Project](../../user_story/US-3.1-create-project.md)
 - [US-3.3 Configure Project Settings](../../user_story/US-3.3-configure-project-settings.md)
+- [US-4.1 Manage WBS](../../user_story/US-4.1-manage-wbs.md)
+- [US-4.2 Reopen Completed Task](../../user_story/US-4.2-reopen-completed-task.md)
+- [US-5.1 Manage Dependency](../../user_story/US-5.1-manage-dependency.md)
+- [US-6.1 Automatic Scheduling](../../user_story/US-6.1-automatic-scheduling.md)
 
 The primary product actor in these stories is the Engineering Lead.
 
@@ -57,10 +63,13 @@ restricted by references described in US-1.2.
 
 ### Daily, execution, and commitment capacity
 
-Daily Capacity is base availability in hours. Commitment Capacity is a derived
-planning value after Buffer and project-defined half-hour rounding. These are
-not interchangeable. Exact bounds, defaults, increment rules, and calculation
-belong to US-1.2.
+Daily Capacity is a Member input in 0.5-hour increments. The scheduler resolves
+the date-specific capacity by applying weekend/Public Holiday zero capacity,
+then Capacity Override, then Member Daily Capacity. Member Buffer produces raw
+Execution Capacity, which is rounded to the nearest `0.5` hour. Commitment
+Capacity is calculated independently from Resolved Daily Capacity after both
+Member Buffer and owning Project Buffer, then rounded to the nearest `0.5` hour. Scheduler arithmetic remains deterministic and does not round capacity
+to whole days. Formula ownership belongs to US-1.2, US-2.2, US-3.3, and US-6.1.
 
 ### Capacity Override
 
@@ -72,9 +81,9 @@ Exact creation, editing, deletion, concurrency, filtering, and capacity
 resolution rules belong to US-2.1.
 
 Public Holiday has precedence over a Capacity Override and resolves daily
-capacity to zero. Public Holiday management is implemented by US-2.2. The
-scheduling engine consumes resolved capacity; its broader algorithm remains
-future scope.
+capacity to zero. Public Holiday and Capacity Override mutations do not trigger
+immediate recalculation; the concrete scheduler consumes their latest confirmed
+values on the next scheduling trigger.
 
 ### Project
 
@@ -85,36 +94,37 @@ remains dynamic. Closed Projects are historical, read-only, and excluded from
 scheduling and Gantt. Exact transitions, ordering, deletion, and downstream
 contracts belong to US-3.1.
 
-Project Settings control whether future Execution and Commitment scheduling is
-automatic, retain a Project Buffer percentage, and optionally define the
-Project-level Scheduling Start Date. This date is the sole initial anchor for
-future automatic schedules; it is not a task field. Automatic Scheduling
-without an anchor must not invent timeline dates and must warn the user. Only Open Projects are
-editable. The integration contract exists, but concrete timeline recalculation
-remains deferred to Epic 6; a successful settings update must not be interpreted
-as proof that timelines were recalculated. Exact rules belong to US-3.3.
+Project Settings use `automaticScheduling` as the sole activation toggle and
+optionally define the Project-level Scheduling Start Date. This date is the
+initial anchor; it is not a Task field. Automatic Scheduling without an anchor
+persists the setting but leaves generated dates empty with a safe unscheduled
+reason. Project Buffer affects only Commitment Capacity. Exact rules belong to
+US-3.3 and US-6.1.
 
-## Future scheduling context
+### WBS, dependency ownership, and scheduling
 
-Product discussions anticipate WBS tasks, assignees, effort,
-buffers, and forecast, execution, commitment, and actual dates.
-They may ultimately drive Delivery Impact and health status. Dependency graph
-behaviour is authoritative in `user_story/US-5.1-manage-dependency.md`; it
-prepares scheduler input but does not calculate dates. The repository does not
-yet contain approved authoritative rules for the remaining calculations.
+Executable Tasks own Assignee, Effort, and non-negative integer Lag. Execution
+and Commitment dates are generated independently when Automatic Scheduling is
+ON and are treated as retained manual values when it is OFF. Dependency endpoint
+pairs are stored once and may be manual-owned, automatic-owned, or both. Removing
+manual ownership never removes scheduler-required automatic ownership.
 
-In particular, do not invent:
+The concrete scheduler operates across the active portfolio, serializes relevant
+mutations, and persists daily allocation projections plus monotonic Project
+schedule versions. Dependency readiness is applied before Project Priority and
+depth-first WBS order. Allocation is whole-Task, contiguous, and non-preemptive.
+Locked allocations are fixed reservations; Closed Projects are excluded;
+completed Tasks retain generated dates and use Actual End as successor readiness.
+For an Open unfinished Task, scheduling-field blur can run the same concrete
+scheduler as a rollback-only draft preview so generated dates are visible before
+Save; changing Assignee recalculates dates and dependency ownership, while
+clearing Assignee returns an unconfirmed missing-Assignee schedule and removes
+stale automatic ownership. The preview does not advance persisted schedule state.
 
-- WBS or dependency behaviour beyond US-4.1 and US-5.1;
-- same-assignee scheduling algorithms beyond the Project Priority trigger
-  contract approved in US-3.1;
-- freeze-date behavior;
-- forecast, execution, commitment, or actual-date calculations;
-- project-buffer allocation;
-- delivery-impact or product health formulas.
-
-Add those rules only through approved product documentation and update this
-context summary without duplicating its full acceptance criteria.
+Forecast coordination remains separate. Actual End and Reopen Task keep their
+existing Forecast callback and do not become full Execution/Commitment triggers.
+Freeze-date behavior, Delivery Impact calculation, Project Health, Gantt, and
+reporting remain deferred unless an authoritative story states otherwise.
 
 ## UX terminology
 

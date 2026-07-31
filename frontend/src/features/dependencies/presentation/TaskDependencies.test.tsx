@@ -8,6 +8,7 @@ import {
 } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { DependenciesGateway } from "../application/dependenciesGateway";
+import type { DependencyDetail } from "../domain/dependency";
 import { TaskDependencies } from "./TaskDependencies";
 
 function gateway(): DependenciesGateway {
@@ -16,6 +17,8 @@ function gateway(): DependenciesGateway {
       blockedBy: [
         {
           id: "dependency-a",
+          source: "manual",
+          manualRemovable: true,
           task: {
             id: "a",
             name: "API",
@@ -29,6 +32,8 @@ function gateway(): DependenciesGateway {
       blocks: [
         {
           id: "dependency-b",
+          source: "manual",
+          manualRemovable: true,
           task: {
             id: "b",
             name: "Build",
@@ -57,6 +62,7 @@ function gateway(): DependenciesGateway {
     }),
     create: vi.fn().mockResolvedValue(undefined),
     remove: vi.fn().mockResolvedValue(undefined),
+    keepAsManual: vi.fn().mockResolvedValue(undefined),
     invalidateTask: vi.fn(),
     invalidateAll: vi.fn(),
   };
@@ -71,6 +77,143 @@ describe("TaskDependencies", () => {
     expect(screen.getByText("Blocks")).not.toBeNull();
     expect(screen.getByText(/Alpha · Completed/)).not.toBeNull();
     expect(screen.getByText(/Beta · Not scheduled/)).not.toBeNull();
+  });
+
+  it("renders an unconfirmed automatic dependency preview without mutation controls", async () => {
+    const value = gateway();
+    render(
+      <TaskDependencies
+        taskId="task"
+        gateway={value}
+        readOnly={false}
+        previewDetail={{
+          blockedBy: [
+            {
+              id: "preview-automatic",
+              source: "automatic",
+              manualRemovable: false,
+              task: {
+                id: "task-1",
+                name: "Task 1",
+                projectId: "alpha",
+                projectName: "Alpha",
+                hierarchyPath: "Alpha > Task 1",
+                completed: false,
+                expectedStart: "2026-08-04",
+              },
+            },
+          ],
+          blocks: [],
+        }}
+      />,
+    );
+
+    expect(
+      screen.getByText(
+        "Unconfirmed dependency preview. Save confirms automatic dependencies.",
+      ),
+    ).not.toBeNull();
+    expect(screen.getByText("Task 1")).not.toBeNull();
+    expect(
+      screen.getByLabelText("Dependency source: Automatic"),
+    ).not.toBeNull();
+    expect(screen.queryByRole("button", { name: "Add" })).toBeNull();
+    expect(value.remove).not.toHaveBeenCalled();
+    expect(value.keepAsManual).not.toHaveBeenCalled();
+  });
+
+  it("US-6.1 AC-23 AC-24 AC-25 exposes ownership and keeps automatic relation as manual", async () => {
+    const value = gateway();
+    vi.mocked(value.list)
+      .mockResolvedValueOnce({
+        blockedBy: [
+          {
+            id: "automatic-link",
+            source: "automatic",
+            manualRemovable: false,
+            task: {
+              id: "a",
+              name: "API",
+              projectId: "alpha",
+              projectName: "Alpha",
+              hierarchyPath: "Alpha > API",
+              completed: false,
+            },
+          },
+        ],
+        blocks: [],
+      })
+      .mockResolvedValueOnce({
+        blockedBy: [
+          {
+            id: "automatic-link",
+            source: "both",
+            manualRemovable: true,
+            task: {
+              id: "a",
+              name: "API",
+              projectId: "alpha",
+              projectName: "Alpha",
+              hierarchyPath: "Alpha > API",
+              completed: false,
+            },
+          },
+        ],
+        blocks: [],
+      });
+
+    render(<TaskDependencies taskId="task" gateway={value} readOnly={false} />);
+
+    expect(
+      await screen.findByLabelText("Dependency source: Automatic"),
+    ).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Keep as Manual" }));
+
+    await waitFor(() => {
+      expect(value.keepAsManual).toHaveBeenCalledWith("automatic-link");
+      expect(value.list).toHaveBeenCalledTimes(2);
+    });
+    expect(
+      await screen.findByLabelText("Dependency source: Manual + Automatic"),
+    ).not.toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Remove manual ownership for API" }),
+    ).not.toBeNull();
+  });
+
+  it("US-6.1 AC-24 removes only manual ownership from a shared relation", async () => {
+    const value = gateway();
+    vi.mocked(value.list).mockResolvedValueOnce({
+      blockedBy: [
+        {
+          id: "shared-link",
+          source: "both",
+          manualRemovable: true,
+          task: {
+            id: "a",
+            name: "API",
+            projectId: "alpha",
+            projectName: "Alpha",
+            hierarchyPath: "Alpha > API",
+            completed: false,
+          },
+        },
+      ],
+      blocks: [],
+    });
+
+    render(<TaskDependencies taskId="task" gateway={value} readOnly={false} />);
+
+    expect(
+      await screen.findByLabelText("Dependency source: Manual + Automatic"),
+    ).not.toBeNull();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Remove manual ownership for API" }),
+    );
+
+    await waitFor(() => {
+      expect(value.remove).toHaveBeenCalledWith("shared-link");
+    });
   });
 
   it("projects one created relation as Blocks for the blocker and Blocked by for the blocked task", async () => {
@@ -94,17 +237,31 @@ describe("TaskDependencies", () => {
     let relationCreated = false;
 
     const value: DependenciesGateway = {
-      list: vi.fn(async (taskId: string) => {
+      list: vi.fn(async (taskId: string): Promise<DependencyDetail> => {
         if (!relationCreated) return { blockedBy: [], blocks: [] };
         if (taskId === taskA.id) {
           return {
             blockedBy: [],
-            blocks: [{ id: dependencyId, task: taskB }],
+            blocks: [
+              {
+                id: dependencyId,
+                source: "manual",
+                manualRemovable: true,
+                task: taskB,
+              },
+            ],
           };
         }
         if (taskId === taskB.id) {
           return {
-            blockedBy: [{ id: dependencyId, task: taskA }],
+            blockedBy: [
+              {
+                id: dependencyId,
+                source: "manual",
+                manualRemovable: true,
+                task: taskA,
+              },
+            ],
             blocks: [],
           };
         }
@@ -122,6 +279,7 @@ describe("TaskDependencies", () => {
         relationCreated = true;
       }),
       remove: vi.fn().mockResolvedValue(undefined),
+      keepAsManual: vi.fn().mockResolvedValue(undefined),
       invalidateTask: vi.fn(),
       invalidateAll: vi.fn(),
     };
@@ -214,7 +372,7 @@ describe("TaskDependencies", () => {
 
     fireEvent.click(
       within(relation!).getByRole("button", {
-        name: "Remove dependency for API",
+        name: "Remove manual ownership for API",
       }),
     );
 
@@ -249,7 +407,7 @@ describe("TaskDependencies", () => {
     }
 
     const removeButton = within(relation).getByRole("button", {
-      name: "Remove dependency for API",
+      name: "Remove manual ownership for API",
     });
 
     act(() => {
@@ -318,6 +476,8 @@ describe("TaskDependencies", () => {
         blockedBy: [
           {
             id: "dependency-a",
+            source: "manual",
+            manualRemovable: true,
             task: {
               id: "a",
               name: "API",
@@ -331,6 +491,8 @@ describe("TaskDependencies", () => {
         blocks: [
           {
             id: "dependency-b",
+            source: "manual",
+            manualRemovable: true,
             task: {
               id: "b",
               name: "Build",
@@ -373,6 +535,8 @@ describe("TaskDependencies", () => {
       blockedBy: [
         {
           id: "dependency-a",
+          source: "manual",
+          manualRemovable: true,
           task: {
             id: "a",
             name: "API",
@@ -386,6 +550,8 @@ describe("TaskDependencies", () => {
       blocks: [
         {
           id: "dependency-b",
+          source: "manual",
+          manualRemovable: true,
           task: {
             id: "b",
             name: "Build",
@@ -397,6 +563,8 @@ describe("TaskDependencies", () => {
         },
         {
           id: "dependency-c",
+          source: "manual",
+          manualRemovable: true,
           task: {
             id: "c",
             name: "Client",
@@ -424,6 +592,8 @@ describe("TaskDependencies", () => {
         blockedBy: [
           {
             id: "dependency-a",
+            source: "manual",
+            manualRemovable: true,
             task: {
               id: "a",
               name: "API",
@@ -437,6 +607,8 @@ describe("TaskDependencies", () => {
         blocks: [
           {
             id: "dependency-b",
+            source: "manual",
+            manualRemovable: true,
             task: {
               id: "b",
               name: "Build",
@@ -515,6 +687,8 @@ describe("TaskDependencies", () => {
         blockedBy: [
           {
             id: "dependency-c",
+            source: "manual",
+            manualRemovable: true,
             task: {
               id: "c",
               name: "Client",
@@ -561,6 +735,8 @@ describe("TaskDependencies", () => {
       blocks: [
         {
           id: "dependency-b",
+          source: "manual",
+          manualRemovable: true,
           task: {
             id: "b",
             name: "Build",

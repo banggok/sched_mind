@@ -15,15 +15,19 @@ export function TaskDependencies({
   taskId,
   gateway,
   readOnly,
+  previewDetail,
 }: {
   taskId: string;
   gateway: DependenciesGateway;
   readOnly: boolean;
+  previewDetail?: DependencyDetail;
 }) {
   const [detail, setDetail] = useState<DependencyDetail>();
   const [loading, setLoading] = useState(true);
-  const initialLoading = loading && !detail;
-  const refreshing = loading && !!detail;
+  const visibleDetail = previewDetail ?? detail;
+  const previewActive = previewDetail !== undefined;
+  const initialLoading = loading && !visibleDetail;
+  const refreshing = loading && !!detail && !previewActive;
   const [error, setError] = useState("");
   const [version, setVersion] = useState(0);
   const [direction, setDirection] = useState<DependencyDirection>();
@@ -87,6 +91,28 @@ export function TaskDependencies({
     }
   };
 
+  const keepAsManual = async (id: string) => {
+    if (mutationLock.current) return;
+
+    mutationLock.current = true;
+    setMutationBusy(true);
+    setError("");
+
+    try {
+      await gateway.keepAsManual(id);
+      changed("Automatic dependency retained with manual ownership.");
+    } catch (reason: unknown) {
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : "Dependency ownership could not be updated.",
+      );
+    } finally {
+      mutationLock.current = false;
+      setMutationBusy(false);
+    }
+  };
+
   return (
     <section
       className="border-t border-border-subtle pt-5"
@@ -104,7 +130,7 @@ export function TaskDependencies({
 
       {initialLoading ? (
         <ListSkeleton label="Loading dependencies" rows={2} />
-      ) : error && !detail ? (
+      ) : error && !visibleDetail ? (
         <Alert tone="danger">
           {error}{" "}
           <Button
@@ -116,30 +142,38 @@ export function TaskDependencies({
             Retry
           </Button>
         </Alert>
-      ) : detail ? (
+      ) : visibleDetail ? (
         <div className="mt-4 grid gap-5">
+          {previewActive ? (
+            <p className="text-sm text-muted" role="status">
+              Unconfirmed dependency preview. Save confirms automatic
+              dependencies.
+            </p>
+          ) : null}
           <RelationSection
             title="Blocked by"
-            values={detail.blockedBy}
-            readOnly={readOnly}
+            values={visibleDetail.blockedBy}
+            readOnly={readOnly || previewActive}
             busy={mutationBusy}
             onDelete={(id) => void remove(id)}
+            onKeepAsManual={(id) => void keepAsManual(id)}
             onAdd={() => setDirection("blockedBy")}
           />
 
           <RelationSection
             title="Blocks"
-            values={detail.blocks}
-            readOnly={readOnly}
+            values={visibleDetail.blocks}
+            readOnly={readOnly || previewActive}
             busy={mutationBusy}
             onDelete={(id) => void remove(id)}
+            onKeepAsManual={(id) => void keepAsManual(id)}
             onAdd={() => setDirection("blocks")}
           />
 
           {error ? <Alert tone="danger">{error}</Alert> : null}
           {success ? <Alert tone="success">{success}</Alert> : null}
 
-          {direction ? (
+          {direction && !previewActive ? (
             <CandidatePicker
               taskId={taskId}
               direction={direction}
@@ -152,6 +186,14 @@ export function TaskDependencies({
       ) : null}
     </section>
   );
+}
+
+function sourceLabel(
+  source: DependencyDetail["blockedBy"][number]["source"],
+): string {
+  if (source === "both") return "Manual + Automatic";
+  if (source === "automatic") return "Automatic";
+  return "Manual";
 }
 
 function formatExpectedStart(value?: string): string {
@@ -193,6 +235,7 @@ function RelationSection({
   readOnly,
   busy,
   onDelete,
+  onKeepAsManual,
   onAdd,
 }: {
   title: string;
@@ -200,6 +243,7 @@ function RelationSection({
   readOnly: boolean;
   busy: boolean;
   onDelete(id: string): void;
+  onKeepAsManual(id: string): void;
   onAdd(): void;
 }) {
   return (
@@ -218,7 +262,7 @@ function RelationSection({
         <p className="mt-2 text-sm text-muted">No dependencies.</p>
       ) : (
         <ul className="mt-2 space-y-2">
-          {values.map(({ id, task }) => {
+          {values.map(({ id, source, manualRemovable, task }) => {
             const historical = title === "Blocks" && task.completed;
 
             return (
@@ -237,19 +281,34 @@ function RelationSection({
                         ? ` · ${formatExpectedStart(task.expectedStart)}`
                         : ""}
                     </p>
+                    <span
+                      className="mt-2 inline-flex rounded-full border border-border-subtle px-2 py-0.5 text-xs font-bold"
+                      aria-label={`Dependency source: ${sourceLabel(source)}`}
+                    >
+                      {sourceLabel(source)}
+                    </span>
                   </div>
 
-                  {!readOnly && !historical ? (
+                  {!readOnly && !historical && manualRemovable ? (
                     <button
                       type="button"
                       className="grid size-9 shrink-0 place-items-center rounded-control text-danger transition-colors hover:bg-danger-soft disabled:opacity-50"
-                      aria-label={`Remove dependency for ${task.name}`}
-                      title="Remove dependency"
+                      aria-label={`Remove manual ownership for ${task.name}`}
+                      title="Remove manual dependency"
                       disabled={busy}
                       onClick={() => onDelete(id)}
                     >
                       <UnlinkIcon />
                     </button>
+                  ) : !readOnly && !historical && source === "automatic" ? (
+                    <Button
+                      type="button"
+                      compact
+                      disabled={busy}
+                      onClick={() => onKeepAsManual(id)}
+                    >
+                      Keep as Manual
+                    </Button>
                   ) : historical ? (
                     <span className="shrink-0 text-sm text-muted">
                       Historical

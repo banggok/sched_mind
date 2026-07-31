@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"time"
 
+	dependencydomain "github.com/banggok/sched_mind/backend/internal/dependencies/domain"
+	schedulingdomain "github.com/banggok/sched_mind/backend/internal/scheduling/domain"
 	"github.com/banggok/sched_mind/backend/internal/shared/httpjson"
 	"github.com/banggok/sched_mind/backend/internal/wbs/application"
 	"github.com/banggok/sched_mind/backend/internal/wbs/domain"
@@ -19,6 +21,7 @@ type Service interface {
 	Create(context.Context, string, *string, string, bool) (*domain.Node, error)
 	Rename(context.Context, string, string, string) (*domain.Node, error)
 	UpdateExecutable(context.Context, string, string, application.WriteExecutableInput) (*domain.Node, error)
+	PreviewExecutableSchedule(context.Context, string, string, application.PreviewExecutableInput) (*application.SchedulePreview, error)
 	Complete(context.Context, string, string, time.Time) (*domain.Node, error)
 	Reopen(context.Context, string, string) (*domain.Node, error)
 	Reorder(context.Context, string, string, domain.Direction) error
@@ -35,15 +38,23 @@ type writeRequest struct {
 	ConfirmConversion bool    `json:"confirmConversion"`
 }
 type executableRequest struct {
-	Name            *string  `json:"name"`
-	RoleID          *string  `json:"roleId"`
-	AssigneeID      *string  `json:"assigneeId"`
-	EffortHours     *float64 `json:"effortHours"`
-	ExecutionStart  *string  `json:"executionStart"`
-	ExecutionEnd    *string  `json:"executionEnd"`
-	CommitmentStart *string  `json:"commitmentStart"`
-	CommitmentEnd   *string  `json:"commitmentEnd"`
+	Name            *string         `json:"name"`
+	RoleID          *string         `json:"roleId"`
+	AssigneeID      *string         `json:"assigneeId"`
+	EffortHours     *float64        `json:"effortHours"`
+	LagDays         json.RawMessage `json:"lag"`
+	ExecutionStart  *string         `json:"executionStart"`
+	ExecutionEnd    *string         `json:"executionEnd"`
+	CommitmentStart *string         `json:"commitmentStart"`
+	CommitmentEnd   *string         `json:"commitmentEnd"`
 }
+type previewExecutableRequest struct {
+	RoleID      *string         `json:"roleId"`
+	AssigneeID  *string         `json:"assigneeId"`
+	EffortHours *float64        `json:"effortHours"`
+	LagDays     json.RawMessage `json:"lag"`
+}
+
 type commandRequest struct {
 	Direction         domain.Direction `json:"direction"`
 	ParentID          *string          `json:"parentId"`
@@ -58,12 +69,15 @@ type timelineItem struct {
 	End   *string `json:"end,omitempty"`
 }
 type executableItem struct {
-	RoleID             *string      `json:"roleId,omitempty"`
-	AssigneeID         *string      `json:"assigneeId,omitempty"`
-	EffortMinutes      *int         `json:"effortMinutes,omitempty"`
-	ExecutionTimeline  timelineItem `json:"executionTimeline"`
-	CommitmentTimeline timelineItem `json:"commitmentTimeline"`
-	ActualEnd          *string      `json:"actualEnd,omitempty"`
+	RoleID                      *string      `json:"roleId,omitempty"`
+	AssigneeID                  *string      `json:"assigneeId,omitempty"`
+	EffortMinutes               *int         `json:"effortMinutes,omitempty"`
+	LagDays                     int          `json:"lag"`
+	ExecutionTimeline           timelineItem `json:"executionTimeline"`
+	CommitmentTimeline          timelineItem `json:"commitmentTimeline"`
+	ExecutionUnscheduledReason  *string      `json:"executionUnscheduledReason,omitempty"`
+	CommitmentUnscheduledReason *string      `json:"commitmentUnscheduledReason,omitempty"`
+	ActualEnd                   *string      `json:"actualEnd,omitempty"`
 }
 type item struct {
 	ID          string         `json:"id"`
@@ -74,6 +88,29 @@ type item struct {
 	HasChildren bool           `json:"hasChildren"`
 	Executable  executableItem `json:"executable"`
 	Children    []item         `json:"children"`
+}
+type schedulePreviewTaskItem struct {
+	ID            string  `json:"id"`
+	Name          string  `json:"name"`
+	ProjectID     string  `json:"projectId"`
+	ProjectName   string  `json:"projectName"`
+	HierarchyPath string  `json:"hierarchyPath"`
+	Completed     bool    `json:"completed"`
+	ExpectedStart *string `json:"expectedStart"`
+}
+type schedulePreviewRelationItem struct {
+	ID              string                  `json:"id"`
+	Source          string                  `json:"source"`
+	ManualRemovable bool                    `json:"manualRemovable"`
+	Task            schedulePreviewTaskItem `json:"task"`
+}
+type schedulePreviewDependencyDetail struct {
+	BlockedBy []schedulePreviewRelationItem `json:"blockedBy"`
+	Blocks    []schedulePreviewRelationItem `json:"blocks"`
+}
+type schedulePreviewItem struct {
+	Task         item                            `json:"task"`
+	Dependencies schedulePreviewDependencyDetail `json:"dependencies"`
 }
 type errorResponse struct {
 	Code    string `json:"code"`
@@ -88,6 +125,7 @@ func (h *Handler) Register(m *http.ServeMux) {
 	m.HandleFunc("POST /api/projects/{projectId}/wbs/{wbsId}/children", h.child)
 	m.HandleFunc("PUT /api/projects/{projectId}/wbs/{wbsId}", h.rename)
 	m.HandleFunc("PUT /api/projects/{projectId}/wbs/{wbsId}/executable", h.executable)
+	m.HandleFunc("POST /api/projects/{projectId}/wbs/{wbsId}/executable/preview", h.previewExecutable)
 	m.HandleFunc("POST /api/projects/{projectId}/wbs/{wbsId}/actual-end", h.complete)
 	m.HandleFunc("POST /api/projects/{projectId}/wbs/{wbsId}/reopen", h.reopen)
 	m.HandleFunc("POST /api/projects/{projectId}/wbs/{wbsId}/reorder", h.reorder)
@@ -156,14 +194,9 @@ func (h *Handler) executable(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &p) {
 		return
 	}
-	var minutes *int
-	if p.EffortHours != nil {
-		v := int(*p.EffortHours * 60)
-		if float64(v) != *p.EffortHours*60 {
-			writeError(w, domain.ErrEffortInvalid)
-			return
-		}
-		minutes = &v
+	minutes, ok := effortMinutes(w, p.EffortHours)
+	if !ok {
+		return
 	}
 	execution, ok := timeline(w, p.ExecutionStart, p.ExecutionEnd)
 	if !ok {
@@ -173,13 +206,84 @@ func (h *Handler) executable(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	v, e := h.service.UpdateExecutable(r.Context(), r.PathValue("projectId"), r.PathValue("wbsId"), application.WriteExecutableInput{Name: p.Name, RoleID: p.RoleID, AssigneeID: p.AssigneeID, EffortMinutes: minutes, Execution: execution, Commitment: commitment})
+	lagDays, ok := parseLag(w, p.LagDays)
+	if !ok {
+		return
+	}
+	v, e := h.service.UpdateExecutable(r.Context(), r.PathValue("projectId"), r.PathValue("wbsId"), application.WriteExecutableInput{Name: p.Name, RoleID: p.RoleID, AssigneeID: p.AssigneeID, EffortMinutes: minutes, LagDays: lagDays, Execution: execution, Commitment: commitment})
 	if e != nil {
 		writeError(w, e)
 		return
 	}
 	httpjson.Write(w, 200, response{mapNode(*v)})
 }
+func (h *Handler) previewExecutable(w http.ResponseWriter, r *http.Request) {
+	var p previewExecutableRequest
+	if !decode(w, r, &p) {
+		return
+	}
+	minutes, ok := effortMinutes(w, p.EffortHours)
+	if !ok {
+		return
+	}
+	lagDays, ok := parseLag(w, p.LagDays)
+	if !ok {
+		return
+	}
+	value, err := h.service.PreviewExecutableSchedule(
+		r.Context(),
+		r.PathValue("projectId"),
+		r.PathValue("wbsId"),
+		application.PreviewExecutableInput{
+			RoleID:        p.RoleID,
+			AssigneeID:    p.AssigneeID,
+			EffortMinutes: minutes,
+			LagDays:       lagDays,
+		},
+	)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	httpjson.Write(w, http.StatusOK, response{schedulePreviewItem{
+		Task:         mapNode(*value.Task),
+		Dependencies: mapSchedulePreviewDependencies(value.Dependencies),
+	}})
+}
+
+func mapSchedulePreviewDependencies(value dependencydomain.Detail) schedulePreviewDependencyDetail {
+	return schedulePreviewDependencyDetail{
+		BlockedBy: mapSchedulePreviewRelations(value.BlockedBy),
+		Blocks:    mapSchedulePreviewRelations(value.Blocks),
+	}
+}
+
+func mapSchedulePreviewRelations(values []dependencydomain.Item) []schedulePreviewRelationItem {
+	items := make([]schedulePreviewRelationItem, 0, len(values))
+	for _, value := range values {
+		var expectedStart *string
+		if value.Task.ExpectedStart != nil {
+			formatted := value.Task.ExpectedStart.Format("2006-01-02")
+			expectedStart = &formatted
+		}
+		items = append(items, schedulePreviewRelationItem{
+			ID:              value.Dependency.ID,
+			Source:          string(value.Dependency.Source()),
+			ManualRemovable: value.Dependency.ManualRemovable(),
+			Task: schedulePreviewTaskItem{
+				ID:            value.Task.ID,
+				Name:          value.Task.Name,
+				ProjectID:     value.Task.ProjectID,
+				ProjectName:   value.Task.ProjectName,
+				HierarchyPath: value.Task.HierarchyPath,
+				Completed:     value.Task.ActualEnd != nil,
+				ExpectedStart: expectedStart,
+			},
+		})
+	}
+	return items
+}
+
 func (h *Handler) complete(w http.ResponseWriter, r *http.Request) {
 	var p commandRequest
 	if !decode(w, r, &p) || p.ActualEnd == nil {
@@ -268,6 +372,30 @@ func decode(w http.ResponseWriter, r *http.Request, target any) bool {
 	}
 	return true
 }
+func effortMinutes(w http.ResponseWriter, hours *float64) (*int, bool) {
+	if hours == nil {
+		return nil, true
+	}
+	value := int(*hours * 60)
+	if float64(value) != *hours*60 {
+		writeError(w, domain.ErrEffortInvalid)
+		return nil, false
+	}
+	return &value, true
+}
+
+func parseLag(w http.ResponseWriter, raw json.RawMessage) (int, bool) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return 0, true
+	}
+	var value int
+	if err := json.Unmarshal(raw, &value); err != nil || value < 0 {
+		httpjson.Write(w, 400, errorResponse{"INVALID_LAG", domain.ErrLagInvalid.Error(), "lag"})
+		return 0, false
+	}
+	return value, true
+}
+
 func timeline(w http.ResponseWriter, start, end *string) (domain.Timeline, bool) {
 	parse := func(v *string) (*time.Time, error) {
 		if v == nil {
@@ -328,6 +456,10 @@ func writeError(w http.ResponseWriter, err error) {
 		status, code = 409, "COMPLETED_TASK_READ_ONLY"
 	case errors.Is(err, domain.ErrProjectClosedReadOnly):
 		status, code = 409, "PROJECT_CLOSED_READ_ONLY"
+	case errors.Is(err, domain.ErrSchedulePreviewIncomplete):
+		status, code = 400, "SCHEDULING_INPUT_INCOMPLETE"
+	case errors.Is(err, domain.ErrSchedulePreviewUnavailable):
+		status, code = 409, "SCHEDULE_PREVIEW_UNAVAILABLE"
 	case errors.Is(err, domain.ErrManualTimeline):
 		status, code = 409, "WBS_MANUAL_TIMELINE_NOT_ALLOWED"
 	case errors.Is(err, domain.ErrRoleAssigneeMismatch):
@@ -336,8 +468,14 @@ func writeError(w http.ResponseWriter, err error) {
 		status, code = 409, "WBS_GROUPING_EXECUTABLE_FIELDS_NOT_ALLOWED"
 	case errors.Is(err, domain.ErrMoveNotAllowed):
 		status, code = 409, "WBS_MOVE_NOT_ALLOWED"
+	case errors.Is(err, domain.ErrLagInvalid):
+		status, code = 400, "INVALID_LAG"
 	case errors.Is(err, domain.ErrEffortInvalid) || errors.Is(err, domain.ErrTimelinePair) || errors.Is(err, domain.ErrTimelineOrder):
 		status, code = 400, "WBS_EXECUTABLE_INVALID"
+	case errors.Is(err, schedulingdomain.ErrConcurrentConflict):
+		status, code = 409, "SCHEDULING_CONFLICT"
+	case errors.Is(err, schedulingdomain.ErrDataIntegrity), errors.Is(err, schedulingdomain.ErrNoConvergence):
+		status, code = 409, "SCHEDULING_DATA_INTEGRITY_CONFLICT"
 	}
 	message := err.Error()
 	if status == 500 {
@@ -359,12 +497,15 @@ func mapReopenNode(value domain.Node) map[string]any {
 		"position":    value.Position,
 		"hasChildren": value.HasChildren,
 		"executable": map[string]any{
-			"roleId":             value.Executable.RoleID,
-			"assigneeId":         value.Executable.AssigneeID,
-			"effortMinutes":      value.Executable.EffortMinutes,
-			"executionTimeline":  timelineItem{Start: date(value.Executable.ExecutionTimeline.Start), End: date(value.Executable.ExecutionTimeline.End)},
-			"commitmentTimeline": timelineItem{Start: date(value.Executable.CommitmentTimeline.Start), End: date(value.Executable.CommitmentTimeline.End)},
-			"actualEnd":          date(value.Executable.ActualEnd),
+			"roleId":                      value.Executable.RoleID,
+			"assigneeId":                  value.Executable.AssigneeID,
+			"effortMinutes":               value.Executable.EffortMinutes,
+			"lag":                         value.Executable.LagDays,
+			"executionTimeline":           timelineItem{Start: date(value.Executable.ExecutionTimeline.Start), End: date(value.Executable.ExecutionTimeline.End)},
+			"commitmentTimeline":          timelineItem{Start: date(value.Executable.CommitmentTimeline.Start), End: date(value.Executable.CommitmentTimeline.End)},
+			"executionUnscheduledReason":  value.Executable.ExecutionUnscheduledReason,
+			"commitmentUnscheduledReason": value.Executable.CommitmentUnscheduledReason,
+			"actualEnd":                   date(value.Executable.ActualEnd),
 		},
 		"children": children,
 	}
@@ -375,7 +516,7 @@ func mapNode(value domain.Node) item {
 	for _, child := range value.Children {
 		children = append(children, mapNode(child))
 	}
-	return item{ID: value.ID, ProjectID: value.ProjectID, ParentID: value.ParentID, Name: value.Name, Position: value.Position, HasChildren: value.HasChildren, Executable: executableItem{RoleID: value.Executable.RoleID, AssigneeID: value.Executable.AssigneeID, EffortMinutes: value.Executable.EffortMinutes, ExecutionTimeline: timelineItem{Start: date(value.Executable.ExecutionTimeline.Start), End: date(value.Executable.ExecutionTimeline.End)}, CommitmentTimeline: timelineItem{Start: date(value.Executable.CommitmentTimeline.Start), End: date(value.Executable.CommitmentTimeline.End)}, ActualEnd: date(value.Executable.ActualEnd)}, Children: children}
+	return item{ID: value.ID, ProjectID: value.ProjectID, ParentID: value.ParentID, Name: value.Name, Position: value.Position, HasChildren: value.HasChildren, Executable: executableItem{RoleID: value.Executable.RoleID, AssigneeID: value.Executable.AssigneeID, EffortMinutes: value.Executable.EffortMinutes, LagDays: value.Executable.LagDays, ExecutionTimeline: timelineItem{Start: date(value.Executable.ExecutionTimeline.Start), End: date(value.Executable.ExecutionTimeline.End)}, CommitmentTimeline: timelineItem{Start: date(value.Executable.CommitmentTimeline.Start), End: date(value.Executable.CommitmentTimeline.End)}, ExecutionUnscheduledReason: value.Executable.ExecutionUnscheduledReason, CommitmentUnscheduledReason: value.Executable.CommitmentUnscheduledReason, ActualEnd: date(value.Executable.ActualEnd)}, Children: children}
 }
 func date(value *time.Time) *string {
 	if value == nil {

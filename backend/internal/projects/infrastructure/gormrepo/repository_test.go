@@ -2,12 +2,14 @@ package gormrepo
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
 
 	"github.com/banggok/sched_mind/backend/internal/projects/domain"
 	"github.com/banggok/sched_mind/backend/internal/shared/listing"
+	sharedpersistence "github.com/banggok/sched_mind/backend/internal/shared/persistence"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -18,11 +20,24 @@ func testRepository(t *testing.T) *Repository {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := database.AutoMigrate(&projectModel{}); err != nil {
+	if err := database.AutoMigrate(&projectModel{}, &lifecycleTaskTestModel{}); err != nil {
 		t.Fatal(err)
 	}
 	return New(database)
 }
+
+type lifecycleTaskTestModel struct {
+	ID              string `gorm:"primaryKey"`
+	ProjectID       string
+	ParentID        *string
+	ExecutionStart  *time.Time
+	ExecutionEnd    *time.Time
+	CommitmentStart *time.Time
+	CommitmentEnd   *time.Time
+	ActualEnd       *time.Time
+}
+
+func (lifecycleTaskTestModel) TableName() string { return "wbs_nodes" }
 
 func TestRepositoryCreateListSearchAndPriority(t *testing.T) {
 	repository := testRepository(t)
@@ -61,10 +76,10 @@ func TestRepositoryLifecycleDeleteAndRollback(t *testing.T) {
 	if err != nil || value == nil {
 		t.Fatal(err)
 	}
-	if _, err := repository.ChangeStatus(ctx, "a", domain.StatusLocked, now.Add(time.Hour)); !errors.Is(err, domain.ErrCannotLockWithoutTasks) {
+	if _, err := repository.ChangeStatus(ctx, "a", domain.StatusLocked, now.Add(time.Hour), func(context.Context) error { t.Fatal("scheduler called for rejected lock"); return nil }); !errors.Is(err, domain.ErrCannotLockWithoutTasks) {
 		t.Fatalf("lock zero tasks: %v", err)
 	}
-	if _, err := repository.ChangeStatus(ctx, "a", domain.StatusClosed, now); !errors.Is(err, domain.ErrCannotCloseWithoutTasks) {
+	if _, err := repository.ChangeStatus(ctx, "a", domain.StatusClosed, now, func(context.Context) error { t.Fatal("scheduler called for rejected close"); return nil }); !errors.Is(err, domain.ErrCannotCloseWithoutTasks) {
 		t.Fatalf("close zero: %v", err)
 	}
 	_, _ = repository.CreateNext(ctx, "b", "Beta", true, nil, 20, now)
@@ -85,6 +100,101 @@ func TestRepositoryLifecycleDeleteAndRollback(t *testing.T) {
 	}
 }
 
+func TestRepositoryStatusLifecycleSnapshotsSchedulingAndRollback_AC9_AC15_AC16_AC18_AC23(t *testing.T) {
+	repository := testRepository(t)
+	ctx := context.Background()
+	now := time.Date(2026, 8, 3, 9, 0, 0, 0, time.UTC)
+	anchor := time.Date(2026, 8, 3, 0, 0, 0, 0, time.UTC)
+	created, err := repository.CreateNext(ctx, "project", "Alpha", true, &anchor, 20, now)
+	if err != nil || created == nil {
+		t.Fatalf("create: %#v %v", created, err)
+	}
+	executionStart := time.Date(2026, 8, 3, 0, 0, 0, 0, time.UTC)
+	executionEnd := time.Date(2026, 8, 4, 0, 0, 0, 0, time.UTC)
+	commitmentEnd := time.Date(2026, 8, 5, 0, 0, 0, 0, time.UTC)
+	leaf := lifecycleTaskTestModel{
+		ID: "leaf", ProjectID: "project", ExecutionStart: &executionStart, ExecutionEnd: &executionEnd,
+		CommitmentStart: &executionStart, CommitmentEnd: &commitmentEnd,
+	}
+	if err := repository.database.Create(&leaf).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = repository.ChangeStatus(ctx, "project", domain.StatusLocked, now.Add(time.Hour), func(context.Context) error {
+		return errors.New("scheduler unavailable")
+	})
+	if err == nil {
+		t.Fatal("expected lock rollback")
+	}
+	afterFailedLock, _ := repository.Find(ctx, "project")
+	if afterFailedLock == nil || afterFailedLock.Status != domain.StatusOpen || afterFailedLock.LockedExecutionSnapshot != nil || afterFailedLock.LockedCommitmentSnapshot != nil {
+		t.Fatalf("failed lock persisted partial state: %#v", afterFailedLock)
+	}
+
+	schedulerStatuses := make([]string, 0, 3)
+	schedule := func(scheduleCtx context.Context) error {
+		transaction := sharedpersistence.Transaction(scheduleCtx, repository.database)
+		var status string
+		if err := transaction.Model(&projectModel{}).Select("status").Where("id = ?", "project").Scan(&status).Error; err != nil {
+			return err
+		}
+		schedulerStatuses = append(schedulerStatuses, status)
+		return nil
+	}
+	locked, err := repository.ChangeStatus(ctx, "project", domain.StatusLocked, now.Add(2*time.Hour), schedule)
+	if err != nil || locked == nil || locked.Status != domain.StatusLocked || locked.LockedExecutionSnapshot == nil || locked.LockedCommitmentSnapshot == nil {
+		t.Fatalf("lock: %#v %v", locked, err)
+	}
+	var executionSnapshot []timelineSnapshotEntry
+	if err := json.Unmarshal([]byte(*locked.LockedExecutionSnapshot), &executionSnapshot); err != nil {
+		t.Fatal(err)
+	}
+	if len(executionSnapshot) != 1 || executionSnapshot[0].TaskID != "leaf" || executionSnapshot[0].Start == nil || !executionSnapshot[0].Start.Equal(executionStart) || executionSnapshot[0].End == nil || !executionSnapshot[0].End.Equal(executionEnd) {
+		t.Fatalf("execution snapshot: %#v", executionSnapshot)
+	}
+
+	if _, err := repository.ChangeStatus(ctx, "project", domain.StatusClosed, now.Add(3*time.Hour), func(context.Context) error { t.Fatal("scheduler called for rejected incomplete close"); return nil }); !errors.Is(err, domain.ErrCannotCloseWithActiveTasks) {
+		t.Fatalf("incomplete close: %v", err)
+	}
+	completedAt := time.Date(2026, 8, 4, 0, 0, 0, 0, time.UTC)
+	if err := repository.database.Model(&lifecycleTaskTestModel{}).Where("id = ?", "leaf").Update("actual_end", completedAt).Error; err != nil {
+		t.Fatal(err)
+	}
+	_, err = repository.ChangeStatus(ctx, "project", domain.StatusClosed, now.Add(4*time.Hour), func(context.Context) error {
+		return errors.New("scheduler unavailable")
+	})
+	if err == nil {
+		t.Fatal("expected close rollback")
+	}
+	afterFailedClose, _ := repository.Find(ctx, "project")
+	if afterFailedClose == nil || afterFailedClose.Status != domain.StatusLocked || afterFailedClose.ClosedAt != nil {
+		t.Fatalf("failed close persisted partial state: %#v", afterFailedClose)
+	}
+
+	closed, err := repository.ChangeStatus(ctx, "project", domain.StatusClosed, now.Add(5*time.Hour), schedule)
+	if err != nil || closed == nil || closed.Status != domain.StatusClosed || closed.ClosedAt == nil {
+		t.Fatalf("close: %#v %v", closed, err)
+	}
+	_, err = repository.ChangeStatus(ctx, "project", domain.StatusOpen, now.Add(6*time.Hour), func(context.Context) error {
+		return errors.New("scheduler unavailable")
+	})
+	if err == nil {
+		t.Fatal("expected reopen rollback")
+	}
+	afterFailedReopen, _ := repository.Find(ctx, "project")
+	if afterFailedReopen == nil || afterFailedReopen.Status != domain.StatusClosed || afterFailedReopen.ClosedAt == nil {
+		t.Fatalf("failed reopen persisted partial state: %#v", afterFailedReopen)
+	}
+
+	reopened, err := repository.ChangeStatus(ctx, "project", domain.StatusOpen, now.Add(7*time.Hour), schedule)
+	if err != nil || reopened == nil || reopened.Status != domain.StatusOpen || reopened.ClosedAt != nil || reopened.LockedExecutionSnapshot == nil || reopened.LockedCommitmentSnapshot == nil {
+		t.Fatalf("reopen: %#v %v", reopened, err)
+	}
+	if len(schedulerStatuses) != 3 || schedulerStatuses[0] != "locked" || schedulerStatuses[1] != "closed" || schedulerStatuses[2] != "open" {
+		t.Fatalf("scheduler transaction statuses: %#v", schedulerStatuses)
+	}
+}
+
 func TestRepositorySettingsPersistenceAndSchedulerRollback(t *testing.T) {
 	repository := testRepository(t)
 	ctx := context.Background()
@@ -94,14 +204,17 @@ func TestRepositorySettingsPersistenceAndSchedulerRollback(t *testing.T) {
 		t.Fatalf("defaults: %#v %v", created, err)
 	}
 	anchor := time.Date(2026, 8, 3, 0, 0, 0, 0, time.UTC)
-	updated, err := repository.UpdateSettings(ctx, "a", false, &anchor, 35, now.Add(time.Hour), func(context.Context, string) error { t.Fatal("scheduler called while disabling"); return nil })
+	updated, err := repository.UpdateSettings(ctx, "a", false, &anchor, 35, now.Add(time.Hour), func(context.Context, string) error { t.Fatal("scheduler called while disabling"); return nil }, func(context.Context, string, string) error {
+		t.Fatal("unscheduled marker called while disabling")
+		return nil
+	})
 	if err != nil || updated == nil || updated.AutomaticScheduling || updated.ProjectBuffer != 35 {
 		t.Fatalf("disable: %#v %v", updated, err)
 	}
 	if updated.SchedulingStartDate == nil || !updated.SchedulingStartDate.Equal(anchor) {
 		t.Fatalf("persist anchor: %#v", updated)
 	}
-	_, err = repository.UpdateSettings(ctx, "a", true, &anchor, 40, now.Add(2*time.Hour), func(context.Context, string) error { return errors.New("scheduler unavailable") })
+	_, err = repository.UpdateSettings(ctx, "a", true, &anchor, 40, now.Add(2*time.Hour), func(context.Context, string) error { return errors.New("scheduler unavailable") }, func(context.Context, string, string) error { t.Fatal("unexpected unscheduled marker"); return nil })
 	if err == nil {
 		t.Fatal("expected scheduler failure")
 	}
@@ -109,7 +222,7 @@ func TestRepositorySettingsPersistenceAndSchedulerRollback(t *testing.T) {
 	if stored == nil || stored.AutomaticScheduling || stored.ProjectBuffer != 35 || stored.SchedulingStartDate == nil || !stored.SchedulingStartDate.Equal(anchor) {
 		t.Fatalf("rollback: %#v", stored)
 	}
-	_, err = repository.UpdateDetails(ctx, "a", "Renamed", true, &anchor, 40, now.Add(3*time.Hour), func(context.Context, string) error { return errors.New("scheduler unavailable") })
+	_, err = repository.UpdateDetails(ctx, "a", "Renamed", true, &anchor, 40, now.Add(3*time.Hour), func(context.Context, string) error { return errors.New("scheduler unavailable") }, func(context.Context, string, string) error { t.Fatal("unexpected unscheduled marker"); return nil })
 	if err == nil {
 		t.Fatal("expected combined update failure")
 	}
@@ -119,7 +232,7 @@ func TestRepositorySettingsPersistenceAndSchedulerRollback(t *testing.T) {
 	}
 }
 
-func TestRepositoryDoesNotScheduleWithoutProjectAnchor(t *testing.T) {
+func TestRepositoryMarksAutomaticProjectUnscheduledWithoutProjectAnchor(t *testing.T) {
 	repository := testRepository(t)
 	ctx := context.Background()
 	now := time.Now().UTC()
@@ -127,11 +240,19 @@ func TestRepositoryDoesNotScheduleWithoutProjectAnchor(t *testing.T) {
 	if err != nil || created == nil {
 		t.Fatalf("create: %#v %v", created, err)
 	}
+	persistedBeforeEnable, err := repository.Find(ctx, "a")
+	if err != nil || persistedBeforeEnable == nil || persistedBeforeEnable.AutomaticScheduling {
+		t.Fatalf("automatic scheduling off was not persisted: %#v %v", persistedBeforeEnable, err)
+	}
+	marked := false
 	updated, err := repository.UpdateSettings(ctx, "a", true, nil, 20, now.Add(time.Hour), func(context.Context, string) error {
 		t.Fatal("scheduler must not run without Scheduling Start Date")
 		return nil
+	}, func(_ context.Context, projectID, reason string) error {
+		marked = projectID == "a" && reason != ""
+		return nil
 	})
-	if err != nil || updated == nil || !updated.AutomaticScheduling || updated.SchedulingStartDate != nil {
+	if err != nil || updated == nil || !updated.AutomaticScheduling || updated.SchedulingStartDate != nil || !marked {
 		t.Fatalf("enable without anchor: %#v %v", updated, err)
 	}
 }

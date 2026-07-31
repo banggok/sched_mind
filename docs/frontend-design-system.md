@@ -106,7 +106,14 @@ preferences. Do not animate synchronous feedback merely for decoration.
 Define a small named layering scale for content, sticky chrome, dropdowns,
 overlays, dialogs, and transient notifications. A component must not win a
 stacking conflict by adding an arbitrary larger z-index. Nested overlays require
-an explicit stacking and focus contract.
+an explicit stacking and focus contract. The shared Dialog primitive owns portal
+placement and derives semantic layer depth from React composition: every nested
+level is portalled to the viewport host, receives a deterministic layer above its
+parent, and is the only dialog exposed as active while deeper content is open. The
+shared viewport-fixed overlay uses safe centring: content that fits remains centred,
+while taller content falls back to a scrollable start alignment instead of being
+clipped above the viewport. Feature code must not create a separate portal or assign
+one-off z-index values.
 
 ## Shared primitive contracts
 
