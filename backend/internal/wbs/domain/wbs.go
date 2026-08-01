@@ -27,6 +27,7 @@ type ExecutableFields struct {
 	CommitmentTimeline          Timeline
 	ExecutionUnscheduledReason  *string
 	CommitmentUnscheduledReason *string
+	ActualStart                 *time.Time
 	ActualEnd                   *time.Time
 }
 
@@ -67,11 +68,15 @@ func New(id, projectID string, parentID *string, name string, position int, now 
 func (node Node) IsExecutable() bool { return !node.HasChildren }
 func (node Node) HasExecutableData() bool {
 	f := node.Executable
-	return f.RoleID != nil || f.AssigneeID != nil || f.EffortMinutes != nil || f.LagDays != 0 || f.ExecutionTimeline.Start != nil || f.ExecutionTimeline.End != nil || f.CommitmentTimeline.Start != nil || f.CommitmentTimeline.End != nil || f.ExecutionUnscheduledReason != nil || f.CommitmentUnscheduledReason != nil || f.ActualEnd != nil
+	return f.RoleID != nil || f.AssigneeID != nil || f.EffortMinutes != nil || f.LagDays != 0 || f.ExecutionTimeline.Start != nil || f.ExecutionTimeline.End != nil || f.CommitmentTimeline.Start != nil || f.CommitmentTimeline.End != nil || f.ExecutionUnscheduledReason != nil || f.CommitmentUnscheduledReason != nil || f.ActualStart != nil || f.ActualEnd != nil
+}
+
+func (node Node) Completed() bool {
+	return node.Executable.ActualStart != nil && node.Executable.ActualEnd != nil
 }
 
 func (node *Node) Rename(name string, now time.Time) error {
-	if node.Executable.ActualEnd != nil {
+	if node.Completed() {
 		return ErrCompletedReadOnly
 	}
 	value, err := NormalizeName(name)
@@ -116,7 +121,7 @@ func (node *Node) UpdateExecutable(fields ExecutableFields, automaticScheduling 
 	if !node.IsExecutable() {
 		return ErrExecutableOnly
 	}
-	if node.Executable.ActualEnd != nil {
+	if node.Completed() {
 		return ErrCompletedReadOnly
 	}
 	if err := ValidateExecutable(fields, automaticScheduling, projectOpen); err != nil {
@@ -132,15 +137,21 @@ func (node *Node) UpdateExecutable(fields ExecutableFields, automaticScheduling 
 	return nil
 }
 
-func (node *Node) Complete(actualEnd time.Time, now time.Time) error {
+func (node *Node) Complete(actualStart, actualEnd time.Time, now time.Time) error {
 	if !node.IsExecutable() {
 		return ErrExecutableOnly
 	}
-	if node.Executable.ActualEnd != nil {
+	if node.Completed() {
 		return ErrCompletedReadOnly
 	}
-	value := dateOnly(actualEnd)
-	node.Executable.ActualEnd, node.UpdatedAt = &value, now
+	start := dateOnly(actualStart)
+	end := dateOnly(actualEnd)
+	if end.Before(start) {
+		return ErrActualDateOrder
+	}
+	node.Executable.ActualStart = &start
+	node.Executable.ActualEnd = &end
+	node.UpdatedAt = now
 	return nil
 }
 
@@ -148,9 +159,10 @@ func (node *Node) Reopen(now time.Time) error {
 	if !node.IsExecutable() {
 		return ErrExecutableOnly
 	}
-	if node.Executable.ActualEnd == nil {
+	if !node.Completed() {
 		return ErrTaskNotCompleted
 	}
+	node.Executable.ActualStart = nil
 	node.Executable.ActualEnd = nil
 	node.UpdatedAt = now
 	return nil
@@ -166,6 +178,10 @@ func cloneFields(value ExecutableFields) ExecutableFields {
 	value.CommitmentTimeline = cloneTimeline(value.CommitmentTimeline)
 	value.ExecutionUnscheduledReason = cloneString(value.ExecutionUnscheduledReason)
 	value.CommitmentUnscheduledReason = cloneString(value.CommitmentUnscheduledReason)
+	if value.ActualStart != nil {
+		v := dateOnly(*value.ActualStart)
+		value.ActualStart = &v
+	}
 	if value.ActualEnd != nil {
 		v := dateOnly(*value.ActualEnd)
 		value.ActualEnd = &v

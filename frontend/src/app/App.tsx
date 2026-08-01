@@ -1,8 +1,9 @@
+import { SchedulingImpactDialog } from "../shared/presentation/SchedulingImpactDialog";
+import { useEffect, useState } from "react";
 import { createHTTPRolesGateway } from "../features/roles/infrastructure/httpRolesGateway";
 import { RolesDashboardPage } from "../features/roles/presentation/RolesDashboardPage";
 import { createHTTPTeamMembersGateway } from "../features/team-members/infrastructure/httpTeamMembersGateway";
 import { TeamMembersDashboardPage } from "../features/team-members/presentation/TeamMembersDashboardPage";
-import { useEffect, useState } from "react";
 import { AppShell } from "./AppShell";
 import type { ApplicationPage } from "./navigation";
 import { createHTTPCapacityOverridesGateway } from "../features/capacity-overrides/infrastructure/httpCapacityOverridesGateway";
@@ -17,6 +18,8 @@ import { createHTTPWBSGateway } from "../features/wbs/infrastructure/httpWBSGate
 import { WBSPanel } from "../features/wbs/presentation/WBSPanel";
 import { ProjectWBSSummary } from "../features/wbs/presentation/ProjectWBSSummary";
 import { createHTTPDependenciesGateway } from "../features/dependencies/infrastructure/httpDependenciesGateway";
+import { createHTTPPortfolioGateway } from "../features/portfolio/infrastructure/httpPortfolioGateway";
+import { PortfolioHomePage } from "../features/portfolio/presentation/PortfolioHomePage";
 
 const apiBaseURL = requiredEnvironment(
   "VITE_API_BASE_URL",
@@ -28,15 +31,26 @@ const publicHolidaysGateway = createHTTPPublicHolidaysGateway(apiBaseURL);
 const projectsGateway = createHTTPProjectsGateway(apiBaseURL);
 const wbsGateway = createHTTPWBSGateway(apiBaseURL);
 const dependenciesGateway = createHTTPDependenciesGateway(apiBaseURL);
+const portfolioGateway = createHTTPPortfolioGateway(apiBaseURL);
 const rolesGateway = createHTTPRolesGateway(
   apiBaseURL,
   teamMembersGateway.invalidateListCache,
 );
 
+type WBSRequest = {
+  key: number;
+  project: Project;
+  nodeId?: string;
+  createParentId?: string | null;
+  returnToHome?: boolean;
+};
+
 export function App() {
   const [route, setRoute] = useState(window.location.hash);
   const [capacityMember, setCapacityMember] = useState<TeamMember>();
-  const [wbsProject, setWBSProject] = useState<Project>();
+  const [wbsRequest, setWBSRequest] = useState<WBSRequest>();
+  const [projectToEdit, setProjectToEdit] = useState<Project>();
+  const [projectReturnPage, setProjectReturnPage] = useState<ApplicationPage>();
   useEffect(() => {
     const updateRoute = () => setRoute(window.location.hash);
     window.addEventListener("hashchange", updateRoute);
@@ -53,19 +67,59 @@ export function App() {
         ? "team-members"
         : route === "#public-holidays"
           ? "public-holidays"
-          : "roles";
+          : route === "#roles"
+            ? "roles"
+            : "home";
 
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0, behavior: "auto" });
   }, [activePage]);
 
+  async function openProject(projectID: string, returnPage?: ApplicationPage) {
+    const project = await projectsGateway.get(projectID);
+    setProjectToEdit(project);
+    setProjectReturnPage(returnPage);
+    window.location.hash = "#projects";
+  }
+  async function openWBS(request: {
+    projectId: string;
+    nodeId?: string;
+    createParentId?: string | null;
+    returnToHome?: boolean;
+  }) {
+    const project = await projectsGateway.get(request.projectId);
+    setWBSRequest({
+      key: Date.now(),
+      project,
+      nodeId: request.nodeId,
+      createParentId: request.createParentId,
+      returnToHome: request.returnToHome,
+    });
+  }
+
   return (
     <AppShell activePage={activePage}>
-      {activePage === "projects" ? (
+      {activePage === "home" ? (
+        <PortfolioHomePage
+          gateway={portfolioGateway}
+          onOpenProject={(projectID) => void openProject(projectID, "home")}
+          onOpenWBS={(request) =>
+            void openWBS({ ...request, returnToHome: true })
+          }
+        />
+      ) : activePage === "projects" ? (
         <ProjectsPage
           gateway={projectsGateway}
           loadPublicHolidayDates={publicHolidaysGateway.calendar}
-          onManageWBS={setWBSProject}
+          onManageWBS={(project) => setWBSRequest({ key: Date.now(), project })}
+          initialEditProject={projectToEdit}
+          onInitialEditConsumed={() => setProjectToEdit(undefined)}
+          returnPageOnClose={projectReturnPage}
+          onReturnToPage={() => {
+            if (!projectReturnPage) return;
+            setProjectReturnPage(undefined);
+            window.location.hash = `#${projectReturnPage}`;
+          }}
           renderProjectSummary={(project) => (
             <ProjectWBSSummary
               key={project.id}
@@ -93,15 +147,20 @@ export function App() {
           onClose={() => setCapacityMember(undefined)}
         />
       ) : null}
-      {wbsProject ? (
+      <SchedulingImpactDialog />
+      {wbsRequest ? (
         <WBSPanel
-          project={wbsProject}
+          key={wbsRequest.key}
+          project={wbsRequest.project}
           gateway={wbsGateway}
           dependenciesGateway={dependenciesGateway}
           rolesGateway={rolesGateway}
           membersGateway={teamMembersGateway}
           loadPublicHolidayDates={publicHolidaysGateway.calendar}
-          onClose={() => setWBSProject(undefined)}
+          initialNodeId={wbsRequest.nodeId}
+          initialCreateParentId={wbsRequest.createParentId}
+          returnToCallerOnComplete={wbsRequest.returnToHome}
+          onClose={() => setWBSRequest(undefined)}
         />
       ) : null}
     </AppShell>

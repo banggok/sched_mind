@@ -13,6 +13,7 @@ import (
 	"github.com/banggok/sched_mind/backend/internal/dependencies/domain"
 	schedulingdomain "github.com/banggok/sched_mind/backend/internal/scheduling/domain"
 	"github.com/banggok/sched_mind/backend/internal/shared/httpjson"
+	"github.com/banggok/sched_mind/backend/internal/shared/schedulingimpact"
 )
 
 type Service interface {
@@ -195,7 +196,7 @@ func mapTask(v domain.Task) taskItem {
 		ProjectID:     v.ProjectID,
 		ProjectName:   v.ProjectName,
 		HierarchyPath: v.HierarchyPath,
-		Completed:     v.ActualEnd != nil,
+		Completed:     v.ActualStart != nil && v.ActualEnd != nil,
 		ExpectedStart: expected,
 	}
 }
@@ -231,6 +232,9 @@ func writeInvalid(w http.ResponseWriter, code, message string) {
 }
 
 func writeError(w http.ResponseWriter, err error) {
+	if schedulingimpact.WriteHTTPError(w, err) {
+		return
+	}
 	status, code, message := 500, "INTERNAL_ERROR", "The request could not be completed."
 	switch {
 	case errors.Is(err, domain.ErrTaskNotFound):
@@ -247,6 +251,8 @@ func writeError(w http.ResponseWriter, err error) {
 		status, code, message = 409, "DEPENDENCY_CYCLE_DETECTED", "Dependency cannot be added because it creates a cycle."
 	case errors.Is(err, domain.ErrClosedProject):
 		status, code, message = 409, "DEPENDENCY_CLOSED_PROJECT_TASK_NOT_ALLOWED", "Closed project tasks cannot be used for a new dependency."
+	case errors.Is(err, domain.ErrLockedProject):
+		status, code, message = 409, "PROJECT_LOCKED_READ_ONLY", "Locked project dependencies are read-only."
 	case errors.Is(err, domain.ErrCompletedBlocked):
 		status, code, message = 409, "DEPENDENCY_COMPLETED_TASK_CANNOT_BE_BLOCKED", "A completed task cannot be blocked by a new dependency."
 	case errors.Is(err, domain.ErrCompletedHistory):

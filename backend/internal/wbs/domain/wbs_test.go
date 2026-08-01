@@ -32,7 +32,7 @@ func TestManualTimelineAndCompletion(t *testing.T) {
 	if err := node.UpdateExecutable(fields, false, true, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if err := node.Complete(end, time.Now()); err != nil {
+	if err := node.Complete(start, end, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	if err := node.Rename("Other", time.Now()); !errors.Is(err, ErrCompletedReadOnly) {
@@ -49,6 +49,7 @@ func TestReopenCompletedExecutablePreservesPlanningAndIdentity_AC1_AC2_AC4_AC5(t
 	executionEnd := time.Date(2026, 8, 3, 0, 0, 0, 0, time.UTC)
 	commitmentStart := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
 	commitmentEnd := time.Date(2026, 8, 5, 0, 0, 0, 0, time.UTC)
+	actualStart := time.Date(2026, 8, 2, 0, 0, 0, 0, time.UTC)
 	actualEnd := time.Date(2026, 8, 4, 0, 0, 0, 0, time.UTC)
 	node := Node{
 		ID: "task", ProjectID: "project", ParentID: &parent, Name: "Build API", Position: 3,
@@ -56,6 +57,7 @@ func TestReopenCompletedExecutablePreservesPlanningAndIdentity_AC1_AC2_AC4_AC5(t
 			RoleID: &role, AssigneeID: &assignee, EffortMinutes: &effort,
 			ExecutionTimeline:  Timeline{Start: &executionStart, End: &executionEnd},
 			CommitmentTimeline: Timeline{Start: &commitmentStart, End: &commitmentEnd},
+			ActualStart:        &actualStart,
 			ActualEnd:          &actualEnd,
 		},
 		Children: []Node{}, CreatedAt: created, UpdatedAt: updated,
@@ -64,8 +66,8 @@ func TestReopenCompletedExecutablePreservesPlanningAndIdentity_AC1_AC2_AC4_AC5(t
 	if err := node.Reopen(reopened); err != nil {
 		t.Fatal(err)
 	}
-	if node.Executable.ActualEnd != nil {
-		t.Fatalf("actual end was not cleared: %v", node.Executable.ActualEnd)
+	if node.Executable.ActualStart != nil || node.Executable.ActualEnd != nil {
+		t.Fatalf("actual date was not cleared: start=%v end=%v", node.Executable.ActualStart, node.Executable.ActualEnd)
 	}
 	if node.UpdatedAt != reopened {
 		t.Fatalf("updated at=%v want %v", node.UpdatedAt, reopened)
@@ -84,8 +86,8 @@ func TestReopenRejectsUnfinishedAndGrouping_AC2_AC13(t *testing.T) {
 	if err := unfinished.Reopen(now.Add(time.Hour)); !errors.Is(err, ErrTaskNotCompleted) {
 		t.Fatalf("unfinished error=%v", err)
 	}
-	actualEnd := now
-	group := Node{ID: "group", ProjectID: "project", Name: "Group", HasChildren: true, Executable: ExecutableFields{ActualEnd: &actualEnd}, UpdatedAt: now}
+	actualStart, actualEnd := now, now
+	group := Node{ID: "group", ProjectID: "project", Name: "Group", HasChildren: true, Executable: ExecutableFields{ActualStart: &actualStart, ActualEnd: &actualEnd}, UpdatedAt: now}
 	if err := group.Reopen(now.Add(time.Hour)); !errors.Is(err, ErrExecutableOnly) {
 		t.Fatalf("group error=%v", err)
 	}
@@ -93,8 +95,8 @@ func TestReopenRejectsUnfinishedAndGrouping_AC2_AC13(t *testing.T) {
 
 func TestDedicatedReopenDoesNotWeakenCompletedGenericMutations_AC6(t *testing.T) {
 	now := time.Date(2026, 7, 29, 8, 0, 0, 0, time.UTC)
-	actualEnd := now
-	node := Node{ID: "task", ProjectID: "project", Name: "Task", Executable: ExecutableFields{ActualEnd: &actualEnd}, UpdatedAt: now}
+	actualStart, actualEnd := now, now
+	node := Node{ID: "task", ProjectID: "project", Name: "Task", Executable: ExecutableFields{ActualStart: &actualStart, ActualEnd: &actualEnd}, UpdatedAt: now}
 	if err := node.Rename("Changed", now.Add(time.Hour)); !errors.Is(err, ErrCompletedReadOnly) {
 		t.Fatalf("rename error=%v", err)
 	}

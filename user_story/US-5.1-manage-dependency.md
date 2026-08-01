@@ -1,5 +1,12 @@
 # US-5.1 — Manage Dependency
 
+> **Product decision update — US-7.1:** Home Portfolio Gantt displays one
+> read-only arrow per effective dependency endpoint pair when both Task bars are
+> renderable. Dependency creation, deletion, ownership changes, validation, and
+> contextual editing remain owned by US-5.1 and continue through the Task form.
+
+> **Product decision update — US-6.2:** Dependency planning is immutable while either endpoint belongs to a Locked Project. Existing relations remain readable scheduling anchors, but create/delete/ownership change/retarget requires affected Projects to be Open and follows the generic cross-project impact warning/confirmation contract. Completion uses complete Actual Date. Successor completion requires every predecessor already completed, but historical Actual Date ranges may overlap. Actual End remains the readiness anchor.
+
 > **Product decision update — US-6.1:** US-5.1 continues to own manual
 > dependency management and graph invariants. US-6.1 adds scheduler-owned Auto
 > Dependency and Task-owned Lag. One visible endpoint pair may therefore have
@@ -76,11 +83,10 @@ Expected Start pada bagian `Blocks` merupakan scheduler projection dari US-6.1. 
 
 ## 5. UI Placement and User Flow
 
-Dependency pada Phase 1 dikelola dari contextual Edit Task form di Project
-Structure yang sudah tersedia. Komponen dan application contract harus dapat
-digunakan kembali oleh Integrated Gantt Workspace melalui Task Grid ketika
-workspace tersebut tersedia; implementasi story ini tidak membuat Gantt
-Workspace baru.
+Dependency dikelola dari contextual Edit Task form yang digunakan oleh
+Project Structure dan US-7.1 Home Portfolio Gantt. US-7.1 menyediakan workspace
+dan read-only arrow projection; komponen serta application contract story ini
+harus digunakan kembali dan tidak boleh diduplikasi oleh Home.
 
 ### Task Grid
 
@@ -89,8 +95,9 @@ Task menyediakan dua field atau detail sections:
 - **Blocked by**
 - **Blocks**
 
-Keduanya editable pada Phase 1 melalui contextual Edit Task form. Future Task
-Grid menggunakan behaviour yang sama. Gantt tetap read-only pada Phase 1.
+Keduanya editable melalui contextual Edit Task form. Home Task Grid menggunakan
+behaviour yang sama melalui form tersebut. Gantt tetap read-only: arrow tidak
+mempunyai create/delete/retarget interaction.
 
 Dependency row menampilkan source text/badge:
 
@@ -247,7 +254,9 @@ Task tidak boleh memblokir dirinya sendiri.
 - Project asal dan Project tujuan harus tersedia.
 - Closed Project tidak boleh menyediakan Task untuk dependency baru.
 - Existing dependency yang melibatkan Task completed tetap dipertahankan sebagai histori.
-- Dependency cross-project menjadi input portfolio scheduler pada US-6.1.
+- Dependency cross-project menjadi input scheduler pada US-6.1/US-6.2.
+- New or changed dependency is allowed only when both endpoint Projects are Open.
+- Existing dependency involving a Locked Project remains readable but immutable.
 - Mutation dependency harus menginvalidasi projection dari seluruh affected Project, bukan hanya Project tempat form dibuka.
 
 ### 7.6 Cycle Detection
@@ -276,7 +285,7 @@ Cycle validation berlaku lintas Project.
 
 ### 7.7 Completed Task as Blocking Task
 
-Task dengan Actual End dianggap completed.
+Task dengan complete Actual Date dianggap completed.
 
 Completed Task pada Project aktif **boleh dipilih sebagai Blocking Task baru**.
 
@@ -284,7 +293,7 @@ Tujuannya adalah memungkinkan Engineering Lead melengkapi dependency yang baru d
 
 Ketika completed Task menjadi blocker:
 
-- Dependency dianggap satisfied berdasarkan Actual End.
+- Dependency readiness untuk unfinished scheduling dianggap satisfied berdasarkan predecessor Actual End.
 - US-6.1 menggunakan Actual End sebagai dependency-ready anchor.
 - Execution End atau Commitment End tidak menggantikan Actual End.
 - Data completed Task tidak berubah.
@@ -310,18 +319,38 @@ Relation tersebut akan mengubah histori seolah Task A seharusnya menunggu Task C
 - Completed blocker boleh ditambahkan tanpa mengubah blocker tersebut.
 
 Reopen Task dari US-4.2 tidak membuat, menghapus, memodifikasi, atau me-retarget
-dependency. Setelah Actual End dihapus, completed marker, candidate eligibility,
+dependency. Setelah Actual Start dan Actual End dihapus, completed marker, candidate eligibility,
 dan historical read-only restriction selalu dievaluasi ulang dari current
-persisted Actual End. Immutable Task ID tetap menjadi dependency endpoint.
+persisted Actual Date. Immutable Task ID tetap menjadi dependency endpoint.
 
-### 7.10 Closed Project
+### 7.9A Actual Date Completion Validation
+
+- Completion of blocked Task requires every effective predecessor to already
+  have a complete Actual Date pair.
+- If one predecessor is unfinished, completion is rejected with
+  `ACTUAL_DATE_PREDECESSOR_UNFINISHED`.
+- Once all predecessors are completed, successor Actual Date may overlap
+  predecessor Actual Date, regardless of same or different assignee.
+- Planned same-assignee/next-working-day rules continue to govern Execution and
+  Commitment only; they do not rewrite historical Actual Date.
+- Completion does not create, delete, retarget, or change ownership of dependency.
+
+### 7.10 Locked Project
+
+- Task pada Locked Project may appear in existing `Blocks`/`Blocked by` relations but is not eligible for dependency mutation.
+- If either blocker or blocked Task belongs to a Locked Project, create, delete, manual ownership change, automatic-ownership retarget, and structural endpoint retarget are rejected with `PROJECT_LOCKED_READ_ONLY`.
+- Existing Locked dependency remains an immutable scheduler anchor.
+- Actual Date entry on a Locked blocker does not mutate the relation or Locked baseline. Its Actual Allocation/readiness may recalculate impacted Open Projects according to US-6.2.
+- Project must be reopened to Open before dependency planning can change.
+
+### 7.11 Closed Project
 
 - Task dari Closed Project tidak tersedia pada selector dependency baru.
 - Dependency existing yang melibatkan completed Task dari Closed Project tetap dipertahankan sebagai histori.
 - Dependency existing tidak dihapus hanya karena Project berubah menjadi Closed.
-- Project hanya dapat Closed setelah seluruh Task memiliki Actual End, sesuai Project lifecycle story.
+- Project hanya dapat Closed setelah seluruh Task memiliki complete Actual Date, sesuai Project lifecycle story.
 
-### 7.11 Delete Dependency
+### 7.12 Delete Dependency
 
 Dependency dapat dihapus selama penghapusan tidak melanggar completed-task historical rule.
 
@@ -349,7 +378,7 @@ unlink menghapus manual ownership dan relation tetap terlihat sebagai automatic.
 Selama endpoint pair masih valid, Engineering Lead dapat menambahkan kembali
 manual ownership melalui dependency creation flow yang sama.
 
-### 7.12 Delete Task
+### 7.13 Delete Task
 
 Ketika Task dihapus melalui owning WBS workflow:
 
@@ -375,7 +404,7 @@ Tidak otomatis menjadi `A → C`.
 
 US-6.1 dapat mereconcile automatic ownership setelah confirmed deletion berdasarkan Assignee, priority, WBS order, capacity, dan generated allocation. Reconciliation tidak boleh membuat ulang manual ownership.
 
-### 7.13 Rename, Move, and Reorder
+### 7.14 Rename, Move, and Reorder
 
 - Rename Task tidak mengubah dependency.
 - Move Task atau subtree tidak menghapus dependency karena dependency tidak bergantung pada hierarchy parent.
@@ -390,7 +419,7 @@ US-6.1 dapat mereconcile automatic ownership setelah confirmed deletion berdasar
   dihapus, digabung, atau ditimpa. Kegagalan retarget me-roll back conversion,
   hierarchy, executable data, ordering, dan dependency graph.
 
-### 7.14 Scheduler Integration Contract
+### 7.15 Scheduler Integration Contract
 
 US-5.1 tidak menghitung timeline, tetapi setelah US-6.1 tersedia successful
 manual dependency mutation ketika Automatic Scheduling ON harus menjalankan
@@ -481,8 +510,8 @@ Rules:
 
 ### AC-7 — Cross-project dependency
 
-**Given** Task A berada pada active Project Alpha
-**And** Task B berada pada active Project Beta
+**Given** Task A berada pada Open Project Alpha
+**And** Task B berada pada Open Project Beta
 **When** Engineering Lead membuat `A blocks B`
 **Then** dependency diterima
 **And** kedua Project tercatat sebagai affected scheduling projections.
@@ -539,7 +568,7 @@ Rules:
 
 ### AC-15 — Completed Task boleh menjadi blocker
 
-**Given** Task A completed dengan Actual End
+**Given** Task A completed dengan complete Actual Date
 **And** Project Task A masih active
 **And** Task B unfinished
 **When** Engineering Lead membuat `A blocks B`
@@ -560,11 +589,26 @@ Rules:
 **When** Engineering Lead mencari blocker atau blocked task
 **Then** Task dari Project Alpha tidak tersedia sebagai candidate baru.
 
-### AC-18 — Selector seluruh active Project
+### AC-17A — Locked Project dependency is read-only
 
-**Given** beberapa active Project memiliki Task
+**Given** blocker atau blocked Task berada pada Locked Project
+**When** create, delete, ownership change, atau retarget dependency diminta
+**Then** request ditolak dengan `PROJECT_LOCKED_READ_ONLY`
+**And** existing graph remains unchanged
+**And** user must reopen the Project to Open first.
+
+### AC-17B — Locked cross-project dependency remains valid during priority change
+
+**Given** Open Task menjadi predecessor Locked Task
+**When** proposed Project Priority makes predecessor readiness later than Locked successor requirement
+**Then** Priority change is rejected according to US-6.2
+**And** dependency and all schedules remain unchanged.
+
+### AC-18 — Selector seluruh Open Project
+
+**Given** beberapa Open Project memiliki Task
 **When** Engineering Lead membuka dependency selector
-**Then** candidate berasal dari seluruh active Project
+**Then** candidate berasal dari seluruh Open Project
 **And** setiap result menampilkan Task Name sebagai primary label
 **And** setiap result menampilkan full hierarchy path dari Project sebagai WBS level 0 sampai candidate Task
 **And** completed Task ditandai secara jelas.
@@ -910,13 +954,13 @@ Tidak boleh mengekspos SQL, stack trace, atau infrastructure details.
 
 ### TC-13 — Indirect cycle lintas Project
 
-**Precondition:** Chain berada pada tiga active Project.
+**Precondition:** Chain berada pada tiga Open Project.
 **Action:** Tutup cycle.
 **Expected:** Ditolak secara atomik.
 
 ### TC-14 — Completed blocker
 
-**Precondition:** A Actual End terisi, Project A belum Closed; B unfinished.
+**Precondition:** A complete Actual Date terisi, Project A belum Closed; B unfinished.
 **Action:** Buat A → B.
 **Expected:** Success dan Actual End menjadi future ready anchor.
 
@@ -932,9 +976,21 @@ Tidak boleh mengekspos SQL, stack trace, atau infrastructure details.
 **Action:** Search Task A.
 **Expected:** Tidak muncul.
 
-### TC-17 — Completed active Project candidate
+### TC-16A — Create dependency involving Locked Project
 
-**Precondition:** Task A completed, Project A active.
+**Expected:** `409 PROJECT_LOCKED_READ_ONLY`; no graph or schedule mutation.
+
+### TC-16B — Delete existing dependency involving Locked Project
+
+**Expected:** `409 PROJECT_LOCKED_READ_ONLY`; historical/current relation remains.
+
+### TC-16C — Priority impact through Open predecessor and Locked successor
+
+**Expected:** Priority change rejected when Locked readiness becomes invalid.
+
+### TC-17 — Completed Open Project candidate
+
+**Precondition:** Task A completed, Project A Open.
 **Action:** Search blocker candidate.
 **Expected:** A muncul dan ditandai completed.
 
@@ -1091,7 +1147,7 @@ menjelaskan Task target.
 - Persist dan retrieve relation.
 - Unique `(blocking_task_id, blocked_task_id)` constraint.
 - Incoming/outgoing query.
-- Candidate search seluruh active Project.
+- Candidate search seluruh Open Project; Locked/Closed endpoints are excluded from new dependency candidates.
 - Closed Project exclusion.
 - Completed candidate filtering per direction.
 - Cycle traversal support.
@@ -1170,7 +1226,7 @@ Tests harus berfokus pada observable behaviour dan tidak hanya snapshot.
 22. Mutations menginvalidasi incoming/outgoing relation, candidate state, workspace, dan affected projection.
 23. Versioned invalidation atau equivalent mencegah stale restoration.
 24. UI menggunakan `Blocks` dan `Blocked by`, bukan predecessor/successor sebagai primary copy.
-25. Gantt tetap read-only pada Phase 1.
+25. US-7.1 Home Gantt tetap read-only; dependency mutation hanya melalui Task form.
 26. Accessibility dan responsive requirements terpenuhi.
 27. Backend format, lint, static analysis, migrations, tests, dan required race tests lulus.
 28. Frontend format, lint, type check, tests, dan production build lulus.
@@ -1198,8 +1254,8 @@ Implementasi harus menilai dan memperbarui:
   - Concurrency and transaction strategy.
   - Index and query strategy.
 - API documentation.
-- Project Structure documentation untuk contextual dependency editor dan future
-  reuse contract bagi Integrated Gantt Workspace Task Grid.
+- Project Structure dan US-7.1 Home Portfolio Gantt documentation untuk
+  contextual dependency editor reuse dan read-only arrow projection.
 - US-6.1 agar menggunakan effective dependency graph dan ownership projection ini.
 - Manual/automatic dependency source, reconciliation, and unlink semantics.
 
@@ -1212,7 +1268,8 @@ README dan environment documentation hanya diubah bila setup berubah.
 - Dependency hanya antar Executable Task.
 - Summary Task tidak boleh menjadi endpoint.
 - Dependency boleh cross-project.
-- Scheduler bersifat portfolio-level.
+- Dependency mutation requires both endpoint Projects to be Open; any relation involving a Locked Project is immutable until Project Reopen.
+- Scheduler uses transitive impacted scope rather than unrelated whole-portfolio recalculation.
 - UI menggunakan `Blocks` dan `Blocked by`.
 - Keduanya editable dan merepresentasikan satu relation.
 - Finish-to-Start adalah satu-satunya type MVP.
@@ -1220,16 +1277,16 @@ README dan environment documentation hanya diubah bila setup berubah.
 - Cycle hard reject dan error menunjukkan path.
 - Lag bukan field dependency; Lag dimiliki Task dan diimplementasikan oleh US-6.1.
 - Auto Dependency selection/allocation algorithm dimiliki US-6.1; US-5.1 menyediakan compatible ownership and projection semantics.
-- Completed Task pada active Project boleh menjadi blocker baru.
-- Actual End completed blocker menjadi dependency-ready anchor untuk US-6.1.
+- Completed Task pada Open Project boleh menjadi blocker baru.
+- Actual End completed blocker menjadi dependency-ready anchor untuk US-6.1; historical Actual ranges may overlap after predecessor completion validation.
 - Completed Task tidak boleh menjadi blocked task baru.
 - Task dari Closed Project tidak tersedia untuk dependency baru.
 - Existing historical dependency tetap disimpan.
 - Delete Task memutus seluruh incoming dan outgoing dependency.
 - Tidak ada auto-reconnect manual dependency; automatic reconciliation tidak pernah menciptakan manual ownership.
 - Expected Start pada `Blocks` berasal dari US-6.1; sebelum concrete projection tersedia tampil `Not scheduled`.
-- Phase 1 menggunakan contextual Edit Task form pada Project Structure; future
-  Integrated Gantt Task Grid menggunakan contract yang sama.
+- Project Structure dan US-7.1 Home Task Grid menggunakan contextual Edit Task
+  form dan application contract yang sama.
 - Structural Task-to-Group conversion me-retarget dependency ke conversion child
   secara atomik.
 - Story ini tidak mengimplementasikan timeline algorithm; successful mutation dapat mengoordinasikan concrete US-6.1 scheduler.

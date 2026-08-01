@@ -76,6 +76,7 @@ function task(
 ): WBSNode {
   const actualEnd =
     actualEndOverride.length === 0 ? "2026-07-28" : actualEndOverride[0];
+  const actualStart = actualEnd ? "2026-07-26" : undefined;
   return {
     id,
     projectId: "project",
@@ -90,6 +91,7 @@ function task(
       lagDays: 0,
       executionTimeline: { start: "2026-08-01", end: "2026-08-03" },
       commitmentTimeline: { start: "2026-08-01", end: "2026-08-05" },
+      actualStart,
       actualEnd,
     },
     children: [],
@@ -111,6 +113,9 @@ function group(): WBSNode {
 function wbsGateway(values: WBSNode[]): WBSGateway {
   return {
     tree: vi.fn().mockResolvedValue(values),
+    allocations: vi
+      .fn()
+      .mockResolvedValue({ execution: [], commitment: [], actual: [] }),
     create: vi.fn().mockResolvedValue(undefined),
     rename: vi.fn().mockResolvedValue(undefined),
     reorder: vi.fn().mockResolvedValue(undefined),
@@ -133,7 +138,11 @@ function wbsGateway(values: WBSNode[]): WBSGateway {
       if (!original) throw new Error("missing fixture");
       return {
         ...original,
-        executable: { ...original.executable, actualEnd: undefined },
+        executable: {
+          ...original.executable,
+          actualStart: undefined,
+          actualEnd: undefined,
+        },
       };
     }),
   };
@@ -234,8 +243,11 @@ describe("US-4.2 acceptance workflow through WBSPanel", () => {
     const confirmation = await openConfirmation(detail);
     expect(within(confirmation).getByText("Build API")).toBeTruthy();
     expect(within(confirmation).getByText(/2026/)).toBeTruthy();
-    expect(within(confirmation).getByText(/removes Actual End/)).toBeTruthy();
-    expect(within(confirmation).getByText(/may change Forecast/)).toBeTruthy();
+    expect(
+      within(confirmation).getByText(
+        /removes both Actual Start and Actual End/,
+      ),
+    ).toBeTruthy();
     await userEvent.click(
       within(confirmation).getByRole("button", { name: "Reopen Task" }),
     );
@@ -246,7 +258,9 @@ describe("US-4.2 acceptance workflow through WBSPanel", () => {
         (within(detail).getByLabelText("Name") as HTMLInputElement).disabled,
       ).toBe(false),
     );
-    expect(within(detail).queryByText(/Completed on/)).toBeNull();
+    expect(
+      within(detail).queryByText(/Completed work is read-only/),
+    ).toBeNull();
     expect(
       (within(detail).getByLabelText("Name") as HTMLInputElement).value,
     ).toBe("Build API");
@@ -280,45 +294,27 @@ describe("US-4.2 acceptance workflow through WBSPanel", () => {
     expect(screen.getAllByText("Build API").length).toBeGreaterThan(0);
   });
 
-  it("AC-1 AC-8 reopens a completed Locked Task and keeps Locked editing semantics", async () => {
+  it("US-6.2 AC-16 hides Reopen for a completed Locked Task and preserves read-only planning fields", async () => {
     const values = [task("task", "Build API")];
     const api = wbsGateway(values);
     renderPanel("locked", values, api, undefined, {
       automaticScheduling: false,
     });
-    let detail = await openTask("Build API");
-    const confirmation = await openConfirmation(detail);
-    await userEvent.click(
-      within(confirmation).getByRole("button", { name: "Reopen Task" }),
-    );
-    detail = await screen.findByRole("dialog", { name: "Edit Task" });
-    await waitFor(() =>
-      expect(
-        (within(detail).getByLabelText("Name") as HTMLInputElement).disabled,
-      ).toBe(false),
-    );
+    const detail = await openTask("Build API");
+    expect(
+      within(detail).queryByRole("button", { name: "Reopen Task" }),
+    ).toBeNull();
+    expect(
+      (within(detail).getByLabelText("Name") as HTMLInputElement).disabled,
+    ).toBe(true);
     expect(
       (
         within(detail).getByRole("button", {
           name: "Save",
         }) as HTMLButtonElement
       ).disabled,
-    ).toBe(false);
-    expect(
-      (
-        within(detail).getByRole("button", {
-          name: /Execution timeline: .*2026.*2026/,
-        }) as HTMLButtonElement
-      ).disabled,
     ).toBe(true);
-    expect(
-      (
-        within(detail).getByRole("button", {
-          name: /Commitment timeline: .*2026.*2026/,
-        }) as HTMLButtonElement
-      ).disabled,
-    ).toBe(true);
-    expect(api.tree).toHaveBeenCalledTimes(1);
+    expect(api.reopen).not.toHaveBeenCalled();
   });
 
   it("AC-3 cancel and Escape send no request, preserve state, and return focus", async () => {
@@ -336,7 +332,9 @@ describe("US-4.2 acceptance workflow through WBSPanel", () => {
     expect(
       screen.queryByRole("alertdialog", { name: "Reopen Task?" }),
     ).toBeNull();
-    expect(within(detail).getByText(/Completed on .*2026/)).toBeTruthy();
+    expect(
+      within(detail).getByText(/Completed work is read-only/),
+    ).toBeTruthy();
     expect(document.activeElement).toBe(trigger);
 
     await user.click(trigger);
@@ -381,7 +379,7 @@ describe("US-4.2 acceptance workflow through WBSPanel", () => {
     ).toBeNull();
   });
 
-  it("AC-11 AC-14 preserves completed state after Forecast failure and permits retry", async () => {
+  it("AC-11 AC-14 preserves completed state after Reopen failure and permits retry", async () => {
     const values = [task("task", "Build API")];
     const api = wbsGateway(values);
     vi.mocked(api.reopen)
@@ -400,14 +398,18 @@ describe("US-4.2 acceptance workflow through WBSPanel", () => {
         "The Task could not be reopened. Try again.",
       ),
     ).toBeTruthy();
-    expect(within(detail).getByText(/Completed on .*2026/)).toBeTruthy();
+    expect(
+      within(detail).getByText(/Completed work is read-only/),
+    ).toBeTruthy();
 
     await userEvent.click(
       within(confirmation).getByRole("button", { name: "Reopen Task" }),
     );
     detail = await screen.findByRole("dialog", { name: "Edit Task" });
     await waitFor(() =>
-      expect(within(detail).queryByText(/Completed on/)).toBeNull(),
+      expect(
+        within(detail).queryByText(/Completed work is read-only/),
+      ).toBeNull(),
     );
     expect(api.reopen).toHaveBeenCalledTimes(2);
   });

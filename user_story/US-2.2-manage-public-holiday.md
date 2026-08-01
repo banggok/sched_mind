@@ -4,6 +4,11 @@
 > before both buffers. Member Buffer then derives Execution Capacity, and the
 > owning Project Buffer derives Commitment Capacity.
 
+> **Product decision update — US-6.2:** Public Holiday create/update/delete is a
+> scheduling-impacting mutation. Confirmed save requires transitive impact
+> simulation. Open-only Project impact requires confirmation and server-side
+> revalidation; any impacted Locked Project blocks the mutation atomically.
+
 ## 1. User Story
 
 **Sebagai** Engineering Lead,
@@ -172,12 +177,14 @@ sudah digunakan oleh Roles dan Members. Panjang divalidasi setelah trim.
 Untuk satu Team Member pada satu tanggal, urutan resolution adalah:
 
 1. Jika Date adalah Public Holiday, Resolved Daily Capacity adalah `0`.
-2. Jika bukan Public Holiday dan Capacity Override berlaku, gunakan override.
-3. Jika tidak, gunakan Team Member Daily Capacity.
+2. Jika bukan Public Holiday dan satu atau lebih Capacity Override aktif,
+   gunakan Capacity terkecil dari seluruh active overrides milik Member pada
+   Date tersebut.
+3. Jika tidak ada active override, gunakan Team Member Daily Capacity.
 4. Terapkan Member Buffer terhadap Resolved Daily Capacity untuk menghasilkan
-   Execution Capacity.
-5. Terapkan owning Project Buffer terhadap Execution Capacity untuk menghasilkan
-   Commitment Capacity.
+   Execution Capacity dan lakukan rounding sesuai US-6.1.
+5. Untuk Commitment, terapkan Member Buffer lalu owning Project Buffer terhadap
+   Resolved Daily Capacity dan lakukan final rounding sesuai US-6.1.
 
 Konsekuensi:
 
@@ -188,9 +195,10 @@ Konsekuensi:
 - Public Holiday hanya memengaruhi capacity resolution pada Date terkait.
 - Public Holiday tidak mengubah atau menghapus Daily Capacity, Buffer, maupun
   Capacity Override.
-- Create, update, dan delete tidak otomatis menjalankan Scheduling Engine.
-- Data Public Holiday terbaru yang sudah dikonfirmasi tersedia bagi Scheduling
-  Engine pada perhitungan berikutnya.
+- Create, update, dan delete mengikuti US-6.2 transitive impact simulation.
+- Open-only impact requires confirmation; any impacted Locked Project blocks save.
+- Confirmed allowed mutation and impacted Open-Project recalculation persist
+  atomically using the latest Public Holiday data.
 
 ---
 
@@ -432,7 +440,7 @@ memungkinkan
 ### AC-31 — Scheduler consistency
 
 **When** Public Holiday berhasil dibuat, diubah, atau dihapus
-**Then** mutation tidak otomatis menjalankan Scheduling Engine
+**Then** mutation follows US-6.2 grouped impact warning, Locked blocking, confirmation, and server revalidation
 **And** latest confirmed data tersedia bagi perhitungan berikutnya.
 
 ### AC-32 — Accessibility
@@ -633,7 +641,7 @@ Frontend memetakan error ke pesan yang dapat dipahami.
 | TC-35 | Invalid `holidayDate` query                            | `400 INVALID_HOLIDAY_DATE`; repository tidak dipanggil                     |
 | TC-36 | Holiday dan override pada Date sama                    | Execution/Commitment Capacity semua Member adalah 0                        |
 | TC-37 | Non-holiday dengan/tanpa override                      | Override/Daily Capacity → Member Buffer → Project Buffer sesuai precedence |
-| TC-38 | Mutation holiday lalu perhitungan berikutnya           | Latest confirmed data terbaca; scheduler tidak auto-run                    |
+| TC-38 | Mutation holiday impacts Projects                     | Grouped impact shown; confirm/revalidate; allowed Open scope recalculated   |
 | TC-39 | Operasikan dengan keyboard/assistive tech              | Controls, feedback, dan dialog focus accessible                            |
 | TC-40 | Uji supported viewport                                 | Workflow usable tanpa normal horizontal scroll                             |
 | TC-41 | Create/update menggunakan Date yang sudah dipakai      | `409 PUBLIC_HOLIDAY_DATE_ALREADY_EXISTS`; existing data utuh               |
@@ -756,7 +764,7 @@ Tests berfokus pada observable behavior dan tidak hanya mengandalkan snapshots.
 15. Established versioned invalidation mencegah stale in-flight response.
 16. Capacity-resolution consumer dapat membaca latest confirmed holiday data.
 17. Public Holiday memiliki precedence lebih tinggi daripada Capacity Override.
-18. Story tidak memperkenalkan automatic schedule recalculation.
+18. Confirmed mutation follows US-6.2 impact preview/confirmation and recalculates only the allowed transitive Open scope.
 19. Loading, empty, filtered no-results, load-error, validation-error, mutation,
     dan success states berbeda dan konsisten.
 20. Form mempertahankan draft setelah failure dan mencegah duplicate submission.
@@ -811,11 +819,11 @@ mengapa suatu dokumen tidak perlu berubah.
 - Start/End Date adalah required date-only ISO; Description required, trimmed, maksimum
   100 karakter berdasarkan konvensi repository.
 - Past, current, dan future dates boleh dikelola.
-- Public Holiday menghasilkan Execution Capacity dan Commitment Capacity `0` dan
-  mengalahkan Capacity Override.
+- Public Holiday menghasilkan Resolved Daily Capacity, Execution Capacity, dan
+  Commitment Capacity `0` serta mengalahkan seluruh overlapping Capacity
+  Override milik Member mana pun pada Date tersebut.
 - Daily Capacity, Buffer, dan Capacity Override records tidak dimodifikasi.
-- Mutation tidak otomatis menjalankan scheduler; latest confirmed data tersedia
-  pada calculation berikutnya.
+- Mutation uses US-6.2 impact guard; after confirmation, latest data and allowed impacted Open schedules are persisted atomically.
 - CRUD lengkap tersedia; delete adalah confirmed hard delete.
 - Backend pagination default `5`, max `100`; active/upcoming lebih dulu, lalu
   expired, dan tiap group diurut Start Date, End Date, ID ascending.

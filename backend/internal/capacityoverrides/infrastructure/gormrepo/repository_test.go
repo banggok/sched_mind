@@ -22,19 +22,22 @@ func setup(t *testing.T) *gorm.DB {
 	if err := db.Exec("PRAGMA foreign_keys = ON").Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AutoMigrate(&teamMemberModel{}, &capacityOverrideModel{}); err != nil {
+	if err := db.AutoMigrate(&teamMemberModel{}, &capacityOverrideModel{}, &publicHolidayDateModel{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Create(&teamMemberModel{ID: "member-a"}).Error; err != nil {
+	if err := db.Exec("CREATE UNIQUE INDEX capacity_overrides_active_duplicate_idx ON capacity_overrides(team_member_id, start_date, end_date, capacity) WHERE deleted_at IS NULL").Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Create(&teamMemberModel{ID: "member-b"}).Error; err != nil {
+	if err := db.Create(&teamMemberModel{ID: "member-a", DailyCapacity: "8.0"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&teamMemberModel{ID: "member-b", DailyCapacity: "8.0"}).Error; err != nil {
 		t.Fatal(err)
 	}
 	return db
 }
 
-func TestConcurrentOverlappingCreateStoresAtMostOne(t *testing.T) {
+func TestConcurrentOverlappingCreateStoresBothRows_D01(t *testing.T) {
 	database := setup(t)
 	database.Exec("PRAGMA busy_timeout = 5000")
 	repository := New(database)
@@ -59,8 +62,38 @@ func TestConcurrentOverlappingCreateStoresAtMostOne(t *testing.T) {
 		Where("team_member_id = ?", "member-a").Count(&count).Error; err != nil {
 		t.Fatal(err)
 	}
+	if count != 2 {
+		t.Fatalf("stored %d overlapping rows, want 2", count)
+	}
+}
+
+func TestConcurrentExactDuplicateCreateStoresAtMostOne_D01(t *testing.T) {
+	database := setup(t)
+	database.Exec("PRAGMA busy_timeout = 5000")
+	repository := New(database)
+	values := []domain.CapacityOverride{
+		value(t, "duplicate-one", "member-a", "2026-08-01", "2026-08-03", 4),
+		value(t, "duplicate-two", "member-a", "2026-08-01", "2026-08-03", 4),
+	}
+	start := make(chan struct{})
+	var wait sync.WaitGroup
+	wait.Add(2)
+	for index := range values {
+		go func(item domain.CapacityOverride) {
+			defer wait.Done()
+			<-start
+			_ = repository.Create(context.Background(), item)
+		}(values[index])
+	}
+	close(start)
+	wait.Wait()
+	var count int64
+	if err := database.Model(&capacityOverrideModel{}).
+		Where("team_member_id = ?", "member-a").Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
 	if count > 1 {
-		t.Fatalf("stored %d overlapping rows", count)
+		t.Fatalf("stored %d exact duplicate rows", count)
 	}
 }
 func value(t *testing.T, id, member, start, end string, hours float64) domain.CapacityOverride {
@@ -73,7 +106,7 @@ func value(t *testing.T, id, member, start, end string, hours float64) domain.Ca
 	}
 	return *result
 }
-func TestRepositoryScopePaginationOverlapUpdateDelete(t *testing.T) {
+func TestRepositoryScopePaginationDuplicateUpdateDelete_D01(t *testing.T) {
 	database := setup(t)
 	repo := New(database)
 	ctx := context.Background()
@@ -84,15 +117,18 @@ func TestRepositoryScopePaginationOverlapUpdateDelete(t *testing.T) {
 	if err := repo.Create(ctx, value(t, "other", "member-b", "2026-07-03", "2026-07-04", 4)); err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.Create(ctx, value(t, "overlap", "member-a", "2026-07-04", "2026-07-05", 4)); !errors.Is(err, domain.ErrOverlaps) {
+	if err := repo.Create(ctx, value(t, "overlap", "member-a", "2026-07-04", "2026-07-05", 4)); err != nil {
 		t.Fatalf("overlap=%v", err)
+	}
+	if err := repo.Create(ctx, value(t, "duplicate", "member-a", "2026-07-03", "2026-07-04", 4)); !errors.Is(err, domain.ErrDuplicate) {
+		t.Fatalf("duplicate=%v", err)
 	}
 	adjacent := value(t, "adjacent", "member-a", "2026-07-05", "2026-07-06", 0)
 	if err := repo.Create(ctx, adjacent); err != nil {
 		t.Fatal(err)
 	}
 	page, err := repo.List(ctx, "member-a", application.ListQuery{Query: listing.Query{Page: 1, PageSize: 1}})
-	if err != nil || page.Total != 2 || page.Items[0].ID != "one" || page.Items[0].Description != "Training" {
+	if err != nil || page.Total != 3 || page.Items[0].ID != "one" || page.Items[0].Description != "Training" {
 		t.Fatalf("page=%+v err=%v", page, err)
 	}
 	first.Capacity, _ = domain.NewCapacity(6)
@@ -152,5 +188,66 @@ func TestRepositoryFiltersByInclusiveEffectiveDate(t *testing.T) {
 		if err != nil || page.Total != 0 || len(page.Items) != 0 {
 			t.Fatalf("date=%s page=%+v err=%v", selected, page, err)
 		}
+	}
+}
+
+func TestResolvedCapacityScheduleTriggerUsesDailyFallbackAndIgnoresRecordOnlyChanges_D02(t *testing.T) {
+	database := setup(t)
+	repository := New(database)
+	ctx := context.Background()
+	calls := 0
+	schedule := func(context.Context, string) error {
+		calls++
+		return nil
+	}
+
+	equalToDaily := value(t, "equal-daily", "member-a", "2026-08-03", "2026-08-03", 8)
+	if err := repository.CreateWithSchedule(ctx, equalToDaily, schedule); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 0 {
+		t.Fatalf("daily-capacity-equivalent override scheduled %d times", calls)
+	}
+
+	lower := value(t, "lower", "member-a", "2026-08-04", "2026-08-04", 4)
+	if err := repository.CreateWithSchedule(ctx, lower, schedule); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatalf("effective minimum change scheduled %d times, want 1", calls)
+	}
+	lower.Description = "Updated description only"
+	lower.UpdatedAt = time.Now().UTC().Add(time.Hour)
+	if err := repository.UpdateWithSchedule(ctx, lower, schedule); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatalf("record-only update scheduled %d times, want 1 total", calls)
+	}
+}
+
+func TestResolvedCapacityScheduleTriggerIgnoresWeekendAndPublicHolidayOverrides_D02(t *testing.T) {
+	database := setup(t)
+	repository := New(database)
+	ctx := context.Background()
+	holiday, _ := time.Parse("2006-01-02", "2026-08-05")
+	if err := database.Create(&publicHolidayDateModel{Date: holiday}).Error; err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	schedule := func(context.Context, string) error {
+		calls++
+		return nil
+	}
+	for _, item := range []domain.CapacityOverride{
+		value(t, "weekend", "member-a", "2026-08-08", "2026-08-09", 2),
+		value(t, "holiday", "member-a", "2026-08-05", "2026-08-05", 2),
+	} {
+		if err := repository.CreateWithSchedule(ctx, item, schedule); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if calls != 0 {
+		t.Fatalf("non-working-day override scheduled %d times", calls)
 	}
 }

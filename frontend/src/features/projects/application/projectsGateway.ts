@@ -25,6 +25,7 @@ export interface ProjectsGateway {
     projectBuffer: number,
   ): Promise<Project>;
   changeStatus(id: string, status: ProjectStatus): Promise<Project>;
+  bulkReopen(rootProjectId: string, token: string): Promise<Project[]>;
   movePriority(id: string, direction: PriorityDirection): Promise<Project>;
   updateSettings(
     id: string,
@@ -35,11 +36,25 @@ export interface ProjectsGateway {
   delete(id: string): Promise<void>;
 }
 
+export interface ReopenImpactProject {
+  id: string;
+  name: string;
+  version: number;
+}
+
+export interface BulkReopenPlan {
+  rootProjectId: string;
+  lockedProjects: ReopenImpactProject[];
+  openProjects: ReopenImpactProject[];
+  token: string;
+}
+
 export class ProjectOperationError extends Error {
   constructor(
     readonly code: string,
     message: string,
     readonly field?: string,
+    readonly bulkReopenPlan?: BulkReopenPlan,
   ) {
     super(message);
   }

@@ -43,8 +43,19 @@ Detailed rules are owned by:
 - [US-4.3 View Group and Project Summary](../../user_story/US-4.3-view-group-summary.md)
 - [US-5.1 Manage Dependency](../../user_story/US-5.1-manage-dependency.md)
 - [US-6.1 Automatic Scheduling](../../user_story/US-6.1-automatic-scheduling.md)
+- [US-6.2 Locked Project and Completed Task Scheduling](../../user_story/US-6.2-locked-project-and-completed-task-scheduling.md)
+- [US-7.1 Home Portfolio Gantt Workspace](../../user_story/US-7.1-home-portfolio-gantt.md)
 
 The primary product actor in these stories is the Engineering Lead.
+
+## Approved target scope not yet implemented
+
+The current working-tree requirements also approve US-7.1 Home Portfolio Gantt.
+It adds Home as the root frontend page, composes selected Open/Locked Projects in
+a read-only daily Gantt, reuses existing Project/WBS forms for Add Task, Add
+Child, and edit flows, and persists globally named Project-selection filters.
+The current code may not yet implement this target; implementation status must
+be determined from code and test evidence rather than this approval statement.
 
 ## Terminology and current invariants
 
@@ -66,34 +77,37 @@ restricted by references described in US-1.2.
 
 Daily Capacity is a Member input in 0.5-hour increments. The scheduler resolves
 the date-specific capacity by applying weekend/Public Holiday zero capacity,
-then Capacity Override, then Member Daily Capacity. Member Buffer produces raw
-Execution Capacity, which is rounded to the nearest `0.5` hour. Commitment
+then the minimum Capacity among all active overrides for that Member/Date, then
+Member Daily Capacity only when no override applies. The selected override is
+not final capacity: Member Buffer produces raw Execution Capacity, which is
+rounded to the nearest `0.5` hour. Commitment
 Capacity is calculated independently from Resolved Daily Capacity after both
 Member Buffer and owning Project Buffer, then rounded to the nearest `0.5` hour. Scheduler arithmetic remains deterministic and does not round capacity
 to whole days. Formula ownership belongs to US-1.2, US-2.2, US-3.3, and US-6.1.
 
 ### Capacity Override
 
-A Capacity Override temporarily replaces one Member's Daily Capacity for an
-inclusive date range. It may represent reduced availability or overtime. One
-Member cannot have overlapping overrides, while adjacent ranges and equivalent
-ranges for different Members are allowed. Effective-date filtering is inclusive.
-Exact creation, editing, deletion, concurrency, filtering, and capacity
+A Capacity Override temporarily replaces one Member's Daily Capacity input for
+an inclusive date range. It may represent reduced availability, sickness,
+leave, or overtime/support. One Member may have multiple overlapping overrides;
+the minimum active Capacity is resolved independently for each Date. Exact
+duplicates with the same Member, Start Date, End Date, and Capacity are rejected
+even when Description differs. Effective-date filtering is inclusive. Mutation
+uses cross-project impact coordination only when the resolved per-Date minimum
+changes. Exact creation, editing, deletion, concurrency, filtering, and capacity
 resolution rules belong to US-2.1.
 
 Public Holiday has precedence over a Capacity Override and resolves daily
-capacity to zero. Public Holiday and Capacity Override mutations do not trigger
-immediate recalculation; the concrete scheduler consumes their latest confirmed
-values on the next scheduling trigger.
+capacity to zero. Daily Capacity, Member Buffer, Capacity Override, Public
+Holiday, and Project Buffer mutations use US-6.2 cross-project impact preview.
+Open-only impact requires confirmation; Locked impact blocks; confirmed allowed
+changes and impacted Open schedules persist atomically.
 
 ### Project
 
 A Project is the root planning entity and WBS level `0`. It has a unique
 case-insensitive Name, system-assigned Priority, and an Open, Locked, or Closed
-lifecycle. Locked protects Execution and Commitment baselines while Forecast
-remains dynamic. Closed Projects are historical, read-only, and excluded from
-scheduling and Gantt. Exact transitions, ordering, deletion, and downstream
-contracts belong to US-3.1.
+lifecycle. Locked protects Execution/Commitment baseline as an immutable anchor. Planning, WBS, Task, Settings, and dependency changes require explicit `Locked → Open` Reopen; complete Actual Date remains the only Task mutation allowed while Locked. It changes no protected baseline, but Actual Allocation may recalculate impacted Open Projects. Mutual/transitive Locked impact is resolved through atomic Reopen All closure. Forecast behavior while Locked is deferred. Closed Projects are historical, read-only, and excluded from scheduling and Gantt. Exact transitions, ordering, deletion, and downstream contracts belong to US-3.1 and US-6.2.
 
 Project Settings use `automaticScheduling` as the sole activation toggle and
 optionally define the Project-level Scheduling Start Date. This date is the
@@ -110,26 +124,21 @@ ON and are treated as retained manual values when it is OFF. Dependency endpoint
 pairs are stored once and may be manual-owned, automatic-owned, or both. Removing
 manual ownership never removes scheduler-required automatic ownership.
 
-The concrete scheduler operates across the active portfolio, serializes relevant
-mutations, and persists daily allocation projections plus monotonic Project
-schedule versions. Dependency readiness is applied before Project Priority and
-depth-first WBS order. Allocation is whole-Task, contiguous, and non-preemptive.
-Locked allocations are fixed reservations; Closed Projects are excluded;
-completed Tasks retain generated dates and use Actual End as successor readiness.
+The concrete scheduler supports shared capacity and cross-project dependency, but each mutation recalculates only its transitive impacted scheduling scope. Open unfinished Tasks may change; Locked Projects are immutable outputs and unrelated Projects are not recalculated or version-updated. Dependency readiness is applied before Project Priority and depth-first WBS order. Execution and Commitment allocation remain whole-Task scheduling projections. Completed Tasks use complete Actual Date, with Actual End as readiness anchor. Actual Allocation uses working dates and BAU Resolved Daily Capacity before buffers, may represent historical overcapacity, and never carries excess debt to later Dates.
 For an Open unfinished Task, scheduling-field blur can run the same concrete
 scheduler as a rollback-only draft preview so generated dates are visible before
 Save; changing Assignee recalculates dates and dependency ownership, while
 clearing Assignee returns an unconfirmed missing-Assignee schedule and removes
 stale automatic ownership. The preview does not advance persisted schedule state.
 
-US-4.3 defines the approved View Group and Edit Project summary behaviour. Project is the logical WBS level `0`, so Edit Project recursively summarizes every confirmed Task across all top-level WBS roots; View Group summarizes only the selected subtree. Both contexts use one read-only calculation contract. Execution and Commitment ranges each use the earliest Start and latest End among Tasks with a complete pair, with separate scheduled-Task coverage. Effort Completion uses Actual End as the only completion source and compares completed known Effort with total known Effort; Tasks without Effort are excluded from the arithmetic and disclosed. The summary is not persisted on Group or Project and never consumes unconfirmed Task preview data.
+US-4.3 defines the approved View Group and Edit Project summary behaviour. Project is the logical WBS level `0`, so Edit Project recursively summarizes every confirmed Task across all top-level WBS roots; View Group summarizes only the selected subtree. Both contexts use one read-only calculation contract. Execution and Commitment ranges each use the earliest Start and latest End among Tasks with a complete pair, with separate scheduled-Task coverage. Effort Completion uses complete Actual Date as the completion source and compares completed known Effort with total known Effort; Tasks without Effort are excluded from the arithmetic and disclosed. The summary is not persisted on Group or Project and never consumes unconfirmed Task preview data.
 
 Edit Project composes this summary after Project fields using the existing shared wide Dialog variant. Add Project remains summary-free. If the Project WBS tree is not already fresh in cache, only the summary region loads or retries; Project form draft and Save/Cancel remain independent. Existing Project `startDate`/`endDate` are not substitutes for the separate recursive timeline summaries.
 
-Forecast coordination remains separate. Actual End and Reopen Task keep their
-existing Forecast callback and do not become full Execution/Commitment triggers.
-Freeze-date behavior, Delivery Impact calculation, Project Health, Gantt, and
-reporting remain deferred unless an authoritative story states otherwise.
+
+Actual Allocation is a canonical daily attribution projection with two read directions: Task-centric (which Dates/capacity an assignee spent for one Task) and assignee-centric (which Tasks consumed one assignee's capacity on a Date). Current scope exposes Task-centric Execution/Commitment/Actual allocation for verification; assignee analytics UI is deferred. Historical Actual ranges may overlap dependency ranges after every predecessor is already completed.
+
+Forecast coordination remains separate and Locked Project Forecast behavior is deferred. Actual Date on Open Project actualizes planned dates and creates Actual Allocation; Actual Date on Locked Project preserves protected baseline while its allocation may recalculate impacted Open Projects. Reopen Task clears both Actual fields and is allowed only while Project Open. US-7.1 now owns the approved Home Portfolio Gantt target. Freeze-date behavior, Delivery Impact calculation, Project Health, historical Gantt, and reporting remain deferred unless an authoritative story states otherwise.
 
 ## UX terminology
 
@@ -141,3 +150,9 @@ API names remain explicit when shortening would reduce meaning.
 Capacity Overrides are accessed from a Member workflow and do not have a
 standalone sidebar destination. Product-specific control behavior, including the
 shared calendar usage, is authoritative in US-2.1.
+
+Home is the default application page. Its left Project Grid uses the existing
+Project/Task/Group terminology and opens the same forms as Project Structure.
+The right Gantt timeline is always read-only. Saved Project filters are global
+backend data and are presented by name because the product has no login or user
+identity in current scope. Exact Home behaviour belongs to US-7.1.

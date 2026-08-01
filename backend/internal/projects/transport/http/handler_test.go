@@ -113,6 +113,9 @@ func (*errorService) Update(context.Context, string, string, bool, *time.Time, i
 func (*errorService) ChangeStatus(context.Context, string, domain.Status) (*domain.Project, error) {
 	return nil, errors.New("unused")
 }
+func (*errorService) BulkReopen(context.Context, string, string) ([]domain.Project, error) {
+	return nil, errors.New("unused")
+}
 func (*errorService) MovePriority(context.Context, string, domain.PriorityDirection) (*domain.Project, error) {
 	return nil, errors.New("unused")
 }

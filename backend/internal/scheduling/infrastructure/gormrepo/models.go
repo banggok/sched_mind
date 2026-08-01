@@ -4,6 +4,7 @@ import "time"
 
 type projectModel struct {
 	ID                  string
+	Name                string
 	Status              string
 	Priority            int
 	AutomaticScheduling bool
@@ -27,6 +28,7 @@ type taskModel struct {
 	ExecutionEnd                   *time.Time
 	CommitmentStart                *time.Time
 	CommitmentEnd                  *time.Time
+	ActualStart                    *time.Time
 	ActualEnd                      *time.Time
 	ExecutionUnscheduledReason     *string
 	CommitmentUnscheduledReason    *string

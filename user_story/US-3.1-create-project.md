@@ -13,6 +13,17 @@
 Scheduling Start Date.` No task-level Earliest Start or equivalent anchor is
 > permitted. Scheduling calculation remains outside this story.
 
+> **Product decision update — US-6.2:** Completion uses a required Actual Date
+> pair (`Actual Start` and `Actual End`). Locked Project planning remains
+> immutable, but Actual Date may be recorded without changing the protected
+> Execution/Commitment baseline. Its Actual Allocation may still recalculate
+> impacted Open Projects. `Locked → Open` uses atomic transitive Reopen closure
+> when multiple Locked Projects must be opened together. Every scheduling-
+> impacting Priority/capacity mutation uses grouped cross-project impact
+> warning, server revalidation, and Locked-impact blocking, except factual
+> Actual Date. US-6.2 supersedes contradictory lifecycle, priority, completion,
+> and Locked-edit wording in earlier revisions of this story.
+
 ## 1. User Story
 
 **Sebagai** Engineering Lead,
@@ -52,20 +63,22 @@ Engineering Lead dapat:
 8. Mengubah status sesuai transition yang diizinkan.
 9. Mengunci Open Project dan melindungi Execution serta Commitment baseline.
 10. Menutup Open atau Locked Project yang seluruh Executable Leaf-nya selesai.
-11. Membuka kembali Closed Project menjadi Open.
+11. Membuka kembali Locked atau Closed Project menjadi Open.
 12. Melihat Closed Project setelah seluruh active Project pada Project List.
 13. Mengubah Priority melalui Move Up atau Move Down.
 14. Menghapus Project yang belum mempunyai child WBS/Executable Leaf.
 
 Kontrak berikut ditetapkan sekarang untuk consumer pada story berikutnya:
 
-- Open dan Locked Project ikut scheduling serta terlihat di Gantt.
-- Project harus mempunyai sedikitnya satu Executable Leaf sebelum dapat di-Lock.
+- Open Project ikut scheduling dan terlihat di Gantt.
+- Locked Project tetap terlihat di Gantt tetapi tidak menjalankan Execution/Commitment scheduler; persisted baseline dan allocation menjadi immutable anchors.
+- Project harus mempunyai sedikitnya satu Executable Leaf dan seluruh unfinished Task harus scheduled sebelum dapat di-Lock.
 - Closed Project tidak ikut scheduling atau Gantt, tetapi tetap ada di list.
-- Completed Executable Leaf ditentukan oleh Actual End dan tidak dapat diedit.
+- Completed Executable Leaf ditentukan oleh complete Actual Date pair dan tidak dapat diedit melalui normal planning mutation.
+- Actual Date tetap dapat diisi pada unfinished Task milik Locked Project tanpa mengubah protected baseline. Actual Allocation dapat memicu recalculation pada impacted Open Projects, tetapi tidak boleh memutasi Locked Project.
 - Close validation memeriksa seluruh descendant Executable Leaf.
-- Locked Execution dan Commitment baseline tetap immutable selama status Locked.
-- Forecast, Delivery Impact, dan Project Health tetap dinamis saat Locked.
+- Locked Project harus direopen secara eksplisit ke Open sebelum Task, WBS, Settings, timeline, atau dependency dapat diubah.
+- Forecast behaviour while Locked is deferred to its owning future requirement.
 
 Story ini tidak mewajibkan implementasi WBS editor, task editor, Scheduling
 Engine, timeline calculator, atau Gantt UI yang belum tersedia. Implementasi
@@ -126,19 +139,15 @@ memenuhi story ini.
   submission tanpa memblokir seluruh page.
 - Status ditampilkan sebagai text label, bukan hanya warna.
 - Open Project menyediakan action **Lock Project** dan **Close Project**.
-- Locked Project menyediakan action **Close Project**, bukan Reopen.
-- Closed Project menyediakan action **Reopen Project**; mutation lain tidak
-  tersedia dan alasan read-only dapat dipahami.
+- Locked Project menyediakan action **Reopen Project** dan **Close Project**. Planning actions read-only; entering complete Actual Date on unfinished Task remains available through the Task workflow.
+- Closed Project menyediakan action **Reopen Project**; mutation lain tidak tersedia dan alasan read-only dapat dipahami.
 - Project tanpa child menyediakan confirmed **Delete Project**. Project yang
   mempunyai child tidak dapat dihapus dan diarahkan menggunakan Close setelah
   completion requirement terpenuhi.
-- Lock confirmation menjelaskan bahwa Execution dan Commitment dates akan
-  menjadi baseline yang dilindungi.
-- Close confirmation menjelaskan bahwa semua task harus mempunyai Actual End.
-- Reopen confirmation menjelaskan bahwa Project kembali aktif, editable,
-  eligible untuk scheduling, dan terlihat di Gantt.
-- Editing Locked Project tidak pernah membuka status menjadi Open. Scheduling
-  result hanya memperbarui Forecast; Execution dan Commitment tetap baseline.
+- Lock confirmation menjelaskan bahwa Execution dan Commitment dates menjadi protected baseline dan Lock ditolak bila ada unfinished Task yang unscheduled.
+- Close confirmation menjelaskan bahwa semua Task harus mempunyai complete Actual Date pair.
+- Reopen confirmation membedakan `Locked → Open` dan `Closed → Open`; keduanya menjelaskan bahwa Project kembali editable dan eligible untuk scheduling. Locked Reopen juga menjelaskan bahwa unfinished work dalam transitive impacted scope akan dihitung ulang.
+- Locked Project tidak berubah menjadi Open secara implicit. User harus memilih Reopen Project sebelum planning mutation.
 - Dialog mengelola focus dan mengembalikannya ke trigger.
 - Core workflow tetap usable pada supported viewport tanpa horizontal scrolling
   pada normal page content.
@@ -177,11 +186,11 @@ granularity snapshot ditentukan saat contract timeline/WBS tersedia.
 
 ## 7. Project Status Model
 
-| Status | Meaning                          | Editable                                | Scheduling | Gantt   | Timeline behaviour                                        |
-| ------ | -------------------------------- | --------------------------------------- | ---------- | ------- | --------------------------------------------------------- |
-| Open   | Active planning                  | Ya, subject to domain rules             | Included   | Visible | Execution, Commitment, dan Forecast dapat recalculated    |
-| Locked | Active dengan protected baseline | Unfinished planning data tetap editable | Included   | Visible | Execution dan Commitment baseline tetap; Forecast dynamic |
-| Closed | Completed historical Project     | Tidak                                   | Excluded   | Hidden  | Semua planning dan timeline read-only                     |
+| Status | Meaning | Editable | Scheduling | Gantt | Timeline behaviour |
+| --- | --- | --- | --- | --- | --- |
+| Open | Active planning | Project/Task/WBS/dependency subject to domain rules | Included | Visible | Execution and Commitment may recalculate |
+| Locked | Protected planning baseline with ongoing actual completion capture | Actual Date only for unfinished Task; planning read-only | Locked Project immutable; Actual Date may recalculate impacted Open Projects | Visible | Execution/Commitment baseline immutable; Actual Allocation historical; Forecast deferred |
+| Closed | Completed historical Project | No | Excluded | Hidden | All planning, actual, and timeline data read-only |
 
 - Status saat create selalu `open`, ditegakkan backend.
 - Tidak ada status lain.
@@ -192,21 +201,21 @@ granularity snapshot ditentukan saat contract timeline/WBS tersedia.
 
 ## 8. Status Transition Rules
 
-| From   | To     | Allowed | Conditions and effects                                                                                     |
-| ------ | ------ | ------: | ---------------------------------------------------------------------------------------------------------- |
-| Open   | Locked |      Ya | Harus mempunyai sedikitnya satu Executable Leaf; capture/protect current Execution dan Commitment baseline |
-| Open   | Closed |      Ya | Seluruh descendant Executable Leaf harus memiliki Actual End                                               |
-| Locked | Closed |      Ya | Full close validation tetap wajib                                                                          |
-| Closed | Open   |      Ya | Project kembali editable, schedulable, dan visible in Gantt                                                |
-| Closed | Locked |   Tidak | Reject tanpa partial mutation                                                                              |
+| From | To | Allowed | Conditions and effects |
+| --- | --- | ---: | --- |
+| Open | Locked | Ya | At least one Executable Task; every unfinished Task fully scheduled; protect current Execution/Commitment timeline and allocation; no scheduler run |
+| Locked | Open | Ya | Explicit Reopen; calculate Required Locked Reopen Closure, offer atomic Reopen All when needed, then recalculate transitive impacted Open scope |
+| Open | Closed | Ya | Every descendant Executable Task has complete Actual Date |
+| Locked | Closed | Ya | Full close validation; locked baselines remain unchanged |
+| Closed | Open | Ya | Reactivate Project and return it to editable/scheduling eligibility |
+| Closed | Locked | Tidak | Reject without partial mutation |
 
 - Invalid status value ditolak.
-- Transition selain tabel di atas ditolak kecuali idempotency semantics kemudian
-  dikunci; story ini tidak menganggap same-status request berhasil.
+- Same-status atau transition selain tabel ditolak unless separately approved.
 - Existing status dan data dipertahankan bila transition gagal.
-- Lock, close, Closed-to-Open reopen, dan Priority swap harus transactional.
-- Concurrent transition tidak boleh menghasilkan state yang melanggar
-  lifecycle; stale command harus ditolak atau diserialisasi secara deterministik.
+- Lock, close, Locked/Closed Reopen, dan Priority change harus transactional.
+- Locked Reopen may produce valid unscheduled results; this does not fail the transition, but the Project cannot be Locked again until every unfinished Task is scheduled.
+- Corruption, concurrency conflict, persistence failure, or internal scheduler defect during Locked Reopen rolls back the entire transition and leaves the Project Locked.
 
 ---
 
@@ -214,42 +223,26 @@ granularity snapshot ditentukan saat contract timeline/WBS tersedia.
 
 ### Open
 
-- Execution, Commitment, dan Forecast Timeline dapat diperbarui oleh Scheduling
-  Engine.
-- Relevant constraints mencakup Daily Capacity, Capacity Override, Public
-  Holiday, Project Priority, Effort, Assignee, Dependency, Lag, Actual End, dan
-  Project Freeze.
-- Dalam scope requirement saat ini, hanya explicit Priority Move Up/Down yang
-  langsung memicu Scheduling Engine menghitung ulang seluruh task dates.
-  Perubahan constraint lain tidak menjadi trigger baru dalam US-3.1; trigger
-  tersebut harus ditentukan oleh story pemilik fiturnya.
+- Execution and Commitment may be updated by approved scheduling triggers.
+- Entering Actual Date actualizes completed Task timelines and creates Actual Allocation according to US-6.2.
+- Recalculation is limited to the transitive impacted scheduling scope, not unrelated active Projects.
 - Project ikut scheduling dan Gantt.
-- Priority Move Up/Down langsung menjalankan Scheduling Engine untuk menghitung
-  ulang task dates seluruh active Projects. Open Project dapat menerima updated
-  Execution, Commitment, dan Forecast dates.
 
 ### Locked
 
-- Current Execution Timeline menjadi locked Execution baseline pada transition.
-- Current Commitment Timeline menjadi locked Commitment baseline.
-- Execution dan Commitment dates tidak berubah selama Project tetap Locked.
-- Forecast tetap mencerminkan kondisi terbaru.
-- Delivery Impact dan Project Health tetap dinamis.
-- Actual End tetap editable untuk unfinished leaf sesuai completed-task rules.
-- Completed Task dapat dibuka kembali hanya melalui dedicated Reopen Task
-  command dari US-4.2. Open dan Locked Project eligible; Reopen Task pada
-  Locked Project mempertahankan status Locked dan seluruh locked baselines.
-- Project tetap ikut scheduling berdasarkan Project Priority dan tetap terlihat
-  di Gantt.
-- External constraint changes tidak menggeser locked baselines.
-- Priority change tetap menjalankan Scheduling Engine untuk seluruh active task,
-  tetapi Locked Project hanya menerima updated Forecast dates.
+- Current Execution/Commitment timelines and daily allocations are protected baselines.
+- Execution/Commitment scheduler is not run for Locked Project mutations.
+- Actual Date may be recorded for unfinished Task. Protected Execution/Commitment baseline, order, and dependencies remain unchanged; Actual Allocation may recalculate impacted Open Projects.
+- All planning, WBS, Task, Settings, and dependency changes require explicit `Locked → Open` Reopen first.
+- Completed Task cannot be reopened while Locked.
+- Project remains visible in Gantt and may be read as an immutable cross-project scheduling anchor.
+- Forecast, Delivery Impact, and Health behaviour while Locked is deferred.
 
 ### Closed
 
 - Project tidak ikut scheduling atau Project Priority allocation.
 - Project tidak tampil di Gantt.
-- Seluruh planning, Actual End, dan timeline read-only.
+- Seluruh planning, Actual Date, dan timeline read-only.
 - Project tetap tersedia sebagai historical record pada Project List.
 
 ---
@@ -258,41 +251,36 @@ granularity snapshot ditentukan saat contract timeline/WBS tersedia.
 
 ### Open Project
 
-- Project fields dan planning data dapat diubah subject to field-specific dan
-  downstream domain rules.
-- Dalam US-3.1, hanya Priority Move Up/Down yang memicu recalculation.
+- Project fields and planning data may change subject to field-specific rules.
+- Completed Task remains read-only except dedicated Task Reopen while the Project is Open.
 
 ### Locked Project
 
-- WBS structure, Effort, Assignee, Dependency, Lag, Project configuration,
-  Actual End, dan established planning fields dapat diubah untuk unfinished
-  work.
-- Executable Leaf dengan Actual End adalah completed dan tidak dapat diedit
-  melalui normal mutation. Dedicated Reopen Task dari US-4.2 adalah satu-satunya
-  exception untuk menghapus Actual End.
-- Confirmed planning change tetap mempertahankan status Locked.
-- Scheduling Engine hanya memperbarui Forecast dates untuk Locked Project,
-  termasuk bila Forecast bergerak lebih awal atau lebih lambat.
-- Execution dan Commitment baselines tidak pernah berubah karena Locked edit.
-- Locked Project tidak mempunyai transition atau action Reopen ke Open.
+- Project Settings, WBS structure/order, Task planning fields, Execution/Commitment dates, and dependency ownership/endpoints are read-only.
+- Complete Actual Date is the only Task mutation allowed. It does not change the locked baseline, but its Actual Allocation may trigger recalculation of impacted Open Projects.
+- Reopen completed Task is rejected until the Project is explicitly reopened to Open.
+- Priority may change only when internal simulation proves no Locked Project timeline, allocation, or dependency-validity impact.
+- No planning mutation implicitly changes status to Open.
 
 ### Closed Project
 
-- Project, WBS, task, Actual End, planning fields, dan timeline read-only.
-- Backend menolak mutation walaupun frontend restriction dilewati.
-- Project harus direopen ke Open sebelum perubahan lain, termasuk sebelum
-  menjalankan Reopen Task. Closed Project tidak menerima Task-level exception.
+- Project, WBS, Task, Actual Date, planning fields, and timeline are read-only.
+- Backend rejects mutation even when frontend restrictions are bypassed.
+- Project must be reopened to Open before any mutation.
 
 ---
 
-## 11. Closed Validation
+## 11. Lock and Closed Validation
 
+- Locking adalah hard validation, bukan scheduler trigger.
+- Project may Lock only when it has at least one Executable Task and every unfinished Task has complete Execution and Commitment pairs with no unscheduled reason.
+- One unscheduled unfinished Task rejects the entire Lock operation with `PROJECT_CANNOT_LOCK_WITH_UNSCHEDULED_TASKS`; status remains Open.
 - Closing adalah hard validation, bukan warning.
 - Project boleh Closed jika dan hanya jika setiap descendant Executable Leaf
-  mempunyai Actual End.
-- Actual End adalah satu-satunya source of truth untuk completion; task status
+  mempunyai complete Actual Date pair.
+- Complete Actual Date pair adalah source of truth untuk completion; task status
   terpisah tidak digunakan.
-- Grouping WBS tidak dievaluasi langsung dan tidak membutuhkan Actual End.
+- Grouping WBS tidak dievaluasi langsung dan tidak membutuhkan Actual Date.
 - Traversal mencakup nested grouping sedalam apa pun.
 - Satu unfinished descendant menyebabkan seluruh transition ditolak.
 - Existing status, baselines, dan planning data tetap utuh pada failure.
@@ -325,8 +313,9 @@ granularity snapshot ditentukan saat contract timeline/WBS tersedia.
   Scheduling Engine tidak mengarang tie-breaker dari Start Date, End Date, status,
   Name, Created At, atau Project ID.
 - Filter/search/pagination menjadi request-cache identity.
-- Confirmed mutation memperbarui affected list/detail serta scheduling/Gantt
-  projection tanpa hard refresh.
+- Priority Move Up/Down uses an internal scheduling simulation. When Locked Projects exist, Save succeeds only if no Locked timeline, allocation, or cross-project dependency validity changes.
+- Priority scheduling/recalculation is limited to the transitive impacted scope; unrelated Projects are not recalculated or version-updated.
+- Confirmed mutation memperbarui affected list/detail serta scheduling/Gantt projection tanpa hard refresh.
 - Versioned invalidation mencegah older in-flight response mengembalikan stale
   data.
 - Current search dan page dipertahankan setelah mutation bila masih valid.
@@ -409,69 +398,77 @@ dulu, bukan dikelompokkan berdasarkan status.
 **And** ketika Scheduling Engine dijalankan oleh Priority Move Up/Down,
 Execution, Commitment, dan Forecast Timeline boleh diperbarui.
 
-### AC-9 — Open to Locked
+### AC-9 — Open to Locked eligibility
 
-**Given** Project mempunyai sedikitnya satu Executable Leaf
+**Given** Project mempunyai sedikitnya satu Executable Task dan seluruh unfinished Task fully scheduled
 **When** Engineering Lead mengonfirmasi Lock Project
 **Then** status menjadi Locked
-**And** current Execution dan Commitment Timeline menjadi protected baselines
-secara atomic.
+**And** current Execution/Commitment timelines and allocations become protected baselines
+**And** scheduler is not run.
 
-**Given** Project tidak mempunyai Executable Leaf
-**When** Lock Project diminta
-**Then** transition ditolak dengan `PROJECT_CANNOT_LOCK_WITHOUT_TASKS`
-**And** status tetap Open
-**And** user dapat menambahkan task atau menghapus Project.
+**Given** Project tidak mempunyai Executable Task
+**Then** Lock ditolak dengan `PROJECT_CANNOT_LOCK_WITHOUT_TASKS`.
 
-### AC-10 — Locked baseline dan dynamic Forecast
+**Given** satu unfinished Task mempunyai incomplete timeline atau unscheduled reason
+**Then** Lock ditolak dengan `PROJECT_CANNOT_LOCK_WITH_UNSCHEDULED_TASKS`
+**And** status tetap Open.
+
+### AC-10 — Locked baseline and Actual Date exception
 
 **Given** Project Locked
-**When** capacity constraint atau Actual End berubah
-**Then** locked Execution dan Commitment dates tetap
-**And** Forecast, Delivery Impact, dan Project Health boleh berubah
-**And** Project tetap priority-ordered, schedulable, dan visible in Gantt.
+**When** complete Actual Date disimpan pada unfinished Task
+**Then** Task menjadi completed
+**And** protected Execution/Commitment baseline remains unchanged
+**And** Actual Allocation is persisted
+**And** grouped impact warning/confirmation applies when other Projects are impacted
+**And** impacted Open Projects may be recalculated while every Locked Project remains unchanged.
 
-### AC-11 — Locked unfinished and completed leaf editing
+### AC-11 — Locked planning is read-only
 
-**Given** Executable Leaf di Locked Project belum memiliki Actual End
-**Then** established planning change dapat dievaluasi dan disimpan
-**But given** leaf mempunyai Actual End
-**Then** mutation ditolak dengan `COMPLETED_TASK_READ_ONLY`.
+**Given** Project Locked
+**When** planning, WBS, Task, Settings, dependency, timeline, atau Task Reopen mutation diminta
+**Then** request ditolak dengan `PROJECT_LOCKED_READ_ONLY`
+**And** confirmed state remains unchanged.
 
-### AC-12 — Locked edit changes Forecast only
+### AC-12 — Locked to Open Reopen
 
-**When** planning data pada Locked Project diubah dan scheduling dijalankan
-**Then** change dapat disimpan dan status tetap Locked
-**And** status tetap Locked serta protected baselines tidak berubah
-**And** Forecast mengikuti kondisi terbaru serta boleh bergerak lebih awal atau
-lebih lambat.
+**Given** Project Locked
+**When** Engineering Lead requests Reopen Project
+**Then** server calculates the Required Locked Reopen Closure
+**And** UI lists every Locked Project that must be reopened together plus impacted Open Projects
+**And** Reopen All changes the complete closure to Open atomically
+**And** all unfinished Tasks in the transitive impacted scheduling scope are recalculated
+**And** valid unscheduled results do not fail Reopen.
 
-### AC-13 — Priority change triggers scheduling
+### AC-13 — Priority change respects Locked Projects
 
 **When** Priority Project dipindahkan Up atau Down
-**Then** position ditukar secara atomic dengan active neighbour
-**And** Scheduling Engine menghitung ulang task dates seluruh active Projects
-**And** Open Projects menerima updated Execution, Commitment, dan Forecast
-**And** Locked Projects hanya menerima updated Forecast.
+**Then** proposed priority is simulated atomically
+**And** only the transitive impacted scope may be recalculated
+**And** Save succeeds only when every Locked Project timeline, allocation, and dependency validity remains unchanged.
 
-### AC-14 — Locked cannot reopen to Open
+**Given** proposed priority impacts a Locked Project
+**Then** grouped Locked/Open Project names are returned
+**And** the entire operation is rejected with `SCHEDULING_LOCKED_PROJECT_IMPACT`
+**And** priorities and schedules remain unchanged.
 
-**Given** Project berstatus Locked
-**When** target status Open diminta
-**Then** transition ditolak dengan `PROJECT_STATUS_TRANSITION_NOT_ALLOWED`
-**And** Reopen hanya tersedia bagi Closed Project.
+### AC-14 — Locked Reopen failure rollback
+
+**Given** Locked→Open recalculation fails due to corrupted state, concurrency, persistence, or internal scheduler defect
+**Then** status remains Locked
+**And** no partial timeline, allocation, dependency, or cache state is persisted.
 
 ### AC-15 — Close Open or Locked Project
 
-**Given** seluruh descendant Executable Leaf mempunyai Actual End
+**Given** seluruh descendant Executable Leaf mempunyai complete Actual Date
 **When** Close Project dikonfirmasi dari Open atau Locked
 **Then** status menjadi Closed secara atomic
-**And** Grouping WBS tidak memerlukan Actual End.
+**And** Grouping WBS tidak memerlukan Actual Date.
 
 ### AC-16 — Reject incomplete close
 
 **Given** satu direct atau nested descendant Executable Leaf tidak mempunyai
-Actual End
+complete Actual Date
 **When** close diminta
 **Then** transition ditolak dengan
 `PROJECT_CANNOT_CLOSE_WITH_ACTIVE_TASKS`
@@ -651,15 +648,12 @@ Content-Type: application/json
 
 - `locked`, `open`, dan `closed` are the only accepted targets.
 - Success: `200 OK` with the confirmed Project.
-- Open to Locked captures/protects baselines.
-- Open to Locked rejects a zero-leaf Project with
-  `409 PROJECT_CANNOT_LOCK_WITHOUT_TASKS`.
+- Open to Locked validates that every unfinished Task is scheduled, captures/protects baselines, and does not run scheduler.
+- Open to Locked rejects zero-leaf Project with `409 PROJECT_CANNOT_LOCK_WITHOUT_TASKS`.
+- Open to Locked rejects any unscheduled unfinished Task with `409 PROJECT_CANNOT_LOCK_WITH_UNSCHEDULED_TASKS`.
+- Locked to Open is explicit Reopen. Required mutually/transitively related Locked Projects are offered as one atomic Reopen All closure, then the transitive impacted Open scope is recalculated.
 - Open/Locked to Closed runs descendant completion validation.
 - Closed to Open reactivates the Project.
-- Reopen retains previous locked baselines and immediately restores scheduling
-  and Gantt eligibility.
-- Locked to Open returns `409 PROJECT_STATUS_TRANSITION_NOT_ALLOWED`; Reopen
-  hanya berlaku untuk Closed Project.
 - Closed to Locked returns `409 PROJECT_STATUS_TRANSITION_NOT_ALLOWED`.
 
 ### Change Project Priority
@@ -681,12 +675,10 @@ Content-Type: application/json
   mengembalikan confirmed Project.
 - Move yang tidak mempunyai active neighbour pada arah tersebut ditolak dengan
   `409 PROJECT_PRIORITY_MOVE_NOT_ALLOWED`.
-- Successful move memicu Scheduling Engine menghitung ulang task dates seluruh
-  active Projects.
-- Open Projects menerima hasil Execution, Commitment, dan Forecast; Locked
-  Projects hanya menerima Forecast.
-- Priority swap dan hasil scheduling harus konsisten. Failure tidak boleh
-  meninggalkan partial priority atau timeline state.
+- Successful move simulates only the transitive impacted scheduling scope and requires grouped Project-name confirmation when other Open Projects are affected.
+- Locked Projects are immutable anchors and receive no timeline/allocation/dependency mutation.
+- If proposed priority would impact any Locked Project, grouped Locked/Open names are returned and the command returns `409 SCHEDULING_LOCKED_PROJECT_IMPACT`.
+- Priority swap and affected Open scheduling must be atomic; failure leaves all priorities and schedules unchanged.
 
 ### Pagination Validation
 
@@ -724,12 +716,18 @@ DELETE /api/projects/{projectId}
 | `PROJECT_NAME_ALREADY_EXISTS`            |  409 | `name`      | Name digunakan Project lain secara case-insensitive                      |
 | `PROJECT_NOT_FOUND`                      |  404 | —           | Project ID tidak tersedia                                                |
 | `PROJECT_STATUS_INVALID`                 |  400 | `status`    | Target bukan open, locked, atau closed                                   |
-| `PROJECT_STATUS_TRANSITION_NOT_ALLOWED`  |  409 | `status`    | Transition tidak diizinkan, termasuk Locked ke Open dan Closed ke Locked |
+| `PROJECT_STATUS_TRANSITION_NOT_ALLOWED`  |  409 | `status`    | Transition tidak diizinkan, termasuk Closed ke Locked                    |
 | `PROJECT_CANNOT_LOCK_WITHOUT_TASKS`      |  409 | `status`    | Lock diminta untuk Project tanpa Executable Leaf                         |
-| `PROJECT_CANNOT_CLOSE_WITH_ACTIVE_TASKS` |  409 | `status`    | Sedikitnya satu descendant Executable Leaf tidak mempunyai Actual End    |
+| `PROJECT_CANNOT_LOCK_WITH_UNSCHEDULED_TASKS` | 409 | `status` | Sedikitnya satu unfinished Task belum fully scheduled                    |
+| `PROJECT_LOCKED_READ_ONLY`               |  409 | —           | Planning/Task/WBS/Settings/dependency mutation atau Task Reopen pada Locked Project |
+| `SCHEDULING_LOCKED_PROJECT_IMPACT`         |  409 | `direction` | Proposed priority would affect a Locked Project timeline, allocation, or dependency validity |
+| `SCHEDULING_IMPACT_CONFIRMATION_REQUIRED` | 409 | — | Priority affects other Open Projects and requires confirmation |
+| `SCHEDULING_IMPACT_STALE` | 409 | — | Impact set/version changed after preview |
+| `PROJECT_BULK_REOPEN_REQUIRED` | 409 | `status` | Project Reopen requires multiple Locked Projects to reopen together |
+| `PROJECT_CANNOT_CLOSE_WITH_ACTIVE_TASKS` |  409 | `status`    | Sedikitnya satu descendant Executable Leaf tidak mempunyai complete Actual Date |
 | `PROJECT_CANNOT_CLOSE_WITHOUT_TASKS`     |  409 | `status`    | Close diminta untuk Project tanpa Executable Leaf                        |
 | `PROJECT_CLOSED_READ_ONLY`               |  409 | —           | Mutation planning pada Closed Project                                    |
-| `COMPLETED_TASK_READ_ONLY`               |  409 | —           | Mutation pada Executable Leaf yang mempunyai Actual End                  |
+| `COMPLETED_TASK_READ_ONLY`               |  409 | —           | Mutation pada Executable Leaf yang mempunyai complete Actual Date        |
 | `PROJECT_PRIORITY_DIRECTION_INVALID`     |  400 | `direction` | Direction bukan up atau down                                             |
 | `PROJECT_PRIORITY_MOVE_NOT_ALLOWED`      |  409 | `direction` | Tidak ada active neighbour pada arah yang diminta                        |
 | `PROJECT_HAS_CHILDREN`                   |  409 | —           | Delete diminta untuk Project yang mempunyai child                        |
@@ -762,21 +760,21 @@ mengekspos stack trace, SQL, database, atau infrastructure detail.
 | TC-14 | Create dependency failure                      | Draft preserved; retry available; no partial data                                              |
 | TC-15 | Repeated create submit                         | Satu request                                                                                   |
 | TC-16 | Open Project contract                          | Editable, scheduled, dan visible in Gantt                                                      |
-| TC-17 | Lock Project dengan Executable Leaf            | Status Locked dan both baselines captured atomically                                           |
-| TC-18 | External capacity change while Locked          | Execution/Commitment baseline unchanged                                                        |
-| TC-19 | Actual End/constraint change while Locked      | Forecast dapat berubah                                                                         |
-| TC-20 | Edit unfinished Locked leaf                    | Evaluated and eligible to save                                                                 |
-| TC-21 | Edit completed leaf                            | `409 COMPLETED_TASK_READ_ONLY`; data unchanged                                                 |
-| TC-22 | Locked change produces same timeline           | Saved, remains Locked, baselines unchanged                                                     |
-| TC-23 | Locked change produces earlier timeline        | Saved, remains Locked; only Forecast may move earlier                                          |
-| TC-24 | Locked change produces later timeline          | Saved, remains Locked; only Forecast may move later                                            |
-| TC-25 | Move Priority Up/Down                          | Atomic active-neighbour swap and Scheduling Engine recalculates every active Project task date |
-| TC-26 | Locked to Open                                 | `409 PROJECT_STATUS_TRANSITION_NOT_ALLOWED`; state unchanged                                   |
-| TC-27 | Close Open; all leaves have Actual End         | Closed succeeds                                                                                |
-| TC-28 | Close Locked; all leaves have Actual End       | Closed succeeds                                                                                |
-| TC-29 | One leaf lacks Actual End                      | Close rejected; state preserved                                                                |
+| TC-17 | Lock fully scheduled Project                  | Status Locked; baselines/allocations protected; no scheduler run                               |
+| TC-18 | Lock with one unscheduled unfinished Task       | `409 PROJECT_CANNOT_LOCK_WITH_UNSCHEDULED_TASKS`; status Open                                   |
+| TC-19 | Actual Date on unfinished Locked Task           | Actual Date and Actual Allocation saved; baseline unchanged; impacted Open scope recalculated    |
+| TC-20 | Edit/create/delete/move Task while Locked       | `409 PROJECT_LOCKED_READ_ONLY`; state unchanged                                                |
+| TC-21 | Reopen completed Task while Locked              | `409 PROJECT_LOCKED_READ_ONLY`; Project Reopen required                                        |
+| TC-22 | Locked to Open                                  | Status Open; transitive impacted scope recalculated                                             |
+| TC-23 | Locked Reopen produces unscheduled Task         | Reopen succeeds; Project Open; later Lock rejected until scheduled                              |
+| TC-24 | Locked Reopen technical failure                | Entire operation rollback; Project remains Locked                                               |
+| TC-25 | Priority change with no Locked impact           | Atomic swap; affected Open scope recalculated; Locked state unchanged                           |
+| TC-26 | Priority change impacts Locked Project          | `409 SCHEDULING_LOCKED_PROJECT_IMPACT`; priorities and schedules unchanged                        |
+| TC-27 | Close Open; all leaves have Actual Date        | Closed succeeds                                                                                |
+| TC-28 | Close Locked; all leaves have Actual Date      | Closed succeeds                                                                                |
+| TC-29 | One leaf lacks complete Actual Date           | Close rejected; state preserved                                                                |
 | TC-30 | Nested unfinished descendant                   | Close rejected after descendant traversal                                                      |
-| TC-31 | Grouping WBS dan completed descendant leaf     | Group tidak butuh Actual End; close succeeds                                                   |
+| TC-31 | Grouping WBS dan completed descendant leaf     | Group tidak butuh Actual Date; close succeeds                                                  |
 | TC-32 | Closed Project mutation                        | Backend rejects read-only violation                                                            |
 | TC-33 | Closed scheduling/Gantt                        | Excluded from both but retained in Project List                                                |
 | TC-34 | Closed to Open                                 | Transition succeeds and Project becomes active/editable                                        |
@@ -828,28 +826,26 @@ mengekspos stack trace, SQL, database, atau infrastructure detail.
 - Valid status values, allowed transitions, and invalid transitions.
 - Identity/Created At preservation and Updated At changes.
 - Closed read-only invariant.
-- Completed Executable Leaf read-only invariant using Actual End.
+- Completed Executable Leaf read-only invariant using complete Actual Date.
 - Close eligibility across all descendant Executable Leaves.
 - Grouping WBS exclusion from completion validation.
 - Zero-leaf close rejection and childless delete eligibility.
 - Zero-leaf lock rejection.
-- Locked baseline invariant.
-- Locked edit preserves status and baselines while Forecast may move earlier or
-  later.
-- Locked-to-Open transition rejection.
-- Positive integer Priority and valid/invalid move rules.
+- Locked baseline invariant and Actual Date/Actual Allocation exception.
+- Lock rejection when any unfinished Task is unscheduled.
+- Locked planning mutation and Task Reopen rejection.
+- Locked-to-Open transition, unscheduled-result success, and technical-failure rollback.
+- Positive integer Priority, valid/invalid move rules, and Locked-impact validation.
 
 ### Application Tests
 
 - Paginated list, Name search, create, get, dan Open update.
-- Lock, Open-to-Closed, Locked-to-Closed, dan Closed-to-Open.
-- Reject Open-to-Locked when the Project has zero Executable Leaves.
-- Reject Closed-to-Locked, Closed mutation, completed-leaf mutation, dan close
-  with unfinished leaves.
+- Lock, Locked-to-Open, Open-to-Closed, Locked-to-Closed, and Closed-to-Open.
+- Reject Open-to-Locked when the Project has zero Executable Leaves or any unscheduled unfinished Task.
+- Reject Closed-to-Locked, Closed mutation, completed-leaf normal mutation, Locked planning mutation, and close with unfinished leaves.
 - Delete childless Project and reject delete when any child exists.
-- Reject Locked-to-Open and preserve Locked baselines on every planning edit.
-- Atomic Priority Move Up/Down and Scheduling Engine recalculation contract for
-  all active Project task dates.
+- Preserve Locked baselines on Actual Date entry, persist Actual Allocation, recalculate impacted Open Projects, and reject Task Reopen while Locked.
+- Atomic Priority Move Up/Down with transitive impacted-scope recalculation and Locked-impact rejection.
 - Dependency failure rollback and concurrent transition behaviour.
 - Scheduling/Gantt visibility and downstream invalidation contracts.
 
@@ -873,10 +869,10 @@ mengekspos stack trace, SQL, database, atau infrastructure detail.
 ### API Integration Tests
 
 - List, search, pagination metadata, get, create, dan update.
-- Lock, Closed reopen, close, invalid status, invalid transition, not-found.
-- Zero-leaf Lock conflict mapping.
-- Close rejection, Closed read-only, completed-task read-only.
-- Locked-to-Open rejection and Priority Move Up/Down contracts.
+- Lock, Locked/Closed reopen, close, invalid status, invalid transition, and not-found.
+- Zero-leaf and unscheduled-Task Lock conflict mapping.
+- Close rejection, Closed read-only, completed-task read-only, and Locked planning read-only.
+- Locked Actual Date exception, generic impact guard, bulk Reopen closure, and Priority/capacity Locked-impact contracts.
 - Structured error mapping, persistence, rollback, and unknown-field rejection.
 - Conditional Project delete success and `PROJECT_HAS_CHILDREN` conflict.
 
@@ -891,9 +887,9 @@ mengekspos stack trace, SQL, database, atau infrastructure detail.
 - Lock/close/reopen confirmations and close rejection.
 - Zero-leaf Lock rejection and actionable recovery message.
 - Closed read-only presentation.
-- Locked edit retains status and baselines while displaying updated Forecast.
-- Priority Move Up/Down availability, success, scheduling feedback, and failure
-  recovery.
+- Locked planning actions are read-only while complete Actual Date entry remains available.
+- Locked Project Reopen, unscheduled-result feedback, and rollback recovery.
+- Priority Move Up/Down availability, no-impact success, Locked-impact rejection, scheduling feedback, and failure recovery.
 - Completed-leaf edit prevention where task UI exists.
 - Cache invalidation and stale-response protection.
 - Keyboard interaction, dialog focus, status accessibility, dan responsive
@@ -916,13 +912,13 @@ Tests verify observable behaviour and do not rely only on snapshots.
 5. Backend, not only frontend, assigns default Open status.
 6. Locked Execution and Commitment baselines are persisted or protected by an
    equivalent deterministic immutable snapshot.
-7. Forecast remains mutable while Locked.
+7. Forecast behavior while Locked is deferred; no mutable Forecast contract is asserted by this story.
 8. Backend enforces Closed Project and completed-leaf read-only invariants.
 9. Close eligibility traverses all descendant Executable Leaves and ignores
-   Grouping WBS; Actual End is the only completion source of truth.
+   Grouping WBS; complete Actual Date is the completion source of truth.
 10. Project without leaves cannot lock or close and may be hard-deleted; any child makes
     delete unavailable and backend-enforced `PROJECT_HAS_CHILDREN` applies.
-11. Lock, close, Closed reopen, and Priority swap are transactional.
+11. Lock, close, Locked/Closed reopen, and Priority change are transactional.
 12. Concurrent status commands cannot violate lifecycle invariants.
 13. Active ordering uses Project Priority before status; Closed records follow
     all active records.
@@ -991,62 +987,22 @@ This requirement is synchronized with US-3.3, US-4.1, US-4.2, US-4.3, and projec
 ## 21. Locked Product Decisions
 
 - Project is the root planning entity and logical WBS level `0`; no root WBS record is created.
-- Edit Project composes the read-only whole-Project summary owned by US-4.3 and uses the shared wide Dialog variant; Add Project does not display summary.
-- Visible navigation and page label is Projects under Project group.
-- Fields include ID, Name, Status, Start Date, End Date, Automatic Scheduling,
-  Scheduling Start Date, Project Buffer, Created At, and Updated At; Project
-  Priority is required by active ordering and Closed At supports audit/ordering.
-- There is no separate `Auto Dependency by Assignee` configuration. Auto
-  Dependency is active only while Automatic Scheduling is ON.
-- Status values are exactly Open, Locked, and Closed; create defaults to Open
-  and backend enforces it.
-- Open is active, editable, scheduled, visible in Gantt, and all timelines may
-  be recalculated.
-- Locked remains active and Priority-ordered; Execution and Commitment baseline
-  remain immutable while Forecast, Delivery Impact, and Project Health remain
-  dynamic.
-- Completed Executable Leaf means it has Actual End and is read-only.
-- Locked planning changes retain Locked status. Scheduling may update Forecast
-  earlier or later, but never changes Execution or Commitment baselines.
-- Closed is manually selected, historical, read-only, excluded from scheduling
-  and Gantt, and retained after active Projects in the list.
-- Close is permitted only when every descendant Executable Leaf has Actual End;
-  Grouping WBS is not evaluated directly.
-- Lock is permitted only when the Project has at least one Executable Leaf.
-- Allowed transitions: Open→Locked, Open→Closed, Locked→Closed, dan
-  Closed→Open. Locked→Open dan Closed→Locked are forbidden; Reopen means only
-  Closed→Open.
-- Active list ordering uses Project Priority before status; Open and Locked are
-  not separated into status groups.
-- Project list has backend Name prefix search and pagination default 5/max 100.
-- Project creation does not automatically create tasks or dependencies, lock,
-  close, or run Scheduling Engine.
-- Project is WBS level 0; creation does not create a separate root WBS record.
-- Project without children can be hard-deleted; Project with children cannot be
-  deleted and must use Closed for historical retention.
-- Initial creation accepts Name together with the Project Settings defined by
-  US-3.3; Name follows trimmed, required, maximum 100, case-insensitive unique
-  BAU rules. Status is not accepted and remains system/lifecycle-command owned.
-  System assigns lowest Priority.
-- Priority is a unique positive integer position; a smaller value is higher.
-  Create assigns global `MAX(priority)+1`; Move Up/Down atomically swaps with
-  the active neighbour.
-- Only an explicit Priority Move Up/Down triggers the Scheduling Engine in this
-  story and recalculates all task dates across active Projects. Open Projects
-  may receive Execution, Commitment, and Forecast updates; Locked Projects
-  receive Forecast updates only.
-- Project Start/End are derived from descendant leaf dates and remain null when
-  no relevant leaf date exists. Automatic Scheduling defaults to enabled but is
-  user-configurable through US-3.3.
-- Duplicate active Priority is rejected as a data-integrity conflict; no
-  additional active-order tie-breaker is invented. Closed ordering uses Closed At
-  descending then ID ascending.
-- Reopening retains previous locked baselines and immediately restores Gantt and
-  scheduling eligibility. A Locked edit may move Forecast earlier or later
-  without changing status or protected baselines.
-- Project with zero Executable Leaves cannot lock or close and may instead be
-  deleted.
-- Closed At is persisted for audit and ordering.
+- Status values are exactly Open, Locked, and Closed; create defaults to Open.
+- Open is editable and participates in scheduling.
+- Locked protects Execution/Commitment timelines and allocations as immutable anchors.
+- Locked planning, WBS, Task, Settings, and dependency data are read-only.
+- Actual Date entry is the only Task mutation allowed while Locked; it does not change protected baseline, but Actual Allocation may recalculate impacted Open Projects.
+- Reopen completed Task requires the Project to be Open.
+- Project may Lock only when it has at least one Executable Task and every unfinished Task is fully scheduled. Lock validates current state and does not run scheduler.
+- Allowed transitions: Open→Locked, Locked→Open, Open→Closed, Locked→Closed, and Closed→Open. Closed→Locked is forbidden.
+- Locked→Open calculates an atomic Required Locked Reopen Closure, then recalculates all unfinished Tasks in the transitive impacted scheduling scope.
+- Unscheduled result does not fail Locked Reopen; technical/integrity/concurrency failure rolls the entire transition back.
+- Priority may change while Locked Projects exist only when simulation proves no Locked impact; Open-only impact requires grouped warning/confirmation and server revalidation.
+- Priority recalculation is transitively bounded; unrelated Projects are not recalculated or version-updated.
+- Closed is historical, read-only, excluded from scheduling and Gantt, and ordered after active Projects.
+- Close is permitted only when every descendant Executable Task has complete Actual Date.
+- Forecast, Delivery Impact, and Project Health behavior while Locked is deferred.
+- Project list, summary, deletion, naming, pagination, search, active ordering, and US-4.3 composition rules remain unchanged unless explicitly superseded above.
 
 ---
 

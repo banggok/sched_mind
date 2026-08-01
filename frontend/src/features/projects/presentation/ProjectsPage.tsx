@@ -29,6 +29,7 @@ import {
 } from "../application/projectManagement";
 import {
   ProjectOperationError,
+  type BulkReopenPlan,
   type ProjectsGateway,
 } from "../application/projectsGateway";
 import {
@@ -51,6 +52,10 @@ export function ProjectsPage({
   loadPublicHolidayDates,
   onManageWBS,
   renderProjectSummary,
+  initialEditProject,
+  onInitialEditConsumed,
+  returnPageOnClose,
+  onReturnToPage,
 }: {
   gateway: ProjectsGateway;
   loadPublicHolidayDates?(
@@ -59,6 +64,10 @@ export function ProjectsPage({
   ): Promise<string[]>;
   onManageWBS?(project: Project): void;
   renderProjectSummary?(project: Project): ReactNode;
+  initialEditProject?: Project;
+  onInitialEditConsumed?(): void;
+  returnPageOnClose?: string;
+  onReturnToPage?(): void;
 }) {
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
@@ -69,6 +78,7 @@ export function ProjectsPage({
   const [reload, setReload] = useState(0);
   const [form, setForm] = useState<FormState>();
   const [command, setCommand] = useState<CommandState>();
+  const [bulkReopenPlan, setBulkReopenPlan] = useState<BulkReopenPlan>();
   const [name, setName] = useState("");
   const [automaticScheduling, setAutomaticScheduling] = useState(true);
   const [schedulingStartDate, setSchedulingStartDate] = useState("");
@@ -85,6 +95,20 @@ export function ProjectsPage({
     () => ({ search: debouncedSearch, page, pageSize: 5 }),
     [debouncedSearch, page],
   );
+
+  useEffect(() => {
+    if (!initialEditProject) return;
+    setForm({ mode: "edit", project: initialEditProject });
+    setName(initialEditProject.name);
+    setAutomaticScheduling(initialEditProject.automaticScheduling);
+    setSchedulingStartDate(initialEditProject.schedulingStartDate ?? "");
+    setProjectBuffer(String(initialEditProject.projectBuffer));
+    setConfirmingEnable(false);
+    setFieldError("");
+    setBufferError("");
+    setOperationError("");
+    onInitialEditConsumed?.();
+  }, [initialEditProject, onInitialEditConsumed]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -110,6 +134,10 @@ export function ProjectsPage({
   function refresh(message: string) {
     setNotification(message);
     setReload((value) => value + 1);
+  }
+  function closeForm() {
+    setForm(undefined);
+    if (returnPageOnClose) onReturnToPage?.();
   }
   function openCreate() {
     setForm({ mode: "create" });
@@ -178,6 +206,7 @@ export function ProjectsPage({
         );
       setForm(undefined);
       refresh(form.mode === "create" ? "Project added." : "Project updated.");
+      if (returnPageOnClose && form.mode === "edit") onReturnToPage?.();
     } catch (reason: unknown) {
       if (
         reason instanceof ProjectSettingsError ||
@@ -218,6 +247,32 @@ export function ProjectsPage({
               : "Project reopened.";
       setCommand(undefined);
       refresh(message);
+    } catch (reason: unknown) {
+      if (
+        reason instanceof ProjectOperationError &&
+        reason.code === "PROJECT_BULK_REOPEN_REQUIRED" &&
+        reason.bulkReopenPlan
+      ) {
+        setCommand(undefined);
+        setBulkReopenPlan(reason.bulkReopenPlan);
+      } else {
+        setOperationError(userMessage(reason));
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  }
+  async function confirmBulkReopen() {
+    if (!bulkReopenPlan || submitting) return;
+    setSubmitting(true);
+    setOperationError("");
+    try {
+      await gateway.bulkReopen(
+        bulkReopenPlan.rootProjectId,
+        bulkReopenPlan.token,
+      );
+      setBulkReopenPlan(undefined);
+      refresh("Related projects reopened.");
     } catch (reason: unknown) {
       setOperationError(userMessage(reason));
     } finally {
@@ -350,7 +405,7 @@ export function ProjectsPage({
           onProjectBuffer={setProjectBuffer}
           onConfirmingEnable={setConfirmingEnable}
           renderProjectSummary={renderProjectSummary}
-          onClose={() => !submitting && setForm(undefined)}
+          onClose={() => !submitting && closeForm()}
           onSubmit={() => void submitForm()}
         />
       ) : null}
@@ -361,6 +416,15 @@ export function ProjectsPage({
           submitting={submitting}
           onClose={() => !submitting && setCommand(undefined)}
           onConfirm={() => void confirmCommand()}
+        />
+      ) : null}
+      {bulkReopenPlan ? (
+        <BulkReopenDialog
+          plan={bulkReopenPlan}
+          error={operationError}
+          submitting={submitting}
+          onClose={() => !submitting && setBulkReopenPlan(undefined)}
+          onConfirm={() => void confirmBulkReopen()}
         />
       ) : null}
       <Toast message={notification} onDismiss={() => setNotification("")} />
@@ -732,6 +796,77 @@ function CommandDialog({
     </Dialog>
   );
 }
+function BulkReopenDialog({
+  plan,
+  error,
+  submitting,
+  onClose,
+  onConfirm,
+}: {
+  plan: BulkReopenPlan;
+  error: string;
+  submitting: boolean;
+  onClose(): void;
+  onConfirm(): void;
+}) {
+  return (
+    <Dialog
+      titleID="bulk-reopen-title"
+      kind="alertdialog"
+      closeOnBackdrop={false}
+      onClose={onClose}
+    >
+      <h2 id="bulk-reopen-title" className="text-dialog-title font-black">
+        Reopen related locked projects?
+      </h2>
+      <p className="mt-3 leading-7 text-muted">
+        These projects share scheduling constraints and must be reopened in one
+        atomic change.
+      </p>
+      <section className="mt-5" aria-labelledby="locked-reopen-list">
+        <h3 id="locked-reopen-list" className="font-extrabold">
+          Locked Projects that must be reopened together
+        </h3>
+        <ul className="mt-2 list-disc space-y-1 pl-5">
+          {plan.lockedProjects.map((project) => (
+            <li key={project.id}>{project.name}</li>
+          ))}
+        </ul>
+      </section>
+      {plan.openProjects.length > 0 ? (
+        <section className="mt-5" aria-labelledby="open-recalculate-list">
+          <h3 id="open-recalculate-list" className="font-extrabold">
+            Open Projects that will be recalculated
+          </h3>
+          <ul className="mt-2 list-disc space-y-1 pl-5">
+            {plan.openProjects.map((project) => (
+              <li key={project.id}>{project.name}</li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+      {error ? (
+        <p className="mt-4 text-sm font-semibold text-danger" role="alert">
+          {error}
+        </p>
+      ) : null}
+      <div className="form-actions">
+        <Button disabled={submitting} onClick={onClose}>
+          Cancel
+        </Button>
+        <Button
+          data-autofocus
+          variant="primary"
+          loading={submitting}
+          onClick={onConfirm}
+        >
+          Reopen All
+        </Button>
+      </div>
+    </Dialog>
+  );
+}
+
 function targetStatus(
   kind: Exclude<CommandState["kind"], "delete">,
 ): ProjectStatus {

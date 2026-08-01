@@ -56,6 +56,9 @@ function node(id: string, name: string, children: WBSNode[] = []): WBSNode {
 function gateway(tree: WBSNode[]): WBSGateway {
   return {
     tree: vi.fn().mockResolvedValue(tree),
+    allocations: vi
+      .fn()
+      .mockResolvedValue({ execution: [], commitment: [], actual: [] }),
     create: vi.fn().mockResolvedValue(undefined),
     rename: vi.fn(),
     reorder: vi.fn(),
@@ -502,6 +505,65 @@ describe("WBS presentation terminology", () => {
       1,
     );
   });
+  it("returns directly to Home after closing an initially opened Group", async () => {
+    const close = vi.fn();
+    const group = node("group", "Development", [node("task", "Backend API")]);
+    render(
+      <WBSPanel
+        project={project}
+        gateway={gateway([group])}
+        {...options}
+        initialNodeId="group"
+        returnToCallerOnComplete
+        onClose={close}
+      />,
+    );
+
+    const detailDialog = await screen.findByRole("dialog", {
+      name: "Development",
+    });
+    fireEvent.click(
+      within(detailDialog).getByRole("button", { name: "Close" }),
+    );
+
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns directly to Home after an initially requested Add Task succeeds", async () => {
+    const close = vi.fn();
+    const api = gateway([]);
+    render(
+      <WBSPanel
+        project={project}
+        gateway={api}
+        {...options}
+        initialCreateParentId={null}
+        returnToCallerOnComplete
+        onClose={close}
+      />,
+    );
+
+    const createDialog = await screen.findByRole("dialog", {
+      name: "Add Task",
+    });
+    fireEvent.change(within(createDialog).getByLabelText("Name"), {
+      target: { value: "API" },
+    });
+    fireEvent.submit(
+      within(createDialog).getByLabelText("Name").closest("form")!,
+    );
+
+    await waitFor(() =>
+      expect(api.create).toHaveBeenCalledWith(
+        "project",
+        undefined,
+        "API",
+        false,
+      ),
+    );
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
   it("shows an explicit user-facing conversion confirmation", async () => {
     const task = node("task", "Backend API");
     const api = gateway([task]);

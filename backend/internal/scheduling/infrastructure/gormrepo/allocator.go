@@ -66,7 +66,7 @@ func (state *portfolioState) scheduleTimeline(timeline schedulingdomain.Timeline
 		if _, leaf := state.leafOrder[task.ID]; !leaf {
 			continue
 		}
-		if task.ActualEnd != nil || project.Status != "open" || !project.AutomaticScheduling {
+		if task.ActualStart != nil && task.ActualEnd != nil || project.Status != "open" || !project.AutomaticScheduling {
 			continue
 		}
 		if project.SchedulingStartDate == nil {
@@ -155,7 +155,7 @@ func (result *timelineResult) reserveFixedTasks() error {
 		if start == nil || end == nil {
 			continue
 		}
-		if task.ActualEnd != nil && end.After(*task.ActualEnd) {
+		if task.ActualStart != nil && task.ActualEnd != nil && end.After(*task.ActualEnd) {
 			end = datePointer(*task.ActualEnd)
 		}
 		allocations, usedProjection, err := result.calendar.reserveProjectedFixed(task, *start, *end)
@@ -186,6 +186,10 @@ func (calendar *allocationCalendar) reserveProjectedFixed(
 	end time.Time,
 ) ([]dailyAllocation, bool, error) {
 	rows := calendar.state.existingAllocations[calendar.timeline][task.ID]
+	actualProjection := task.ActualStart != nil && task.ActualEnd != nil
+	if actualProjection {
+		rows = calendar.state.existingAllocations[schedulingdomain.Actual][task.ID]
+	}
 	if len(rows) == 0 {
 		return nil, false, nil
 	}
@@ -195,7 +199,7 @@ func (calendar *allocationCalendar) reserveProjectedFixed(
 	total := new(big.Rat)
 	for _, row := range rows {
 		date := schedulingdomain.DateOnly(row.AllocationDate)
-		if row.AssigneeID != *task.AssigneeID || date.Before(schedulingdomain.DateOnly(start)) || date.After(schedulingdomain.DateOnly(end)) {
+		if row.AssigneeID != *task.AssigneeID || (!actualProjection && (date.Before(schedulingdomain.DateOnly(start)) || date.After(schedulingdomain.DateOnly(end)))) {
 			return nil, false, nil
 		}
 		minutes, err := schedulingdomain.ParseDecimal(row.AllocatedMinutes)
@@ -240,7 +244,7 @@ func (calendar *allocationCalendar) reconstructFixed(task taskModel, start, end 
 		remaining.Sub(remaining, allocated)
 	}
 	if remaining.Sign() > 0 {
-		if task.ActualEnd != nil {
+		if task.ActualStart != nil && task.ActualEnd != nil {
 			// Completion is immutable historical evidence, not a claim that the
 			// Task's planned Effort still fits today's capacity configuration.
 			// Keep any unresolved historical Effort on Actual End so the Task
@@ -309,7 +313,7 @@ func (result *timelineResult) invalidateDisplaced(taskIDs []string, pending map[
 			continue
 		}
 		project := state.projects[task.ProjectID]
-		if task.ActualEnd != nil || project.Status != "open" || !project.AutomaticScheduling {
+		if task.ActualStart != nil && task.ActualEnd != nil || project.Status != "open" || !project.AutomaticScheduling {
 			continue
 		}
 		result.calendar.removeTask(taskID)
@@ -565,12 +569,21 @@ func (calendar *allocationCalendar) capacity(memberID, projectID string, date ti
 	if !schedulingdomain.IsWeekend(date) {
 		if _, holiday := state.holidays[schedulingdomain.DateKey(date)]; !holiday {
 			capacityValue := member.DailyCapacity
+			var minimumOverride *big.Rat
 			for _, override := range state.overrides[memberID] {
 				day := schedulingdomain.DateOnly(date)
 				if !day.Before(schedulingdomain.DateOnly(override.StartDate)) && !day.After(schedulingdomain.DateOnly(override.EndDate)) {
-					capacityValue = override.Capacity
-					break
+					candidate, err := schedulingdomain.ParseDecimal(override.Capacity)
+					if err != nil {
+						return nil, fmt.Errorf("%w: invalid capacity override", schedulingdomain.ErrDataIntegrity)
+					}
+					if minimumOverride == nil || candidate.Cmp(minimumOverride) < 0 {
+						minimumOverride = candidate
+					}
 				}
+			}
+			if minimumOverride != nil {
+				capacityValue = minimumOverride.FloatString(6)
 			}
 			value, err := schedulingdomain.ParseDecimal(capacityValue)
 			if err != nil {
@@ -610,7 +623,7 @@ func (result *timelineResult) deriveAutomaticBlockers() {
 		for index, schedule := range values {
 			task := state.tasks[schedule.TaskID]
 			project := state.projects[task.ProjectID]
-			if index == 0 || schedule.ManualCandidateDate == nil || schedule.Start == nil || task.ActualEnd != nil || project.Status != "open" || !project.AutomaticScheduling {
+			if index == 0 || schedule.ManualCandidateDate == nil || schedule.Start == nil || task.ActualStart != nil && task.ActualEnd != nil || project.Status != "open" || !project.AutomaticScheduling {
 				continue
 			}
 			previous := values[index-1]

@@ -27,14 +27,17 @@ func testRepository(t *testing.T) *Repository {
 }
 
 type lifecycleTaskTestModel struct {
-	ID              string `gorm:"primaryKey"`
-	ProjectID       string
-	ParentID        *string
-	ExecutionStart  *time.Time
-	ExecutionEnd    *time.Time
-	CommitmentStart *time.Time
-	CommitmentEnd   *time.Time
-	ActualEnd       *time.Time
+	ID                          string `gorm:"primaryKey"`
+	ProjectID                   string
+	ParentID                    *string
+	ExecutionStart              *time.Time
+	ExecutionEnd                *time.Time
+	CommitmentStart             *time.Time
+	CommitmentEnd               *time.Time
+	ExecutionUnscheduledReason  *string
+	CommitmentUnscheduledReason *string
+	ActualStart                 *time.Time
+	ActualEnd                   *time.Time
 }
 
 func (lifecycleTaskTestModel) TableName() string { return "wbs_nodes" }
@@ -120,18 +123,7 @@ func TestRepositoryStatusLifecycleSnapshotsSchedulingAndRollback_AC9_AC15_AC16_A
 		t.Fatal(err)
 	}
 
-	_, err = repository.ChangeStatus(ctx, "project", domain.StatusLocked, now.Add(time.Hour), func(context.Context) error {
-		return errors.New("scheduler unavailable")
-	})
-	if err == nil {
-		t.Fatal("expected lock rollback")
-	}
-	afterFailedLock, _ := repository.Find(ctx, "project")
-	if afterFailedLock == nil || afterFailedLock.Status != domain.StatusOpen || afterFailedLock.LockedExecutionSnapshot != nil || afterFailedLock.LockedCommitmentSnapshot != nil {
-		t.Fatalf("failed lock persisted partial state: %#v", afterFailedLock)
-	}
-
-	schedulerStatuses := make([]string, 0, 3)
+	schedulerStatuses := make([]string, 0, 2)
 	schedule := func(scheduleCtx context.Context) error {
 		transaction := sharedpersistence.Transaction(scheduleCtx, repository.database)
 		var status string
@@ -141,7 +133,10 @@ func TestRepositoryStatusLifecycleSnapshotsSchedulingAndRollback_AC9_AC15_AC16_A
 		schedulerStatuses = append(schedulerStatuses, status)
 		return nil
 	}
-	locked, err := repository.ChangeStatus(ctx, "project", domain.StatusLocked, now.Add(2*time.Hour), schedule)
+	locked, err := repository.ChangeStatus(ctx, "project", domain.StatusLocked, now.Add(2*time.Hour), func(context.Context) error {
+		t.Fatal("scheduler must not run while locking a Project")
+		return nil
+	})
 	if err != nil || locked == nil || locked.Status != domain.StatusLocked || locked.LockedExecutionSnapshot == nil || locked.LockedCommitmentSnapshot == nil {
 		t.Fatalf("lock: %#v %v", locked, err)
 	}
@@ -157,7 +152,7 @@ func TestRepositoryStatusLifecycleSnapshotsSchedulingAndRollback_AC9_AC15_AC16_A
 		t.Fatalf("incomplete close: %v", err)
 	}
 	completedAt := time.Date(2026, 8, 4, 0, 0, 0, 0, time.UTC)
-	if err := repository.database.Model(&lifecycleTaskTestModel{}).Where("id = ?", "leaf").Update("actual_end", completedAt).Error; err != nil {
+	if err := repository.database.Model(&lifecycleTaskTestModel{}).Where("id = ?", "leaf").Updates(map[string]any{"actual_start": completedAt, "actual_end": completedAt}).Error; err != nil {
 		t.Fatal(err)
 	}
 	_, err = repository.ChangeStatus(ctx, "project", domain.StatusClosed, now.Add(4*time.Hour), func(context.Context) error {
@@ -187,10 +182,10 @@ func TestRepositoryStatusLifecycleSnapshotsSchedulingAndRollback_AC9_AC15_AC16_A
 	}
 
 	reopened, err := repository.ChangeStatus(ctx, "project", domain.StatusOpen, now.Add(7*time.Hour), schedule)
-	if err != nil || reopened == nil || reopened.Status != domain.StatusOpen || reopened.ClosedAt != nil || reopened.LockedExecutionSnapshot == nil || reopened.LockedCommitmentSnapshot == nil {
+	if err != nil || reopened == nil || reopened.Status != domain.StatusOpen || reopened.ClosedAt != nil || reopened.LockedExecutionSnapshot != nil || reopened.LockedCommitmentSnapshot != nil {
 		t.Fatalf("reopen: %#v %v", reopened, err)
 	}
-	if len(schedulerStatuses) != 3 || schedulerStatuses[0] != "locked" || schedulerStatuses[1] != "closed" || schedulerStatuses[2] != "open" {
+	if len(schedulerStatuses) != 2 || schedulerStatuses[0] != "closed" || schedulerStatuses[1] != "open" {
 		t.Fatalf("scheduler transaction statuses: %#v", schedulerStatuses)
 	}
 }

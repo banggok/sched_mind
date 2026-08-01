@@ -45,13 +45,20 @@ export function ApplicationSidebar({
         <div className="application-sidebar-spacer shrink-0 border-b border-border-subtle" />
         <nav className="flex-1 p-3" aria-label="Application navigation">
           {groupNavigationItems().map((group) => (
-            <section key={group.id} aria-labelledby={`nav-${group.id}`}>
-              <p
-                id={`nav-${group.id}`}
-                className="overflow-hidden px-3 pt-2 pb-2 text-xs font-extrabold tracking-widest whitespace-nowrap text-subtle uppercase"
-              >
-                {group.label}
-              </p>
+            <section
+              key={group.id}
+              aria-labelledby={
+                group.id === "home" ? undefined : `nav-${group.id}`
+              }
+            >
+              {group.id === "home" ? null : (
+                <p
+                  id={`nav-${group.id}`}
+                  className="overflow-hidden px-3 pt-2 pb-2 text-xs font-extrabold tracking-widest whitespace-nowrap text-subtle uppercase"
+                >
+                  {group.label}
+                </p>
+              )}
               {group.items.map((item) => (
                 <NavigationLink
                   key={item.id}
@@ -103,11 +110,29 @@ function NavigationLink({
 }
 
 const icons: Record<ApplicationPage, ReactNode> = {
+  home: <HomeIcon />,
   roles: <RoleIcon />,
   "team-members": <TeamMembersIcon />,
   "public-holidays": <CalendarIcon />,
   projects: <ProjectIcon />,
 };
+
+function HomeIcon() {
+  return (
+    <svg
+      className="size-5"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M3 11.5 12 4l9 7.5" />
+      <path d="M5.5 10.5V20h13v-9.5M9 20v-5h6v5" />
+    </svg>
+  );
+}
 
 function ProjectIcon() {
   return (

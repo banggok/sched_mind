@@ -15,6 +15,7 @@ import (
 
 type scheduleProjectRecord struct {
 	ID                  string `gorm:"primaryKey"`
+	Name                string
 	Status              string
 	Priority            int
 	AutomaticScheduling bool
@@ -348,6 +349,7 @@ func TestEligibilityFixedReservationsAndClosedExclusion_AC4_AC30_AC31_AC32_AC34(
 		completed.ExecutionEnd = datePointer(mustDate("2026-08-07"))
 		completed.CommitmentStart = datePointer(mustDate("2026-08-07"))
 		completed.CommitmentEnd = datePointer(mustDate("2026-08-07"))
+		completed.ActualStart = datePointer(mustDate("2026-08-07"))
 		completed.ActualEnd = datePointer(mustDate("2026-08-07"))
 		seedTask(t, database, completed)
 		seedTask(t, database, schedulableTask("successor", "project", 2, "member-b", 300, 0))
@@ -371,6 +373,7 @@ func TestEligibilityFixedReservationsAndClosedExclusion_AC4_AC30_AC31_AC32_AC34(
 		completed.ExecutionEnd = datePointer(mustDate("2026-08-03"))
 		completed.CommitmentStart = datePointer(mustDate("2026-08-03"))
 		completed.CommitmentEnd = datePointer(mustDate("2026-08-03"))
+		completed.ActualStart = datePointer(mustDate("2026-08-03"))
 		completed.ActualEnd = datePointer(mustDate("2026-08-03"))
 		seedTask(t, database, completed)
 		seedTask(t, database, schedulableTask("new-task", "project", 2, "member", 300, 0))
@@ -575,8 +578,8 @@ func TestConcurrentRecalculationSerializesAndPreservesOneAllocationPerTaskDate_A
 	if err := database.First(&project, "id = ?", "project").Error; err != nil {
 		t.Fatal(err)
 	}
-	if project.ScheduleVersion != 2 {
-		t.Fatalf("schedule version = %d, want 2 serialized commits", project.ScheduleVersion)
+	if project.ScheduleVersion != 1 {
+		t.Fatalf("schedule version = %d, want one confirmed dirty projection and one serialized no-op", project.ScheduleVersion)
 	}
 	var rows []allocationModel
 	if err := database.Order("timeline ASC").Order("allocation_date ASC").Order("sequence ASC").Find(&rows).Error; err != nil {

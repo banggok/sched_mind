@@ -11,6 +11,7 @@ import (
 	dependencydomain "github.com/banggok/sched_mind/backend/internal/dependencies/domain"
 	schedulingdomain "github.com/banggok/sched_mind/backend/internal/scheduling/domain"
 	"github.com/banggok/sched_mind/backend/internal/shared/httpjson"
+	"github.com/banggok/sched_mind/backend/internal/shared/schedulingimpact"
 	"github.com/banggok/sched_mind/backend/internal/wbs/application"
 	"github.com/banggok/sched_mind/backend/internal/wbs/domain"
 )
@@ -18,11 +19,12 @@ import (
 type Service interface {
 	Tree(context.Context, string) ([]domain.Node, error)
 	Get(context.Context, string, string) (*domain.Node, error)
+	Allocations(context.Context, string, string) (*application.AllocationGroups, error)
 	Create(context.Context, string, *string, string, bool) (*domain.Node, error)
 	Rename(context.Context, string, string, string) (*domain.Node, error)
 	UpdateExecutable(context.Context, string, string, application.WriteExecutableInput) (*domain.Node, error)
 	PreviewExecutableSchedule(context.Context, string, string, application.PreviewExecutableInput) (*application.SchedulePreview, error)
-	Complete(context.Context, string, string, time.Time) (*domain.Node, error)
+	Complete(context.Context, string, string, time.Time, time.Time) (*domain.Node, error)
 	Reopen(context.Context, string, string) (*domain.Node, error)
 	Reorder(context.Context, string, string, domain.Direction) error
 	Move(context.Context, string, string, *string, bool) error
@@ -59,6 +61,7 @@ type commandRequest struct {
 	Direction         domain.Direction `json:"direction"`
 	ParentID          *string          `json:"parentId"`
 	ConfirmConversion bool             `json:"confirmConversion"`
+	ActualStart       *string          `json:"actualStart"`
 	ActualEnd         *string          `json:"actualEnd"`
 }
 type response struct {
@@ -77,6 +80,7 @@ type executableItem struct {
 	CommitmentTimeline          timelineItem `json:"commitmentTimeline"`
 	ExecutionUnscheduledReason  *string      `json:"executionUnscheduledReason,omitempty"`
 	CommitmentUnscheduledReason *string      `json:"commitmentUnscheduledReason,omitempty"`
+	ActualStart                 *string      `json:"actualStart,omitempty"`
 	ActualEnd                   *string      `json:"actualEnd,omitempty"`
 }
 type item struct {
@@ -112,6 +116,18 @@ type schedulePreviewItem struct {
 	Task         item                            `json:"task"`
 	Dependencies schedulePreviewDependencyDetail `json:"dependencies"`
 }
+type allocationRowItem struct {
+	Date                string `json:"date"`
+	AllocatedMinutes    int    `json:"allocatedMinutes"`
+	CapacityMinutes     int    `json:"capacityMinutes"`
+	RemainingMinutes    int    `json:"remainingMinutes"`
+	OvercapacityMinutes int    `json:"overcapacityMinutes"`
+}
+type allocationGroupsItem struct {
+	Execution  []allocationRowItem `json:"execution"`
+	Commitment []allocationRowItem `json:"commitment"`
+	Actual     []allocationRowItem `json:"actual"`
+}
 type errorResponse struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
@@ -121,12 +137,13 @@ type errorResponse struct {
 func (h *Handler) Register(m *http.ServeMux) {
 	m.HandleFunc("GET /api/projects/{projectId}/wbs", h.tree)
 	m.HandleFunc("GET /api/projects/{projectId}/wbs/{wbsId}", h.get)
+	m.HandleFunc("GET /api/projects/{projectId}/wbs/{wbsId}/allocations", h.allocations)
 	m.HandleFunc("POST /api/projects/{projectId}/wbs", h.create)
 	m.HandleFunc("POST /api/projects/{projectId}/wbs/{wbsId}/children", h.child)
 	m.HandleFunc("PUT /api/projects/{projectId}/wbs/{wbsId}", h.rename)
 	m.HandleFunc("PUT /api/projects/{projectId}/wbs/{wbsId}/executable", h.executable)
 	m.HandleFunc("POST /api/projects/{projectId}/wbs/{wbsId}/executable/preview", h.previewExecutable)
-	m.HandleFunc("POST /api/projects/{projectId}/wbs/{wbsId}/actual-end", h.complete)
+	m.HandleFunc("POST /api/projects/{projectId}/wbs/{wbsId}/actual-date", h.complete)
 	m.HandleFunc("POST /api/projects/{projectId}/wbs/{wbsId}/reopen", h.reopen)
 	m.HandleFunc("POST /api/projects/{projectId}/wbs/{wbsId}/reorder", h.reorder)
 	m.HandleFunc("POST /api/projects/{projectId}/wbs/{wbsId}/move", h.move)
@@ -151,6 +168,14 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpjson.Write(w, 200, response{mapNode(*v)})
+}
+func (h *Handler) allocations(w http.ResponseWriter, r *http.Request) {
+	value, err := h.service.Allocations(r.Context(), r.PathValue("projectId"), r.PathValue("wbsId"))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	httpjson.Write(w, 200, response{mapAllocationGroups(*value)})
 }
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	var p writeRequest
@@ -276,7 +301,7 @@ func mapSchedulePreviewRelations(values []dependencydomain.Item) []schedulePrevi
 				ProjectID:     value.Task.ProjectID,
 				ProjectName:   value.Task.ProjectName,
 				HierarchyPath: value.Task.HierarchyPath,
-				Completed:     value.Task.ActualEnd != nil,
+				Completed:     value.Task.ActualStart != nil && value.Task.ActualEnd != nil,
 				ExpectedStart: expectedStart,
 			},
 		})
@@ -286,15 +311,24 @@ func mapSchedulePreviewRelations(values []dependencydomain.Item) []schedulePrevi
 
 func (h *Handler) complete(w http.ResponseWriter, r *http.Request) {
 	var p commandRequest
-	if !decode(w, r, &p) || p.ActualEnd == nil {
+	if !decode(w, r, &p) {
 		return
 	}
-	d, e := time.Parse("2006-01-02", *p.ActualEnd)
-	if e != nil {
-		httpjson.Write(w, 400, errorResponse{"INVALID_REQUEST", "actualEnd must use YYYY-MM-DD", "actualEnd"})
+	if (p.ActualStart == nil) != (p.ActualEnd == nil) || p.ActualStart == nil {
+		httpjson.Write(w, 400, errorResponse{"ACTUAL_DATE_INCOMPLETE", domain.ErrActualDatePair.Error(), "actualDate"})
 		return
 	}
-	v, e := h.service.Complete(r.Context(), r.PathValue("projectId"), r.PathValue("wbsId"), d)
+	actualStart, startError := time.Parse("2006-01-02", *p.ActualStart)
+	actualEnd, endError := time.Parse("2006-01-02", *p.ActualEnd)
+	if startError != nil || endError != nil {
+		httpjson.Write(w, 400, errorResponse{"INVALID_REQUEST", "actualStart and actualEnd must use YYYY-MM-DD", "actualDate"})
+		return
+	}
+	if actualEnd.Before(actualStart) {
+		httpjson.Write(w, 400, errorResponse{"ACTUAL_DATE_INVALID_RANGE", domain.ErrActualDateOrder.Error(), "actualDate"})
+		return
+	}
+	v, e := h.service.Complete(r.Context(), r.PathValue("projectId"), r.PathValue("wbsId"), actualStart, actualEnd)
 	if e != nil {
 		writeError(w, e)
 		return
@@ -417,6 +451,9 @@ func timeline(w http.ResponseWriter, start, end *string) (domain.Timeline, bool)
 	return domain.Timeline{Start: s, End: finish}, true
 }
 func writeReopenError(w http.ResponseWriter, err error) {
+	if schedulingimpact.WriteHTTPError(w, err) {
+		return
+	}
 	status, code, message := 500, "TASK_REOPEN_FAILED", "Task could not be reopened. Try again."
 	switch {
 	case errors.Is(err, domain.ErrNotFound), errors.Is(err, domain.ErrProjectNotFound):
@@ -427,6 +464,8 @@ func writeReopenError(w http.ResponseWriter, err error) {
 		status, code, message = 409, "TASK_NOT_COMPLETED", domain.ErrTaskNotCompleted.Error()
 	case errors.Is(err, domain.ErrProjectClosedReadOnly):
 		status, code, message = 409, "PROJECT_CLOSED_READ_ONLY", domain.ErrProjectClosedReadOnly.Error()
+	case errors.Is(err, domain.ErrProjectLockedReadOnly):
+		status, code, message = 409, "PROJECT_LOCKED_READ_ONLY", domain.ErrProjectLockedReadOnly.Error()
 	case errors.Is(err, domain.ErrTaskReopenConflict):
 		status, code, message = 409, "TASK_REOPEN_CONFLICT", "The Task was changed by another request. Refresh and try again."
 	}
@@ -434,6 +473,9 @@ func writeReopenError(w http.ResponseWriter, err error) {
 }
 
 func writeError(w http.ResponseWriter, err error) {
+	if schedulingimpact.WriteHTTPError(w, err) {
+		return
+	}
 	status, code := 500, "INTERNAL_ERROR"
 	switch {
 	case errors.Is(err, domain.ErrProjectNotFound):
@@ -456,6 +498,14 @@ func writeError(w http.ResponseWriter, err error) {
 		status, code = 409, "COMPLETED_TASK_READ_ONLY"
 	case errors.Is(err, domain.ErrProjectClosedReadOnly):
 		status, code = 409, "PROJECT_CLOSED_READ_ONLY"
+	case errors.Is(err, domain.ErrProjectLockedReadOnly):
+		status, code = 409, "PROJECT_LOCKED_READ_ONLY"
+	case errors.Is(err, domain.ErrIncompletePredecessor):
+		status, code = 409, "ACTUAL_DATE_PREDECESSOR_UNFINISHED"
+	case errors.Is(err, domain.ErrActualDatePair):
+		status, code = 400, "ACTUAL_DATE_INCOMPLETE"
+	case errors.Is(err, domain.ErrActualDateOrder):
+		status, code = 400, "ACTUAL_DATE_INVALID_RANGE"
 	case errors.Is(err, domain.ErrSchedulePreviewIncomplete):
 		status, code = 400, "SCHEDULING_INPUT_INCOMPLETE"
 	case errors.Is(err, domain.ErrSchedulePreviewUnavailable):
@@ -484,6 +534,28 @@ func writeError(w http.ResponseWriter, err error) {
 	httpjson.Write(w, status, errorResponse{code, message, ""})
 }
 
+func mapAllocationGroups(value application.AllocationGroups) allocationGroupsItem {
+	return allocationGroupsItem{
+		Execution:  mapAllocationRows(value.Execution),
+		Commitment: mapAllocationRows(value.Commitment),
+		Actual:     mapAllocationRows(value.Actual),
+	}
+}
+
+func mapAllocationRows(values []application.AllocationRow) []allocationRowItem {
+	items := make([]allocationRowItem, 0, len(values))
+	for _, value := range values {
+		items = append(items, allocationRowItem{
+			Date:                value.Date.Format("2006-01-02"),
+			AllocatedMinutes:    value.AllocatedMinutes,
+			CapacityMinutes:     value.CapacityMinutes,
+			RemainingMinutes:    value.RemainingMinutes,
+			OvercapacityMinutes: value.OvercapacityMinutes,
+		})
+	}
+	return items
+}
+
 func mapReopenNode(value domain.Node) map[string]any {
 	children := make([]map[string]any, 0, len(value.Children))
 	for _, child := range value.Children {
@@ -505,6 +577,7 @@ func mapReopenNode(value domain.Node) map[string]any {
 			"commitmentTimeline":          timelineItem{Start: date(value.Executable.CommitmentTimeline.Start), End: date(value.Executable.CommitmentTimeline.End)},
 			"executionUnscheduledReason":  value.Executable.ExecutionUnscheduledReason,
 			"commitmentUnscheduledReason": value.Executable.CommitmentUnscheduledReason,
+			"actualStart":                 date(value.Executable.ActualStart),
 			"actualEnd":                   date(value.Executable.ActualEnd),
 		},
 		"children": children,
@@ -516,7 +589,7 @@ func mapNode(value domain.Node) item {
 	for _, child := range value.Children {
 		children = append(children, mapNode(child))
 	}
-	return item{ID: value.ID, ProjectID: value.ProjectID, ParentID: value.ParentID, Name: value.Name, Position: value.Position, HasChildren: value.HasChildren, Executable: executableItem{RoleID: value.Executable.RoleID, AssigneeID: value.Executable.AssigneeID, EffortMinutes: value.Executable.EffortMinutes, LagDays: value.Executable.LagDays, ExecutionTimeline: timelineItem{Start: date(value.Executable.ExecutionTimeline.Start), End: date(value.Executable.ExecutionTimeline.End)}, CommitmentTimeline: timelineItem{Start: date(value.Executable.CommitmentTimeline.Start), End: date(value.Executable.CommitmentTimeline.End)}, ExecutionUnscheduledReason: value.Executable.ExecutionUnscheduledReason, CommitmentUnscheduledReason: value.Executable.CommitmentUnscheduledReason, ActualEnd: date(value.Executable.ActualEnd)}, Children: children}
+	return item{ID: value.ID, ProjectID: value.ProjectID, ParentID: value.ParentID, Name: value.Name, Position: value.Position, HasChildren: value.HasChildren, Executable: executableItem{RoleID: value.Executable.RoleID, AssigneeID: value.Executable.AssigneeID, EffortMinutes: value.Executable.EffortMinutes, LagDays: value.Executable.LagDays, ExecutionTimeline: timelineItem{Start: date(value.Executable.ExecutionTimeline.Start), End: date(value.Executable.ExecutionTimeline.End)}, CommitmentTimeline: timelineItem{Start: date(value.Executable.CommitmentTimeline.Start), End: date(value.Executable.CommitmentTimeline.End)}, ExecutionUnscheduledReason: value.Executable.ExecutionUnscheduledReason, CommitmentUnscheduledReason: value.Executable.CommitmentUnscheduledReason, ActualStart: date(value.Executable.ActualStart), ActualEnd: date(value.Executable.ActualEnd)}, Children: children}
 }
 func date(value *time.Time) *string {
 	if value == nil {

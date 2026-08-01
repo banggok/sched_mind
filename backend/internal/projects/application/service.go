@@ -9,6 +9,7 @@ import (
 	"github.com/banggok/sched_mind/backend/internal/projects/domain"
 	"github.com/banggok/sched_mind/backend/internal/shared/identity"
 	"github.com/banggok/sched_mind/backend/internal/shared/listing"
+	"github.com/banggok/sched_mind/backend/internal/shared/schedulingimpact"
 )
 
 type Service struct {
@@ -70,6 +71,7 @@ func (s *Service) Create(ctx context.Context, name string, automaticScheduling b
 }
 
 func (s *Service) Update(ctx context.Context, id, name string, automaticScheduling bool, schedulingStartDate *time.Time, projectBuffer int) (*domain.Project, error) {
+	ctx = schedulingimpact.WithOperation(ctx, id, schedulingimpact.ModeOrdinary)
 	if _, err := domain.NormalizeName(name); err != nil {
 		return nil, err
 	}
@@ -87,6 +89,7 @@ func (s *Service) Update(ctx context.Context, id, name string, automaticScheduli
 }
 
 func (s *Service) ChangeStatus(ctx context.Context, id string, target domain.Status) (*domain.Project, error) {
+	ctx = schedulingimpact.WithOperation(ctx, id, schedulingimpact.ModeOrdinary)
 	value, err := s.store.ChangeStatus(ctx, id, target, s.now(), s.scheduler.RecalculateActiveProjects)
 	if err != nil {
 		return nil, fmt.Errorf("change project status: %w", err)
@@ -97,7 +100,17 @@ func (s *Service) ChangeStatus(ctx context.Context, id string, target domain.Sta
 	return value, nil
 }
 
+func (s *Service) BulkReopen(ctx context.Context, rootProjectID, token string) ([]domain.Project, error) {
+	ctx = schedulingimpact.WithOperation(ctx, rootProjectID, schedulingimpact.ModeBulkReopen)
+	values, err := s.store.BulkReopen(ctx, rootProjectID, token, s.now(), s.scheduler.RecalculateActiveProjects)
+	if err != nil {
+		return nil, fmt.Errorf("bulk reopen projects: %w", err)
+	}
+	return values, nil
+}
+
 func (s *Service) MovePriority(ctx context.Context, id string, direction domain.PriorityDirection) (*domain.Project, error) {
+	ctx = schedulingimpact.WithOperation(ctx, id, schedulingimpact.ModeOrdinary)
 	if direction != domain.PriorityUp && direction != domain.PriorityDown {
 		return nil, domain.ErrPriorityDirectionInvalid
 	}
@@ -112,6 +125,7 @@ func (s *Service) MovePriority(ctx context.Context, id string, direction domain.
 }
 
 func (s *Service) UpdateSettings(ctx context.Context, id string, automaticScheduling bool, schedulingStartDate *time.Time, projectBuffer int) (*domain.Project, error) {
+	ctx = schedulingimpact.WithOperation(ctx, id, schedulingimpact.ModeOrdinary)
 	if err := domain.ValidateProjectBuffer(projectBuffer); err != nil {
 		return nil, err
 	}

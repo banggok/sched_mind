@@ -17,6 +17,7 @@ type Store interface {
 	UpdateDetails(context.Context, string, string, bool, *time.Time, int, time.Time, func(context.Context, string) error, func(context.Context, string, string) error) (*domain.Project, error)
 	DeleteChildless(context.Context, string) error
 	ChangeStatus(context.Context, string, domain.Status, time.Time, func(context.Context) error) (*domain.Project, error)
+	BulkReopen(context.Context, string, string, time.Time, func(context.Context) error) ([]domain.Project, error)
 	MovePriority(context.Context, string, domain.PriorityDirection, time.Time, func(context.Context) error) (*domain.Project, error)
 	UpdateSettings(context.Context, string, bool, *time.Time, int, time.Time, func(context.Context, string) error, func(context.Context, string, string) error) (*domain.Project, error)
 }

@@ -66,10 +66,15 @@ filters, ordering, pagination, locking, expected cardinality, and supporting
 index. Non-trivial PostgreSQL paths are checked with `EXPLAIN`. Indexes without
 a confirmed query are removed rather than retained speculatively.
 
-Capacity Override writes lock the parent Member row before checking overlap and
-persisting within a transaction. Parent-scoped list and inclusive effective-date
-queries use the `(team_member_id, start_date, end_date, id)` index. The filter is
-applied before count, limit, and offset.
+Capacity Override writes lock the parent Member row before checking exact
+duplicate identity and persisting within a transaction. Overlapping ranges are
+valid. Exact duplicate identity is normalized `(team_member_id, start_date,
+end_date, capacity)` for active records; Description is excluded. Parent-scoped list and
+inclusive effective-date queries use the `(team_member_id, start_date,
+end_date, id)` index. Scheduler resolution loads all active overrides for one
+Member/Date and selects minimum Capacity. The filter is applied before count,
+limit, and offset. Create/update/delete compares before/after per-Date minimum;
+only an effective-capacity change enters US-6.2 impact simulation.
 
 Member deletion soft-deletes the Member and all owned Capacity Overrides in one
 transaction. Direct Capacity Override deletion remains a hard delete. Default
@@ -135,8 +140,14 @@ unfiltered Public Holiday cache entry, using versioned invalidation so older
 in-flight responses cannot repopulate stale data. The application exposes an
 exact-date and bounded calendar consumers for capacity resolution and shared
 calendar markings. Public Holiday
-has precedence over Capacity Override and Daily Capacity, but holiday mutations
-do not trigger schedule recalculation.
+has precedence over every overlapping Capacity Override and Daily Capacity.
+On a non-holiday working Date, the minimum Capacity among all active overrides
+for the Member becomes Resolved Daily Capacity; if none exists, Daily Capacity
+is used. Member Buffer is then applied for Execution and Project Buffer after it
+for Commitment. Capacity Override mutations that leave this per-Date minimum
+unchanged persist without scheduler invocation. Public Holiday mutations follow
+the US-6.2 impact guard because adding, changing, or removing a holiday changes
+Resolved Daily Capacity for its derived working Dates.
 
 Public Holiday endpoints are top-level global resources:
 
@@ -209,9 +220,16 @@ dates. Create remains an atomic scheduling trigger when it performs executable-
 to-group conversion and moves executable state or dependency endpoints; a
 scheduler failure rolls back that conversion.
 
-The scheduler loads all Open and Locked Projects, validates unique Priority and
-WBS ordering, resolves manual and retained automatic dependency edges, and
-allocates Execution and Commitment independently. Capacity arithmetic uses
+WBS delete uses the same scheduling-impact boundary. Deleting an unfinished
+Name-only or Role-only leaf with default Lag, no generated or unscheduled
+projection, and no dependency endpoints is a pure structural mutation. It does
+not invoke portfolio scheduling, even when the Project contains completed
+Tasks. Delete still coordinates affected-scope scheduling atomically when the
+removed Task has Assignee, Effort, non-zero Lag, generated projection, automatic
+unscheduled projection, or dependency endpoints; scheduling failure rolls back
+the deletion.
+
+The scheduler loads the transitive impacted scheduling scope, validates unique Priority and WBS ordering, resolves manual and retained automatic dependency edges, and allocates Execution and Commitment independently. Open unfinished Tasks are mutable outputs; Locked Projects are immutable anchors; unrelated Projects are not recalculated or version-updated. Capacity arithmetic uses
 `math/big.Rat`: weekend/Public Holiday resolves to zero, otherwise Capacity
 Override replaces Member Daily Capacity, Member Buffer produces raw Execution
 Capacity and rounds it to the nearest `0.5` hour. Commitment Capacity is
@@ -220,6 +238,10 @@ rounded to the nearest `0.5` hour. Allocation is
 inclusive-date, whole-Task, contiguous, and non-preemptive. Same-assignee
 successors may consume remaining capacity on the predecessor End Date;
 different-assignee successors begin on the next positive-capacity date.
+
+US-6.2 defines Actual Date, Actual Allocation, Locked Project, and generic cross-project impact coordination. Completion persists required Actual Start/Actual End together. Open completion moves each planned Start earlier only when Actual Start is earlier and always sets each End to Actual End. Actual Allocation uses Execution Start as baseline and BAU Resolved Daily Capacity before Member/Project buffers, allocates only on working dates, uses positive remaining capacity before Actual Start, distributes historical excess deterministically across Actual working dates, falls forward to the next working date when the Actual range has none, and never carries overcapacity debt. Locked Projects remain immutable scheduler outputs, but Actual Date may be saved and its Actual Allocation may recalculate transitively impacted Open Projects. Ordinary Task/dependency/priority/capacity mutations use grouped impact preview, confirmation, server revalidation, and Locked-impact blocking. Project Reopen expands an atomic transitive Locked closure to avoid mutual-lock dead ends.
+
+Execution, Commitment, and Actual daily allocations are separate projections. Actual Allocation rows are canonical and support both Task-centric and assignee-centric queries; current UI exposes the Task-centric read-only verification section while assignee analytics remains deferred. Impact simulation is version-bound: preview returns grouped Project names and a confirmation token, confirm re-simulates under scheduling locks, and stale impact never persists.
 
 `task_schedule_allocations` stores exact decimal allocation and remaining
 capacity by Task, timeline, assignee, and date. Its primary key prevents duplicate
@@ -262,9 +284,9 @@ feature as **Project Structure**, an Executable WBS as **Task**, and a Grouping
 WBS as **Group**. These labels are derived from child existence and never create
 or persist a separate type field.
 
-The approved US-4.3 implementation uses one frontend-only recursive read model over current confirmed WBS roots. View Group passes the selected subtree; Edit Project treats the Project as logical WBS level `0` and passes every top-level WBS root. One deterministic typed traversal returns Execution aggregate and coverage, Commitment aggregate and coverage, completed/total known Effort, percentage, and Task-without-Effort count. Timeline dates come only from complete Task pairs; completion comes only from Actual End; missing Effort is never coerced to zero. Integer minutes remain the arithmetic source so half-hour precision and percentage calculation do not accumulate floating-point error.
+The approved US-4.3 implementation uses one frontend-only recursive read model over current confirmed WBS roots. View Group passes the selected subtree; Edit Project treats the Project as logical WBS level `0` and passes every top-level WBS root. One deterministic typed traversal returns Execution aggregate and coverage, Commitment aggregate and coverage, completed/total known Effort, percentage, and Task-without-Effort count. Timeline dates come only from complete Task pairs; completion requires complete Actual Date; missing Effort is never coerced to zero. Integer minutes remain the arithmetic source so half-hour precision and percentage calculation do not accumulate floating-point error.
 
-The existing per-Project WBS tree contract already carries `children`, Effort, both timeline pairs, and Actual End, so US-4.3 adds no backend endpoint, persistence field, migration, or summary-specific production query. Edit Project reuses a fresh cached WBS tree or invokes the existing WBS read; its summary region owns local loading/error/Retry without blocking Project form draft or Save/Cancel. Existing Project `startDate`/`endDate` are not sufficient inputs for the two separate timeline summaries. The summary is not stored as an independent confirmed copy; it is derived again from the current confirmed roots/subtree. Existing versioned WBS cache invalidation prevents an older tree response from restoring stale summary values after a mutation. The WBS application gateway exposes an intentional confirmed-change subscription implemented by the shared projection clock, so open Group and Project summaries can request the same versioned tree again without presentation code importing infrastructure internals. Rollback-only Task schedule previews and unsaved drafts are deliberately excluded.
+The existing per-Project WBS tree contract already carries `children`, Effort, both timeline pairs, Actual Start, and Actual End, so US-4.3 adds no backend endpoint, persistence field, migration, or summary-specific production query. Edit Project reuses a fresh cached WBS tree or invokes the existing WBS read; its summary region owns local loading/error/Retry without blocking Project form draft or Save/Cancel. Existing Project `startDate`/`endDate` are not sufficient inputs for the two separate timeline summaries. The summary is not stored as an independent confirmed copy; it is derived again from the current confirmed roots/subtree. Existing versioned WBS cache invalidation prevents an older tree response from restoring stale summary values after a mutation. The WBS application gateway exposes an intentional confirmed-change subscription implemented by the shared projection clock, so open Group and Project summaries can request the same versioned tree again without presentation code importing infrastructure internals. Rollback-only Task schedule previews and unsaved drafts are deliberately excluded.
 
 The Dependency feature stores one directed Finish-to-Start relation between
 two executable WBS Tasks. Relations may cross active Projects, but Groups and
@@ -463,44 +485,140 @@ not require an application restart.
 - Current hash-based navigation and custom request cache are implementation
   choices, not requirements of the reusable frontend architecture.
 
-## Reopen completed Task
+## Actual Date and Reopen completed Task target contract
 
-`US-4.2` keeps Task as an Executable WBS and adds one explicit exception to the
-normal completed-task read-only invariant. The dedicated command is
-`POST /api/projects/{projectId}/wbs/{wbsId}/reopen`; generic executable update
-continues to reject completed Tasks and cannot clear Actual End.
+US-6.2 replaces Actual End-only completion with a complete Actual Date pair.
+The WBS persistence target therefore stores nullable `actual_start` and
+`actual_end` with a pair invariant: both null or both non-null, and
+`actual_start <= actual_end`. Completion command writes both fields together.
+Reopen command clears both fields together; generic Task update cannot bypass
+either command.
 
-The WBS repository executes Reopen in one GORM transaction. It reads the scoped
-Task snapshot, locks the owning Project, rejects Closed Projects and non-leaf or
-unfinished WBS state, then conditionally updates by `id`, `project_id`, and
-`actual_end IS NOT NULL`. A request that initially sees unfinished state returns
-`TASK_NOT_COMPLETED`; a request that saw completed state but loses the
-conditional transition returns `TASK_REOPEN_CONFLICT`. Exactly one successful
-completed-to-unfinished transition invokes `RecalculateProjectForecast` inside
-the transaction. Forecast failure rolls back Actual End and Updated At. Reopen
-never invokes full schedule recalculation and never updates Project status,
-Execution or Commitment timelines, or locked baselines.
+Actual Allocation is a separate daily projection keyed by Task, Assignee, Date,
+and projection kind. Execution, Commitment, and Actual allocation rows remain
+separately queryable. For completed Tasks, Actual Allocation is the sole
+capacity-consuming reservation used by future recalculation; Execution and
+Commitment rows remain planning/baseline evidence and are not double-counted.
+One canonical Actual row set supports both Task-centric and assignee-centric
+queries.
 
-Dependency rows are not written or revalidated because Task identity and graph
-endpoints do not change. Dependency projections continue to derive completed
-state from the current persisted Actual End. The frontend invalidates the
-project WBS tree and all dependency-detail caches after confirmed success;
-versioned request caches prevent older in-flight WBS or dependency responses
-from becoming cached confirmed state. Current Task detail is replaced directly
-from the confirmed response, so Project Structure updates without a browser hard
-reload. Concrete Forecast, Delivery Impact, Health, and Gantt frontend stores do
-not yet exist; their concrete invalidation remains deferred while the established
-Forecast coordination contract is preserved.
+Actual Date/Reopen commands run impact simulation before persistence. The
+preview is version-bound and returns affected Project names grouped by Open and
+Locked. Open-only impact requires confirmation. Ordinary mutation with Locked
+impact is rejected. Actual Date is the factual-data exception: after grouped
+confirmation it persists while Locked Projects remain immutable and impacted
+Open Projects recalculate. Reopen Task is not an exception and remains blocked
+by impacted Locked Projects.
 
-### Reopen query review
+Project Reopen calculates a transitive Required Locked Reopen Closure. Mutual
+A/B or transitive A/B/C lock dependencies are presented as one `Reopen All`
+operation. Closure status changes, unfinished scheduling, dependency
+reconciliation, allocation persistence, and version changes are atomic. Stale
+preview, optimistic conflict, or persistence failure leaves all statuses and
+projections unchanged.
 
-The transition query shape is a primary-key lookup scoped by Project followed by
-a conditional update with `id = ? AND project_id = ? AND actual_end IS NOT
-NULL`. PostgreSQL serialises competing commands through the owning Project row
-lock and the conditional Task update. SQLite automated contract tests rely on
-the same conditional predicate; SQLite lock/busy errors during the competing
-transition are mapped to the deterministic conflict error. The primary-key
-predicate limits cardinality to at most one Task, and the Project lookup also
-uses its primary key. No migration or new index is justified: an additional
-Actual End index would add write cost without improving a primary-key point
-mutation.
+### Query and index review target
+
+- Completion/Reopen point mutation uses primary-key plus Project scope and a
+  pair-state predicate; cardinality remains at most one Task.
+- Actual Allocation lookup requires Task/date and assignee/date access paths so
+  both read models avoid full scans.
+- Impact preview/confirm uses schedule/status versions rather than trusting a
+  client-provided Project list.
+- Allocation writes and affected schedule rows share one transaction boundary.
+- Exact index design must follow measured PostgreSQL query shapes before
+  implementation; this requirement does not authorize speculative indexes.
+
+## Home Portfolio Gantt target contract
+
+US-7.1 adds a Home feature boundary as the default frontend composition. Home is
+a portfolio read workspace, not a new WBS or scheduler aggregate. The left grid
+renders selected active Project/WBS rows, while the right timeline renders
+read-only daily Execution or Commitment bars and effective dependency arrows.
+Project Structure remains available. Add Task, Add Child, Project edit, and
+Task/Group edit must reuse existing application use cases and dialogs so Home
+does not fork validation, impact preview, transaction, or rollback behaviour.
+
+The Home read path requires a dedicated portfolio projection or equivalent
+bounded set-based composition. It must return stable Project/WBS identities,
+ordered hierarchy, assignee display data, effort minutes, both approved planning
+date pairs (or a version-safe projection-specific equivalent), unscheduled
+state, effective dependency endpoint pairs, Project/schedule versions, and
+Public Holidays for the rendered range. The implementation must avoid
+per-Project, per-Task, per-dependency, and per-date N+1 requests. Exact endpoint
+naming is local design; observable ordering, version safety, date-only mapping,
+and query-plan review are mandatory.
+
+WBS numbers in Home are derived presentation values. Project is level `0` but
+its WBS cell is blank; descendant numbering restarts at `1` inside each Project.
+Project and Group dates and known Effort use the same recursive confirmed-task
+semantics as US-4.3 and are not persisted as new writable aggregate columns.
+The daily timeline includes weekends and Public Holidays. Its first header row
+counts working dates from the earliest scheduled Start of the selected
+Execution/Commitment projection; pre-anchor and non-working cells remain blank.
+
+The frontend must use bounded row/date rendering. A naive permanent
+`visible rows × visible dates` interactive DOM matrix is not acceptable for
+large portfolios or multi-year daily ranges. Grid and timeline vertical scroll,
+row heights, expansion, focus, and stale-response handling must remain
+synchronized. Dependency geometry is computed only for visible renderable
+endpoints. Home participates in the existing schedule projection clock or an
+equivalent shared version boundary; it must not introduce an independent cache
+version that can disagree with Project, WBS, or Dependency gateways.
+
+Saved filters are a small global backend aggregate because authentication and
+user identity are absent. Persist ID, normalized case-insensitive unique Name,
+selected Project IDs, timestamps, and Version. Empty selections are valid.
+Save and Delete use simple optimistic concurrency. Opening a filter intersects
+stored IDs with current Open/Locked Projects; Closed/deleted IDs are silently
+omitted and are removed on Save or Save As. The UI lists names only and does not
+need merge or ownership semantics.
+
+### Home Gantt query and index review target
+
+- Portfolio reads must preserve authoritative Project priority and recursive WBS
+  order without issuing one query per selected Project or Task.
+- Dependency and assignee projection must be fetched or joined in bounded sets.
+- Holiday range access must use date-bounded query paths.
+- Saved-filter normalized Name requires measured uniqueness/index support;
+  update/delete use ID plus Version point predicates.
+- PostgreSQL plans must be reviewed against realistic selected-Project, WBS,
+  dependency, and date-range cardinality before implementation completion.
+- Do not add speculative indexes without a production query shape and plan
+  evidence.
+
+### Home Gantt implemented query/index evidence
+
+The MVP implementation uses a bounded set-based read path: one ordered active or
+selected Project query, one WBS query joined to Team Member for all selected
+Project IDs, one dependency query joining both endpoint Tasks for those Project
+IDs, and one date-bounded Public Holiday query. Saved-filter reads and writes are
+separate point/list operations. The HTTP contract rejects more than 100 selected
+Projects and more than 730 inclusive calendar days, so the repository never
+expands into an unbounded Project-by-date request. No query is issued per Project,
+Task, dependency, or date.
+
+The reviewed index mapping is:
+
+- `projects_active_priority_idx` supports active Project ordering by priority;
+  the primary key resolves selected ID sets.
+- `wbs_nodes_project_tree_idx (project_id, parent_key, position, id)` supports
+  the selected-Project hierarchy read and deterministic recursive composition.
+- `task_dependencies_blocking_task_id_idx` and
+  `task_dependencies_blocked_task_id_idx` support both joined endpoint filters.
+- `public_holiday_dates_date_uidx (date)` supports the bounded holiday range.
+- `portfolio_saved_filters_name_unique` enforces normalized Name uniqueness,
+  while the primary key plus Version predicate protects update/delete and
+  `portfolio_saved_filters_order_idx` supports deterministic listing.
+- `task_schedule_allocations` primary key `(task_id, timeline, allocation_date)`
+  supports Task-centric allocation reads, and
+  `task_schedule_allocations_member_date_idx` supports assignee/timeline/date
+  capacity composition.
+
+No additional speculative index is introduced. PostgreSQL plan execution remains
+part of local validation. Run representative `EXPLAIN (ANALYZE, BUFFERS)` for the
+query shapes above after loading realistic Project/WBS/dependency/date-range
+cardinality. The expected success criterion is indexed restriction/order where
+applicable, no per-row nested application query, and no sequential scan caused by
+an absent required index on realistically selective predicates. Status:
+`AUTHORED — NOT RUN — LOCAL VALIDATION REQUIRED`.

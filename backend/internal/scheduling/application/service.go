@@ -1,9 +1,14 @@
 package application
 
-import "context"
+import (
+	"context"
+
+	"github.com/banggok/sched_mind/backend/internal/shared/schedulingimpact"
+)
 
 type Store interface {
 	RecalculatePortfolio(context.Context, []string) error
+	RecalculateMemberSchedule(context.Context, string) error
 	MarkProjectUnscheduled(context.Context, string, string) error
 }
 
@@ -14,11 +19,19 @@ type Service struct {
 func NewService(store Store) *Service { return &Service{store: store} }
 
 func (service *Service) RecalculateActiveProjects(ctx context.Context) error {
+	enabled, ownerProjectID, _, _ := schedulingimpact.Operation(ctx)
+	if enabled && ownerProjectID != "" {
+		return service.store.RecalculatePortfolio(ctx, []string{ownerProjectID})
+	}
 	return service.store.RecalculatePortfolio(ctx, nil)
 }
 
 func (service *Service) RecalculateProjectSchedule(ctx context.Context, projectID string) error {
 	return service.store.RecalculatePortfolio(ctx, []string{projectID})
+}
+
+func (service *Service) RecalculateMemberSchedule(ctx context.Context, memberID string) error {
+	return service.store.RecalculateMemberSchedule(ctx, memberID)
 }
 
 func (service *Service) MarkProjectUnscheduled(ctx context.Context, projectID, reason string) error {

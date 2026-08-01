@@ -1,5 +1,13 @@
 # US-6.1 — Automatic Execution and Commitment Scheduling
 
+> **Product decision update — US-7.1:** Home Portfolio Gantt is a read-only
+> consumer of confirmed Execution/Commitment dates, unscheduled state,
+> dependencies, and schedule versions. Projection switching or timeline range
+> changes never invoke this scheduler; mutations opened from Home continue
+> through the existing owning use cases and US-6.2 impact coordination.
+
+> **Product decision update — US-6.2:** Actual Date range, Open timeline actualization, Actual Allocation, historical overcapacity, Locked Project immutability, generic cross-project impact warning/confirmation, capacity-setting impact, atomic bulk Project Reopen, transitive impacted-scope recalculation, and Priority validation around Locked Projects are owned by US-6.2 and supersede contradictory wording in this story.
+
 ## 1. User Story
 
 **Sebagai** Engineering Lead,
@@ -56,7 +64,9 @@ Rule baru:
 
 ```text
 Resolved Daily Capacity
-= Public Holiday / Capacity Override / Daily Capacity result
+= Public Holiday `0`
+  / minimum active Capacity Override for the Member and Date
+  / Daily Capacity when no override applies
 
 Execution Capacity
 = MROUND(
@@ -112,14 +122,15 @@ Execution Capacity dan Commitment Capacity masing-masing dibulatkan sekali ke ke
 | Blocking Task           | Task yang harus selesai lebih dahulu                                                                                                       |
 | Blocked Task            | Task yang menunggu blocker                                                                                                                 |
 | Lag                     | Non-negative integer pada Task yang menunda earliest start dalam satuan hari kalender, kemudian tunduk pada availability harian            |
-| Resolved Daily Capacity | Kapasitas sebelum buffer setelah precedence Public Holiday, Capacity Override, dan Daily Capacity                                          |
+| Resolved Daily Capacity | Kapasitas sebelum buffer: weekend/Public Holiday `0`; otherwise minimum active Capacity Override per Member/Date; otherwise Daily Capacity |
 | Execution Capacity      | Resolved Daily Capacity setelah Member Buffer                                                                                              |
 | Commitment Capacity     | Resolved Daily Capacity setelah Member Buffer dan Project Buffer, lalu dibulatkan ke kelipatan `0.5` jam                                     |
 | Remaining Capacity      | Kapasitas Task assignee yang belum terpakai pada satu Date dan timeline tertentu                                                           |
 | Contiguous Allocation   | Task yang sudah mulai terus dialokasikan pada setiap Date eligible berikutnya sampai Effort selesai; Task tidak dihentikan untuk Task lain |
 | Preemption              | Menghentikan Task yang sudah mulai, menjalankan Task lain, lalu melanjutkan Task pertama                                                   |
 | Scheduling Anchor       | Project Scheduling Start Date                                                                                                              |
-| Active Portfolio        | Seluruh Open dan Locked Project; Closed Project tidak termasuk                                                                             |
+| Active Portfolio        | Seluruh Open dan Locked Project yang dapat menjadi scheduling input; only Open unfinished Tasks are mutable scheduler output, Locked Projects are immutable anchors, and Closed Projects are excluded |
+| Impacted Scheduling Scope | Project awal dan Open Projects yang benar-benar terdampak secara transitif melalui shared capacity, dependency, priority competition, atau approved scheduling constraints |
 
 ---
 
@@ -162,7 +173,9 @@ Execution Capacity dan Commitment Capacity masing-masing dibulatkan sekali ke ke
 - Gantt drag scheduling.
 - What-if simulation.
 - Bulk schedule override.
-- Automatic scheduler run setelah Capacity Override atau Public Holiday mutation; latest confirmed data digunakan pada scheduler run berikutnya sesuai owning stories.
+- Capacity Override/Public Holiday CRUD ownership dan impact-preview UI;
+  owning stories dan US-6.2 menentukan mutation coordination, sedangkan story
+  ini hanya memiliki capacity resolution dan allocation algorithm.
 - Permission model baru.
 
 ---
@@ -186,7 +199,7 @@ Rules:
 - Lag tidak mengubah Effort.
 - Lag tidak membuat dependency relation baru dengan sendirinya.
 - Lag tetap tersimpan ketika Automatic Scheduling OFF tetapi tidak mengubah manual timeline.
-- Completed Task tetap read-only; Lag tidak dapat diubah melalui generic update setelah Actual End tersedia.
+- Completed Task tetap read-only; Lag tidak dapat diubah melalui generic update setelah complete Actual Date tersedia.
 
 ### 6.2 Dependency Ownership
 
@@ -256,9 +269,11 @@ Successful confirmed mutations berikut menjalankan portfolio recalculation sesua
 
 Create root atau child yang hanya menyimpan Name, tidak mengonversi Executable WBS existing, dan tidak memindahkan dependency endpoint tidak menjalankan scheduler. Mutation tersebut menyimpan Task baru dengan generated Execution dan Commitment dates kosong. Scheduler baru berjalan ketika mutation berikutnya mengubah scheduling input yang telah menjadi trigger, seperti Assignee, Effort, atau Lag, atau ketika create sekaligus melakukan structural conversion yang memengaruhi scheduling. Keberadaan completed Task pada Project tidak mengubah rule ini.
 
+Delete unfinished leaf juga menggunakan scheduling-impact boundary. Delete tidak menjalankan scheduler jika Task hanya memiliki Name atau Role, Lag tetap default `0`, tidak mempunyai generated Execution/Commitment state atau automatic unscheduled projection, dan tidak menjadi endpoint dependency. Delete tetap menjalankan affected-scope scheduling ketika Task memiliki Assignee, Effort, non-zero Lag, generated state, automatic unscheduled projection, atau dependency endpoint. Sibling position compaction setelah pure structural delete tidak mengubah relative order Task yang tersisa. Keberadaan completed Task lain pada Project tidak mengubah rule ini.
+
 Rename dan Role-only change tetap tidak menjalankan scheduler bila tidak mengubah Assignee.
 
-Actual End dan Reopen Task tetap mengikuti Forecast coordination contract masing-masing. Story ini tidak mengubah direct side effect mereka menjadi full Execution/Commitment recalculation.
+Complete Actual Date is a scheduling trigger owned by US-6.2. On Open Project it actualizes Execution/Commitment and persists Actual Allocation. On Locked Project it preserves protected baseline but persists Actual Allocation. In both cases, impacted Open Projects may be recalculated. Factual Actual Date remains saveable even when another Locked Project is impacted. Reopen Task remains governed by US-4.2 and is available only while the Project is Open.
 
 ### 7.2 Automatic Scheduling OFF
 
@@ -270,15 +285,19 @@ Actual End dan Reopen Task tetap mengikuti Forecast coordination contract masing
 
 ### 7.3 Capacity and Holiday Mutation
 
-Capacity Override dan Public Holiday mutation tidak otomatis menjalankan scheduler, mengikuti owning stories.
+Daily Capacity, Member Buffer, Public Holiday, Project Buffer, and other effective capacity-setting mutations follow US-6.2 generic impact simulation. Capacity Override create/update/delete follows the same guard only when the before/after minimum active override changes Resolved Daily Capacity on at least one Date. Open-only impact requires confirmation; any ordinary Locked impact blocks save; confirmed allowed mutation recalculates only transitive impacted Open Projects.
 
-Pada scheduler run berikutnya, engine wajib menggunakan latest confirmed:
+Pada impact preview dan confirmed recalculation, engine wajib menggunakan
+latest confirmed:
 
 - Public Holiday.
-- Capacity Override.
-- Daily Capacity.
-- Member Buffer.
+- seluruh active Capacity Override dan minimum per Member/Date;
+- Daily Capacity;
+- Member Buffer;
 - Project Buffer.
+
+Capacity Override mutation yang tidak mengubah resolved minimum pada Date mana
+pun tidak memanggil scheduler sesuai US-2.1 dan US-6.2.
 
 ---
 
@@ -289,7 +308,7 @@ Pada scheduler run berikutnya, engine wajib menggunakan latest confirmed:
 Task dapat menerima generated dates jika:
 
 - berupa Executable WBS;
-- unfinished (`Actual End == null`);
+- unfinished (no complete Actual Date pair);
 - mempunyai Assignee;
 - mempunyai valid Effort;
 - mempunyai valid Lag;
@@ -330,31 +349,30 @@ Automatic Scheduling requires a Project Scheduling Start Date.
 
 #### Open
 
-- Execution dan Commitment dates boleh dihitung ulang dan disimpan.
-- Auto Dependency boleh dihitung ulang.
+- Unfinished eligible Tasks may be recalculated.
+- Actual Date actualizes completed Task timelines and Actual Allocation according to US-6.2.
+- Recalculation is limited to the transitive impacted scheduling scope.
 
 #### Locked
 
-- Project tetap termasuk Active Portfolio dan tetap mengonsumsi kapasitas pada locked baseline.
-- Locked Execution dan Commitment dates tidak boleh berubah.
-- Locked allocations diperlakukan sebagai fixed reservations saat menjadwalkan Open Projects.
-- Planning mutation tetap mengikuti lifecycle contract, tetapi story ini tidak membuka Locked menjadi Open.
-- Forecast remains separately dynamic.
+- Locked Project is never a mutable Execution/Commitment scheduler output.
+- Persisted Execution/Commitment dates and allocations are immutable anchors.
+- Actual Date may be entered without changing the protected baseline; its Actual Allocation may trigger recalculation of impacted Open Projects.
+- Planning changes require explicit Project Reopen to Open.
 
 #### Closed
 
-- Project dan Task dikeluarkan dari scheduling allocation.
-- Tidak ada generated date atau auto-dependency mutation baru.
+- Closed Project is excluded from scheduling output and capacity allocation.
+- Existing historical dependency may remain readable according to US-5.1.
 
 ### 8.4 Completed Task
 
-- Completed Task ditentukan hanya oleh `Actual End`.
-- Completed Task tidak dijadwalkan ulang.
-- Existing Execution dan Commitment dates tetap.
-- Completed blocker menggunakan Actual End sebagai dependency-ready anchor.
-- Completed Task tidak mengonsumsi future capacity setelah Actual End.
-
----
+- Complete Actual Date is the authoritative completion state; Actual End is the dependency-ready Date.
+- On Open Project, completed timeline actualization and Actual Allocation follow US-6.2.
+- Historical overcapacity is valid, remaining capacity is floored at zero, and excess is not carried to later Dates.
+- Completed Task is never rescheduled as unfinished work.
+- On Locked Project, Actual Date changes no protected Execution/Commitment dates or baseline allocations; Actual Allocation is recorded separately and affects impacted Open capacity.
+- `end before start` caused by Actual Date preceding a former Start must be actualized under US-6.2, not treated as data-integrity conflict.
 
 ## 9. Capacity Resolution
 
@@ -366,10 +384,14 @@ Precedence:
 
 1. Weekend default → `0`.
 2. Public Holiday → `0`.
-3. Capacity Override bila tersedia.
-4. Team Member Daily Capacity.
+3. Jika satu atau lebih Capacity Override aktif untuk Member dan Date tersebut →
+   gunakan Capacity terkecil dari seluruh active overrides.
+4. Jika tidak ada active override → gunakan Team Member Daily Capacity.
 
 Public Holiday dan weekend tidak dapat dibuat available oleh Capacity Override.
+Minimum dipilih hanya antar active overrides; Daily Capacity tidak menjadi cap
+ketika override berlaku. Hasil ini merupakan base sebelum Member Buffer dan
+Project Buffer.
 
 ```text
 ResolvedDailyCapacity(member, date)
@@ -544,7 +566,7 @@ Satu Lag berlaku satu kali terhadap calculated readiness Task, walaupun Task mem
 
 For a Task with one or more blockers:
 
-1. Tentukan controlling predecessor End/Actual End paling akhir.
+1. Tentukan controlling predecessor planned End atau completed Actual End paling akhir.
 2. Tentukan earliest candidate berdasarkan Lag:
 
 ```text
@@ -685,7 +707,7 @@ Execution scheduler harus:
 1. Load seluruh Active Portfolio input yang diperlukan.
 2. Treat Locked allocations as fixed reservations.
 3. Exclude Closed Projects.
-4. Exclude completed Tasks from recalculation while retaining Actual End dependency anchors.
+4. Exclude completed Tasks from unfinished recalculation while retaining Actual End readiness anchors and Actual Allocation capacity consumption.
 5. Resolve manual dependency graph and reject cycle.
 6. Build ready set using Project anchors, dependency readiness, and Lag.
 7. For each assignee, select next ready Task by Project Priority then WBS order.
@@ -744,6 +766,16 @@ Locked Commitment baseline remains immutable and acts as fixed reservation where
 
 ### 16.1 Atomic Confirmed Mutation
 
+US-6.2 adds these mandatory distinctions:
+
+- valid inability to schedule is persisted as `Unscheduled + Reason`, not returned as scheduler failure;
+- historical completed overcapacity is valid and is not repaired or rejected;
+- Locked→Open Reopen commits status plus transitive impacted-scope recalculation atomically;
+- technical/integrity/concurrency failure rolls Reopen back to Locked;
+- unrelated Projects outside the impacted scope are neither recalculated nor version-updated;
+- priority mutation is rejected atomically when any Locked Project would be affected.
+
+
 For a mutation that requires scheduling, confirmed operation must be atomic across:
 
 - owning Task/WBS change;
@@ -785,7 +817,7 @@ Successful scheduling invalidates or version-updates:
 - candidate lookup.
 - Project list derived dates.
 - Execution and Commitment projections.
-- Gantt/workspace projections when available.
+- US-7.1 Home Portfolio Gantt confirmed read projection and invalidation.
 
 Older in-flight response must not restore previous Assignee, dependency, dates, or allocation as confirmed state.
 
@@ -971,7 +1003,12 @@ Error response must not expose implementation internals.
 **Then** Resolved Daily Capacity is `0` despite Capacity Override.
 
 **Given** a working Date is not Public Holiday
-**Then** Capacity Override is used when present; otherwise Daily Capacity is used.
+**And** one or more Capacity Overrides are active for the Member
+**Then** the smallest override Capacity is used as Resolved Daily Capacity
+**And** Daily Capacity is not compared as a cap.
+
+**Given** no Capacity Override is active
+**Then** Team Member Daily Capacity is used.
 
 ### AC-6 — Execution Capacity formula
 
@@ -1128,7 +1165,7 @@ For `8`, `30%`, and `20%`, Raw Commitment is `4.48` and rounded Commitment is `4
 
 **Given** Automatic Scheduling ON
 **When** manual dependency is created or deleted successfully
-**Then** effective graph and affected portfolio dates are recalculated atomically.
+**Then** effective graph and transitive impacted-scope dates are recalculated atomically.
 
 ### AC-28 — Lag and Effort mutation trigger scheduling
 
@@ -1145,30 +1182,47 @@ For `8`, `30%`, and `20%`, Raw Commitment is `4.48` and rounded Commitment is `4
 **And** generated Execution dan Commitment dates Task baru tetap kosong
 **And** existing Task, dependency, allocation, dan timeline tidak berubah.
 
-**When** create child mengonversi Executable WBS existing dan memindahkan executable data atau dependency endpoint, atau established reorder/move/delete/conversion atau Project Priority Move berhasil
+**When** create child mengonversi Executable WBS existing dan memindahkan executable data atau dependency endpoint, atau established reorder/move/conversion atau Project Priority Move berhasil
 **Then** concrete portfolio scheduling tetap berjalan sesuai affected scope.
+
+**When** unfinished Name-only atau Role-only leaf tanpa dependency dihapus
+**Then** delete berhasil tanpa concrete portfolio scheduler
+**And** remaining Task, dependency, allocation, dan timeline state tidak berubah.
+
+**When** deleted Task mempunyai Assignee, Effort, non-zero Lag, generated projection, automatic unscheduled projection, atau dependency endpoint
+**Then** concrete portfolio scheduling tetap berjalan sesuai affected scope
+**And** scheduler failure me-rollback delete secara atomik.
 
 ### AC-30 — Completed Task behaviour
 
-**Given** Task has Actual End
-**When** scheduler runs
-**Then** Task dates are not recalculated
-**And** Actual End is used as dependency-ready anchor
-**And** Task consumes no capacity after Actual End.
+**Given** complete Actual Date is entered on an Open unfinished Task
+**Then** both timeline Ends become Actual End
+**And** each Start becomes the earlier of existing Start and Actual Start
+**And** completed Effort remains historical capacity consumption
+**And** overcapacity is valid and not carried to the next Date.
 
-### AC-31 — Locked and Closed Project behaviour
+### AC-31 — Locked Project behaviour
 
-**Given** Locked Project
-**Then** locked Execution and Commitment dates remain unchanged and constrain available capacity.
+**Given** Project Locked
+**Then** Execution/Commitment dates and allocations are immutable
+**And** scheduler never mutates the Locked Project for planning or Actual Date mutation
+**And** Actual Date may be entered without changing baseline
+**And** Actual Allocation may recalculate impacted Open Projects
+**And** every other planning/dependency/Task mutation is rejected until explicit Project Reopen.
 
-**Given** Closed Project
-**Then** its Tasks are excluded from scheduling and automatic dependency mutation.
+### AC-32 — Transitive impacted-scope recalculation
 
-### AC-32 — Portfolio-level recalculation
+**Given** Project A mutation/reopen affects B and B affects C
+**When** recalculation runs
+**Then** A, B, and C are recalculated where Open
+**And** unrelated Project D is not recalculated or version-updated
+**And** Locked Projects in the scope remain immutable anchors.
 
-**Given** shared Assignee or cross-project dependency affects multiple Projects
-**When** scheduling trigger succeeds
-**Then** all affected active Projects are recalculated consistently, not only the form's owning Project.
+### AC-32A — Priority change with Locked Projects
+
+**When** Project Priority changes while Locked Projects exist
+**Then** simulation proves no Locked timeline, allocation, or dependency-validity impact before Save
+**And** any Locked impact rejects the entire operation atomically.
 
 ### AC-33 — Independent Commitment schedule
 
@@ -1231,6 +1285,11 @@ For `8`, `30%`, and `20%`, Raw Commitment is `4.48` and rounded Commitment is `4
 | ID    | Scenario                                          | Expected Result                                                   |
 | ----- | ------------------------------------------------- | ----------------------------------------------------------------- |
 | TC-1  | Automatic Scheduling ON and Name-only Task create | Task persists; scheduler is not invoked; generated dates stay empty |
+| TC-1A | Open completion with Actual Start earlier/later than planned | Starts use earlier date; Ends use Actual End; no integrity conflict |
+| TC-1B | Actual Effort exceeds working-date capacity | Excess distributed per US-6.2; next Date has no debt carry-over |
+| TC-1C | Actual Date on Locked Task | Actual Date/Actual Allocation saved; baseline unchanged; impacted Open scope recalculated |
+| TC-1D | Locked→Open A impacts B impacts C | A/B/C recalculated; independent D untouched |
+| TC-1E | Priority would invalidate Locked successor | Entire priority change rejected |
 | TC-2  | Automatic Scheduling OFF and Task edit            | Manual dates unchanged; no auto dependency regeneration           |
 | TC-3  | Add Task form                                     | Lag defaults `0`                                                  |
 | TC-4  | Valid Lag save                                    | Integer persists                                                  |
@@ -1238,7 +1297,8 @@ For `8`, `30%`, and `20%`, Raw Commitment is `4.48` and rounded Commitment is `4
 | TC-6  | Missing Scheduling Start Date                     | Dates empty; approved warning                                     |
 | TC-7  | Weekend with override                             | Capacity remains `0`                                              |
 | TC-8  | Public Holiday with override                      | Capacity remains `0`                                              |
-| TC-9  | Working Date with override                        | Override used                                                     |
+| TC-9  | Working Date with multiple overrides `12`, `6`, `0` | Minimum `0` used as pre-buffer base                           |
+| TC-9A | Working Date with override `12`, Daily Capacity `8` | Override `12` used; Daily Capacity is not a cap                 |
 | TC-10 | Working Date without override                     | Daily Capacity used                                               |
 | TC-11 | Capacity `8`, Member Buffer `30%`                 | Raw `5.6`; rounded Execution Capacity `5.5`                        |
 | TC-12 | Capacity `8`, Member Buffer `30%`, Project Buffer `20%` | Raw Commitment `4.48`; rounded Commitment Capacity `4.5`      |
@@ -1273,7 +1333,7 @@ For `8`, `30%`, and `20%`, Raw Commitment is `4.48` and rounded Commitment is `4
 | TC-41 | Effort change                                     | Daily allocation and downstream dates recalculated                |
 | TC-42 | WBS reorder                                       | Priority and affected schedule updated                            |
 | TC-43 | Project Priority move                             | Whole affected active portfolio recalculated                      |
-| TC-44 | Completed blocker                                 | Actual End anchors successor                                      |
+| TC-44 | Completed blocker                                 | Actual End anchors planned successor; historical Actual ranges may overlap |
 | TC-45 | Completed Task scheduler run                      | Completed dates unchanged; no future capacity                     |
 | TC-46 | Locked Project                                    | Baselines unchanged and reserved                                  |
 | TC-47 | Closed Project                                    | Excluded from allocation                                          |
@@ -1296,6 +1356,8 @@ For `8`, `30%`, and `20%`, Raw Commitment is `4.48` and rounded Commitment is `4
 | TC-64 | Save while preview is in flight                   | Preview is aborted; one confirmed mutation persists and schedules  |
 | TC-65 | Assignee explicitly cleared then blurred          | Preview API runs; stale automatic ownership is removed; Task shows missing-Assignee unscheduled projection |
 | TC-66 | Create child converts executable parent or retargets dependency | Concrete portfolio scheduler runs atomically; failure rolls back conversion |
+| TC-67 | Delete Name-only unfinished Task while Project also has completed Task | Task is deleted; scheduler is not invoked; completed and remaining Task state is unchanged |
+| TC-68 | Delete Task with scheduling state | Affected portfolio scheduler runs atomically; failure rolls back deletion |
 
 ---
 
@@ -1473,9 +1535,9 @@ implementation-specific record.
 8. Decimal business arithmetic is deterministic and not binary-float dependent.
 9. Daily allocation cannot overlap for one assignee.
 10. Non-preemption is enforced by production code and tests.
-11. Locked reservations cannot be overwritten.
-12. Closed and completed records are excluded correctly.
-13. Triggered mutation plus scheduling is atomic.
+11. Locked timelines and allocations cannot be overwritten; Locked Project has no mutable scheduler output.
+12. Completed records are historical anchors with Actual-End normalization, valid overcapacity, and no next-day debt; Closed Projects are excluded.
+13. Triggered mutation plus transitive impacted-scope scheduling is atomic.
 14. Schedule version/concurrency strategy prevents stale overwrite.
 15. Structured errors are stable and frontend-safe.
 16. Cache invalidation covers Task, dependency, Project, timeline, and workspace projections.
@@ -1502,7 +1564,10 @@ Implementation must assess and update:
   - non-preemption;
   - auto/manual dependency ownership;
   - transaction and concurrency strategy;
-  - Locked reservation treatment;
+  - Locked immutable-anchor and Actual End exception treatment;
+  - completed historical overcapacity and no carry-over;
+  - transitive impacted-scope traversal;
+  - Priority simulation and Locked-impact rejection;
   - cache/version strategy;
   - query/index strategy.
 - API documentation for Lag, generated dates, dependency source projection, unscheduled state, and structured errors.
@@ -1524,7 +1589,7 @@ Implementation must assess and update:
 - Effort, Lag, scheduling-relevant WBS mutation, and Project Priority mutation retain their established scheduler triggers. Name-only Task create is explicitly not a scheduling-relevant mutation.
 - Scheduler fills Execution Start/End.
 - Commitment Start/End are independently recalculated using lower Commitment Capacity.
-- Public Holiday/weekend → Capacity `0`; otherwise Capacity Override → Daily Capacity.
+- Public Holiday/weekend → Capacity `0`; otherwise minimum active Capacity Override per Member/Date → Daily Capacity when no override applies.
 - Execution Capacity applies Member Buffer.
 - Commitment Capacity applies Project Buffer after Member Buffer.
 - Example `8`, `30%`, `20%` produces Raw Execution `5.6`, rounded Execution `5.5`, Raw Commitment `4.48`, and rounded Commitment `4.5` hours/day.
@@ -1543,9 +1608,12 @@ Implementation must assess and update:
 - At most one auto blocker exists per Task; manual blockers may remain multiple.
 - Manual dependency semantics cannot be overwritten or deleted by Auto Dependency.
 - Auto Dependency uses Execution allocation; Commitment uses the resulting effective graph.
-- Scheduler is portfolio-level.
-- Completed Tasks remain fixed and use Actual End as dependency anchor.
-- Locked baselines remain fixed reservations.
+- Scheduler supports portfolio relationships but recalculates only the transitive impacted scheduling scope; unrelated Projects are not touched.
+- Completed Tasks use Actual End as dependency anchor and follow US-6.2 Actual Date/Actual Allocation rules.
+- Historical overcapacity is valid, floors remaining capacity at zero, and creates no next-day debt.
+- Locked Projects do not run Execution/Commitment scheduling; their baselines and allocations are immutable anchors.
+- Locked→Open is an explicit Project transition that recalculates affected unfinished work.
+- Every scheduling-impacting Task/capacity/priority mutation follows US-6.2 grouped impact guard; ordinary Locked impact blocks save, while factual Actual Date is the explicit exception.
 - Closed Projects are excluded.
 - Forecast remains outside this story.
 

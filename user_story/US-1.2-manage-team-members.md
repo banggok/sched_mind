@@ -5,6 +5,12 @@
 > Commitment Capacity also requires the owning Project Buffer. Scheduler-derived
 > Base Execution Capacity preserves the existing `0.5`-hour rounding rule after Member Buffer is applied.
 
+> **Product decision update — US-6.2:** Daily Capacity and Member Buffer are
+> scheduling-impacting mutations. Before confirmed save, the server simulates
+> transitive cross-project impact. Open-only impact requires grouped Project-name
+> confirmation and server revalidation. Any impacted Locked Project blocks the
+> change atomically. Independent Projects are not recalculated. Member Buffer does not alter Actual BAU Capacity; it remains an Execution/Commitment planning input.
+
 ## User Story
 
 **Sebagai** Engineering Lead,
@@ -40,6 +46,7 @@ Engineering Lead dapat:
 6. Menentukan Daily Capacity.
 7. Menentukan Buffer.
 8. Melihat Base Execution Capacity sebagai preview dari Daily Capacity dan Member Buffer.
+9. Meninjau grouped impacted Project warning sebelum menyimpan Daily Capacity atau Member Buffer yang memengaruhi schedule lain.
 
 ---
 
@@ -51,7 +58,7 @@ User story ini tidak mencakup:
 - Public Holiday.
 - Pengaturan kapasitas per hari tertentu.
 - Penugasan task kepada Team Member.
-- Menjalankan Scheduling Engine.
+- Concrete scheduling algorithm; this story only owns impact preview/confirmation coordination for capacity mutations.
 - Menampilkan hasil timeline.
 - Import atau sinkronisasi user dari sistem lain.
 - Authentication atau user account management.
@@ -96,8 +103,9 @@ Contoh:
 6
 ```
 
-Daily Capacity adalah kapasitas dasar sebelum precedence Public Holiday, Capacity
-Override, dan Member Buffer diterapkan oleh Scheduling Engine.
+Daily Capacity adalah kapasitas dasar sebelum precedence Public Holiday,
+minimum active Capacity Override per Member/Date, dan Member Buffer diterapkan
+oleh Scheduling Engine.
 
 ---
 
@@ -161,10 +169,14 @@ User story ini hanya mengelola kapasitas dasar Team Member.
 Pada saat scheduler dijalankan, capacity mengikuti urutan berikut:
 
 1. Public Holiday → Resolved Daily Capacity `0`.
-2. Jika bukan Public Holiday dan Capacity Override berlaku → gunakan override.
-3. Jika tidak → gunakan Team Member Daily Capacity.
-4. Terapkan Member Buffer dan pembulatan `0.5` jam → Execution Capacity.
-5. Untuk Commitment, terapkan Member Buffer dan owning Project Buffer ke Resolved Daily Capacity, lalu bulatkan final Commitment Capacity ke kelipatan `0.5` jam.
+2. Jika bukan Public Holiday dan satu atau lebih Capacity Override berlaku →
+   gunakan Capacity terkecil dari seluruh active overrides untuk Member/Date.
+3. Jika tidak ada active override → gunakan Team Member Daily Capacity.
+4. Override result merupakan base capacity, bukan final capacity.
+5. Terapkan Member Buffer dan pembulatan `0.5` jam → Execution Capacity.
+6. Untuk Commitment, terapkan Member Buffer lalu owning Project Buffer ke
+   Resolved Daily Capacity, kemudian bulatkan final Commitment Capacity ke
+   kelipatan `0.5` jam.
 
 Implementasi allocation dan timeline merupakan bagian dari US-6.1. Story ini
 hanya mengelola Daily Capacity dan Member Buffer sebagai scheduler input.
@@ -495,14 +507,15 @@ Buffer must be between 0 and less than 100
 
 ---
 
-## AC-16 — Perubahan capacity tersedia untuk scheduler
+## AC-16 — Perubahan capacity menggunakan impact guard
 
 **Given** Team Member digunakan sebagai assignee
 **When** Daily Capacity atau Buffer diperbarui
 **Then** nilai terbaru menjadi input yang digunakan pada scheduling berikutnya
-**And** scheduler tidak menggunakan Daily Capacity atau Member Buffer lama yang tersimpan atau ter-cache.
+**And** scheduler tidak menggunakan Daily Capacity atau Member Buffer lama yang tersimpan atau ter-cache
+**And** cross-project warning/blocking/revalidation follows US-6.2.
 
-User story ini tidak mewajibkan scheduler langsung dijalankan otomatis setelah update.
+Confirmed Daily Capacity or Member Buffer update follows US-6.2 impact preview/confirmation. After confirmation, the mutation and all allowed impacted Open-Project recalculation are persisted atomically; Locked impact blocks save.
 
 ---
 
@@ -1430,7 +1443,7 @@ Role ID pada request tidak tersedia.
 
 ---
 
-## TC-38 — Nilai capacity terbaru dibaca scheduler
+## TC-38 — Capacity update impact and latest value
 
 ### Precondition
 

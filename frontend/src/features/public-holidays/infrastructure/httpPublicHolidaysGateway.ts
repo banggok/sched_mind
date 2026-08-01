@@ -1,3 +1,5 @@
+import { schedulingImpactFetch } from "../../../shared/infrastructure/schedulingImpactFetch";
+import { advanceScheduleProjectionVersion } from "../../../shared/infrastructure/scheduleProjectionClock";
 import { RequestCache } from "../../../shared/infrastructure/RequestCache";
 import type { PublicHolidaysGateway } from "../application/publicHolidaysGateway";
 import type { PublicHoliday } from "../domain/publicHoliday";
@@ -64,22 +66,25 @@ export function createHTTPPublicHolidaysGateway(
       caches.set(key, cache);
       return cache.run(async () => {
         const payload = await read<ListDTO>(
-          await fetch(`${path}?${parameters}`),
+          await schedulingImpactFetch(`${path}?${parameters}`),
         );
         return { ...payload, items: payload.data.map(map) };
       }, signal);
     },
     async get(id) {
       return map(
-        (await read<ItemDTO>(await fetch(`${path}/${encodeURIComponent(id)}`)))
-          .data,
+        (
+          await read<ItemDTO>(
+            await schedulingImpactFetch(`${path}/${encodeURIComponent(id)}`),
+          )
+        ).data,
       );
     },
     async create(input) {
       const value = map(
         (
           await read<ItemDTO>(
-            await fetch(path, {
+            await schedulingImpactFetch(path, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify(input),
@@ -88,13 +93,14 @@ export function createHTTPPublicHolidaysGateway(
         ).data,
       );
       invalidate();
+      advanceScheduleProjectionVersion();
       return value;
     },
     async update(id, input) {
       const value = map(
         (
           await read<ItemDTO>(
-            await fetch(`${path}/${encodeURIComponent(id)}`, {
+            await schedulingImpactFetch(`${path}/${encodeURIComponent(id)}`, {
               method: "PUT",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify(input),
@@ -103,14 +109,19 @@ export function createHTTPPublicHolidaysGateway(
         ).data,
       );
       invalidate();
+      advanceScheduleProjectionVersion();
       return value;
     },
     async delete(id) {
-      const response = await fetch(`${path}/${encodeURIComponent(id)}`, {
-        method: "DELETE",
-      });
+      const response = await schedulingImpactFetch(
+        `${path}/${encodeURIComponent(id)}`,
+        {
+          method: "DELETE",
+        },
+      );
       if (!response.ok) await fail(response);
       invalidate();
+      advanceScheduleProjectionVersion();
     },
     async calendar(startDate, endDate) {
       const parameters = new URLSearchParams({ startDate, endDate });
@@ -119,7 +130,7 @@ export function createHTTPPublicHolidaysGateway(
       calendarCaches.set(key, cache);
       return cache.run(async () => {
         const payload = await read<{ data: string[] }>(
-          await fetch(`${path}/calendar?${parameters}`),
+          await schedulingImpactFetch(`${path}/calendar?${parameters}`),
         );
         return payload.data;
       });

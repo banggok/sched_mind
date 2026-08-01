@@ -450,8 +450,8 @@ function Field({
 function errorMessage(error: unknown) {
   if (typeof error === "object" && error && "code" in error) {
     const code = String(error.code);
-    if (code === "CAPACITY_OVERRIDE_OVERLAPS")
-      return "This period overlaps an existing capacity override.";
+    if (code === "CAPACITY_OVERRIDE_DUPLICATE")
+      return "An override with the same member, dates, and capacity already exists.";
     if (code === "TEAM_MEMBER_NOT_FOUND")
       return "This member is no longer available.";
     if (code === "CAPACITY_OVERRIDE_NOT_FOUND")

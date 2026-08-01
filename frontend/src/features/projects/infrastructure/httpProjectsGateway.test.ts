@@ -42,6 +42,7 @@ describe("HTTP projects gateway", () => {
     });
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/projects?search=al&page=1&pageSize=5",
+      expect.any(Object),
     );
     expect(result.items[0]).toMatchObject({
       name: "Alpha",

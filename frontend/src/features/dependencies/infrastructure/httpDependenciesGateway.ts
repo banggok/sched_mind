@@ -1,3 +1,4 @@
+import { schedulingImpactFetch } from "../../../shared/infrastructure/schedulingImpactFetch";
 import { RequestCache } from "../../../shared/infrastructure/RequestCache";
 import {
   advanceScheduleProjectionVersion,
@@ -34,7 +35,7 @@ export function createHTTPDependenciesGateway(
     path: string,
     init?: RequestInit,
   ): Promise<unknown> => {
-    const response = await fetch(`${baseURL}${path}`, init);
+    const response = await schedulingImpactFetch(`${baseURL}${path}`, init);
     if (!response.ok) {
       const body: unknown = await response.json().catch(() => undefined);
       throw mapError(body);

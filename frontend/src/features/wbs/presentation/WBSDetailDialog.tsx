@@ -8,6 +8,8 @@ import type { Role } from "../../roles/domain/role";
 import type { TeamMembersGateway } from "../../team-members/application/teamMembersGateway";
 import type { TeamMember } from "../../team-members/domain/teamMember";
 import type {
+  AllocationGroups,
+  AllocationRow,
   SchedulePreviewInput,
   WBSGateway,
 } from "../application/wbsGateway";
@@ -86,6 +88,7 @@ export function WBSDetailDialog({
     useState<DependencyDetail>();
   const [hasCurrentSchedulePreview, setHasCurrentSchedulePreview] =
     useState(false);
+  const [actualStart, setActualStart] = useState("");
   const [actualEnd, setActualEnd] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -128,10 +131,11 @@ export function WBSDetailDialog({
     },
     [],
   );
-  const completed = Boolean(node.executable.actualEnd);
-  const readOnly = completed || project.status === "closed";
-  const canReopen =
-    completed && (project.status === "open" || project.status === "locked");
+  const completed = Boolean(
+    node.executable.actualStart && node.executable.actualEnd,
+  );
+  const readOnly = completed || project.status !== "open";
+  const canReopen = completed && project.status === "open";
   const manual =
     project.status === "open" && !project.automaticScheduling && !completed;
   function markScheduleDraftChanged() {
@@ -296,11 +300,11 @@ export function WBSDetailDialog({
     }
   }
   async function complete() {
-    if (!actualEnd || busy) return;
+    if (!actualStart || !actualEnd || busy) return;
     setBusy(true);
     setError("");
     try {
-      await gateway.complete(project.id, node.id, actualEnd);
+      await gateway.complete(project.id, node.id, actualStart, actualEnd);
       onChanged("Task completed.");
     } catch (reason: unknown) {
       setError(
@@ -582,26 +586,29 @@ export function WBSDetailDialog({
             </div>
             {!completed && project.status !== "closed" ? (
               <div className="border-t border-border-subtle pt-4 md:col-span-2">
-                <CalendarPopover
-                  label="Actual End"
-                  buttonLabel={
-                    actualEnd ? formatDateOnly(actualEnd) : "Select date"
-                  }
-                  initialDate={actualEnd}
-                  instruction="Select the task completion date."
-                  selectedDates={actualEnd ? [actualEnd] : []}
+                <TaskTimelineCalendar
+                  label="Actual Date"
+                  startDate={actualStart}
+                  endDate={actualEnd}
                   disabled={busy}
                   loadPublicHolidayDates={loadPublicHolidayDates}
-                  onSelect={(date) => {
-                    setActualEnd(date);
-                    return true;
+                  onChange={(start, end) => {
+                    setActualStart(start);
+                    setActualEnd(end);
                   }}
                 />
+                {project.status === "locked" ? (
+                  <p className="mt-2 text-sm text-muted">
+                    Actual Date is the only Task field that remains writable
+                    while the Project is Locked. The locked planning baseline
+                    will not change.
+                  </p>
+                ) : null}
                 <Button
                   type="button"
                   className="mt-3"
                   loading={busy}
-                  disabled={!actualEnd}
+                  disabled={!actualStart || !actualEnd}
                   onClick={() => void complete()}
                 >
                   Mark completed
@@ -610,8 +617,9 @@ export function WBSDetailDialog({
             ) : completed ? (
               <div className="space-y-3 md:col-span-2">
                 <Alert tone="success">
-                  Completed on {formatDateOnly(node.executable.actualEnd!)}.
-                  Completed work is read-only for normal changes.
+                  Actual Date: {formatDateOnly(node.executable.actualStart!)} —{" "}
+                  {formatDateOnly(node.executable.actualEnd!)}. Completed work
+                  is read-only for normal changes.
                 </Alert>
                 {canReopen ? (
                   <Button
@@ -628,6 +636,12 @@ export function WBSDetailDialog({
               </div>
             ) : null}
           </form>
+          <CapacityAllocationSection
+            projectId={project.id}
+            taskId={node.id}
+            completed={completed}
+            gateway={gateway}
+          />
           {reopenOpen ? (
             <Dialog
               nested
@@ -648,12 +662,13 @@ export function WBSDetailDialog({
               >
                 <p>
                   <strong className="break-words">{node.name}</strong> was
-                  completed on {formatDateOnly(node.executable.actualEnd!)}.
+                  completed for {formatDateOnly(node.executable.actualStart!)} —{" "}
+                  {formatDateOnly(node.executable.actualEnd!)}.
                 </p>
                 <p className="text-sm text-muted">
-                  Reopening removes Actual End, returns the Task to unfinished,
-                  and may change Forecast dates. Execution and Commitment dates
-                  are preserved.
+                  Reopening removes both Actual Start and Actual End and returns
+                  the Task to unfinished. It is available only while the Project
+                  is Open.
                 </p>
               </div>
               {reopenError ? (
@@ -686,6 +701,157 @@ export function WBSDetailDialog({
       )}
     </Dialog>
   );
+}
+
+function CapacityAllocationSection({
+  projectId,
+  taskId,
+  completed,
+  gateway,
+}: {
+  projectId: string;
+  taskId: string;
+  completed: boolean;
+  gateway: WBSGateway;
+}) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [groups, setGroups] = useState<AllocationGroups>();
+
+  useEffect(() => {
+    if (!open) return;
+    const controller = new AbortController();
+    setBusy(true);
+    setError("");
+    void gateway
+      .allocations(projectId, taskId, controller.signal)
+      .then(setGroups)
+      .catch((reason: unknown) => {
+        if (!(reason instanceof DOMException && reason.name === "AbortError")) {
+          setError(
+            reason instanceof Error
+              ? reason.message
+              : "Capacity allocation could not be loaded.",
+          );
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setBusy(false);
+      });
+    return () => controller.abort();
+  }, [gateway, open, projectId, taskId]);
+
+  return (
+    <section className="mt-6 border-t border-border-subtle pt-5">
+      <button
+        type="button"
+        className="flex w-full items-center justify-between gap-3 text-left font-bold"
+        aria-expanded={open}
+        aria-controls={`capacity-allocation-${taskId}`}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <span>Capacity Allocation</span>
+        <span aria-hidden="true">{open ? "−" : "+"}</span>
+      </button>
+      {open ? (
+        <div id={`capacity-allocation-${taskId}`} className="mt-4 space-y-5">
+          <p className="text-sm text-muted">
+            Allocation dates are analytical capacity rows, not literal work
+            timestamps.
+          </p>
+          {busy ? <p role="status">Loading capacity allocation…</p> : null}
+          {error ? <Alert tone="danger">{error}</Alert> : null}
+          {groups && !busy ? (
+            <>
+              <AllocationTable
+                title="Execution Allocation"
+                rows={groups.execution}
+              />
+              <AllocationTable
+                title="Commitment Allocation"
+                rows={groups.commitment}
+              />
+              {completed ? (
+                <AllocationTable
+                  title="Actual Allocation"
+                  rows={groups.actual}
+                  actual
+                />
+              ) : null}
+            </>
+          ) : null}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function AllocationTable({
+  title,
+  rows,
+  actual = false,
+}: {
+  title: string;
+  rows: AllocationRow[];
+  actual?: boolean;
+}) {
+  return (
+    <section
+      aria-labelledby={`${title.replace(/\s+/g, "-").toLowerCase()}-title`}
+    >
+      <h4
+        id={`${title.replace(/\s+/g, "-").toLowerCase()}-title`}
+        className="font-bold"
+      >
+        {title}
+      </h4>
+      {rows.length === 0 ? (
+        <p className="mt-2 text-sm text-muted">No allocation rows.</p>
+      ) : (
+        <div className="mt-2 overflow-x-auto">
+          <table className="w-full min-w-[36rem] text-left text-sm">
+            <thead>
+              <tr className="border-b border-border-subtle">
+                <th className="py-2 pr-4">Date</th>
+                <th className="py-2 pr-4">Allocated</th>
+                <th className="py-2 pr-4">Capacity</th>
+                <th className="py-2">
+                  {actual ? "Remaining / overcapacity" : "Remaining"}
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr
+                  key={`${title}-${row.date}`}
+                  className="border-b border-border-subtle"
+                >
+                  <td className="py-2 pr-4">{formatDateOnly(row.date)}</td>
+                  <td className="py-2 pr-4">
+                    {formatMinutes(row.allocatedMinutes)}
+                  </td>
+                  <td className="py-2 pr-4">
+                    {formatMinutes(row.capacityMinutes)}
+                  </td>
+                  <td className="py-2">
+                    {row.overcapacityMinutes > 0
+                      ? `${formatMinutes(row.overcapacityMinutes)} overcapacity`
+                      : `${formatMinutes(row.remainingMinutes)} remaining`}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function formatMinutes(minutes: number): string {
+  const hours = minutes / 60;
+  return `${Number.isInteger(hours) ? hours : hours.toFixed(2)}h`;
 }
 
 function scheduleStatus(

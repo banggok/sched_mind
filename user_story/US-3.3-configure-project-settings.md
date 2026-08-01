@@ -1,5 +1,7 @@
 # US-3.3 — Configure Project Settings
 
+> **Product decision update — US-6.2:** Locked Project Settings are fully read-only. Planning changes require explicit Project Reopen (`Locked → Open`). Complete Actual Date remains a Task-level factual-data exception and does not make Settings editable. Daily Capacity, Member Buffer, Capacity Override, Public Holiday, Project Buffer, and other scheduling-impacting settings use the generic cross-project impact warning/blocking contract. Project Buffer affects Commitment only and does not alter Actual BAU Capacity. Forecast behavior while Locked is deferred.
+
 > **Product decision update — US-6.1:** Automatic Scheduling is the only
 > activation configuration for generated Execution/Commitment timelines and
 > Auto Dependency by Assignee. Member Buffer affects Execution Capacity; Project
@@ -168,9 +170,7 @@ Project Settings may be modified subject to validation.
 
 #### Locked
 
-Project Settings are visible and read-only. Locked Execution and Commitment
-baselines remain immutable. Forecast remains dynamic. Reopen Task under US-4.2
-does not make settings editable and does not change Project status.
+Project Settings are visible and read-only. Locked Execution/Commitment baseline remains immutable. Actual Date entry on an unfinished Task does not make settings editable; its Actual Allocation may recalculate impacted Open Projects under US-6.2. Reopen Task is unavailable while Locked; the Project must first use explicit `Locked → Open` Reopen. Forecast behavior while Locked is deferred.
 
 #### Closed
 
@@ -181,10 +181,11 @@ Project Settings are entirely read-only.
 - Toggle or field changes remain draft until Save.
 - Cancel restores confirmed values and sends no mutation.
 - OFF→ON requires confirmation.
-- With Scheduling Start Date configured, OFF→ON runs US-6.1 portfolio scheduling
-  as part of one atomic operation.
-- If settings persistence or scheduling fails, both are rolled back and confirmed
-  settings/timelines remain unchanged.
+- Every scheduling-impacting settings change runs US-6.2 transitive impact simulation.
+- Open-only cross-project impact requires grouped Project-name confirmation and server revalidation.
+- Any impacted Locked Project blocks the settings change atomically.
+- With Scheduling Start Date configured, confirmed OFF→ON runs US-6.1 scheduling for the allowed transitive impacted Open scope as part of one atomic operation.
+- If settings persistence, impact validation, or scheduling fails, all changes roll back and confirmed settings/timelines remain unchanged.
 - OFF→ON without Scheduling Start Date saves the settings, does not invoke
   scheduling, keeps generated dates empty, and displays the approved warning.
 
@@ -203,8 +204,8 @@ After confirmed Save:
 
 After confirmed Save with a valid anchor:
 
-- US-6.1 recalculates unfinished Tasks across the affected active portfolio.
-- Tasks with Actual End remain fixed.
+- US-6.1 recalculates unfinished Tasks only across the transitive impacted Open scope.
+- Tasks with complete Actual Date remain completed historical anchors.
 - Manual dates of unfinished Tasks are replaced by scheduler-generated dates.
 - Stored Project Buffer becomes active.
 - Auto Dependency is reconciled from confirmed Assignee, priority, WBS order,
@@ -212,8 +213,7 @@ After confirmed Save with a valid anchor:
 
 ### 5.10 Forecast
 
-Forecast is independent from Automatic Scheduling and always remains active.
-This story does not implement the Forecast algorithm.
+Forecast implementation remains outside this story. No Forecast behavior for Locked Projects may be inferred from earlier wording; it is deferred to its owning requirement.
 
 ---
 
@@ -260,7 +260,7 @@ This story does not implement the Forecast algorithm.
 19. Execution Capacity is rounded once to `0.5` hours before Project Buffer is applied.
 20. Execution and Commitment dates are read-only while Automatic Scheduling is ON.
 21. Manual Execution and Commitment dates are editable only while Automatic Scheduling is OFF and other lifecycle rules allow it.
-22. Forecast remains active regardless of Automatic Scheduling mode.
+22. Forecast implementation remains deferred; this story defines no Locked Project Forecast behavior.
 23. Locked Projects reject Project Settings updates without changing status.
 24. Closed Projects reject Project Settings updates.
 25. Project Name and settings share one Add/Edit form.
@@ -273,6 +273,8 @@ This story does not implement the Forecast algorithm.
 32. Project Summary is read-only, excluded from Project create/update payloads, and does not alter Open/Locked/Closed settings permissions.
 33. Project Summary local loading/failure/Retry preserves draft and does not block otherwise valid Save/Cancel.
 34. On narrow supported viewports the wide Edit Project dialog remains within viewport padding, summary sections stack in semantic order, and form actions remain reachable without horizontal scrolling.
+35. Scheduling-impacting Settings/Project Buffer changes use grouped cross-project impact warning, Locked blocking, server revalidation, and atomic transitive Open recalculation.
+36. Project Buffer does not alter Actual BAU Capacity.
 
 ---
 
@@ -316,7 +318,9 @@ commands.
 
 - Create Project using default settings.
 - Enable and disable Automatic Scheduling.
-- Change Scheduling Start Date and Project Buffer.
+- Change Scheduling Start Date and Project Buffer with no external impact.
+- Change Project Buffer impacting Open Projects and confirm grouped warning.
+- Change Project Buffer impacting a Locked Project and verify atomic rejection.
 - ON→OFF preserves generated dates as manual values.
 - OFF→ON with anchor runs concrete Execution/Commitment scheduling.
 - OFF→ON reconciles Auto Dependency.
@@ -339,8 +343,8 @@ commands.
 
 ### Regression
 
-- Forecast continues working.
-- Actual End Tasks remain fixed.
+- Forecast implementation remains deferred and no Locked behavior is asserted.
+- Tasks with complete Actual Date remain completed historical anchors.
 - Stored Project Buffer is reused after re-enabling.
 - Project Buffer never changes Execution Capacity.
 - Member Buffer affects both Execution and Commitment through the formula chain.
@@ -383,8 +387,8 @@ Update architecture, Project Settings, API, and Scheduling Engine documentation 
 - Commitment Capacity applies Project Buffer after Member Buffer.
 - Execution and Commitment Capacity are each rounded once, independently, after all buffers relevant to that timeline have been applied.
 - Automatic Scheduling OFF makes Execution and Commitment manual and pauses Auto Dependency reconciliation.
-- Forecast always remains active.
-- Tasks with Actual End remain fixed during OFF→ON recalculation.
+- Forecast behavior for Locked Projects is deferred.
+- Tasks with complete Actual Date remain completed historical anchors during OFF→ON recalculation.
 - Locked and Closed Projects cannot modify Project Settings.
 - Edit Project also composes the read-only US-4.3 whole-Project summary and uses the shared wide Dialog variant; Add Project omits summary.
 - Project Summary is excluded from Project mutation payloads and its loading/error state does not block settings Save/Cancel.

@@ -471,14 +471,14 @@ func TestPreviewExecutableScheduleRejectsUnavailableStateWithoutCallingScheduler
 			}).Error; err != nil {
 				t.Fatal(err)
 			}
-			var actualEnd *time.Time
+			var actualStart, actualEnd *time.Time
 			if tc.completed {
 				value := now.Add(-time.Hour)
-				actualEnd = &value
+				actualStart, actualEnd = &value, &value
 			}
 			if err := database.Create(&nodeModel{
 				ID: "task", ProjectID: "project", ParentKey: "", Name: "Task", NameKey: "task",
-				Position: 1, ActualEnd: actualEnd, CreatedAt: now, UpdatedAt: now,
+				Position: 1, ActualStart: actualStart, ActualEnd: actualEnd, CreatedAt: now, UpdatedAt: now,
 			}).Error; err != nil {
 				t.Fatal(err)
 			}

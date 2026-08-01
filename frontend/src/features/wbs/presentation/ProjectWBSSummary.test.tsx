@@ -17,6 +17,7 @@ function task(id: string, effortMinutes: number, actualEnd?: string): WBSNode {
       lagDays: 0,
       executionTimeline: { start: "2026-08-01", end: "2026-08-02" },
       commitmentTimeline: { start: "2026-08-01", end: "2026-08-03" },
+      actualStart: actualEnd,
       actualEnd,
     },
     children: [],

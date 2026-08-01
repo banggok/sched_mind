@@ -317,7 +317,7 @@ func TestCandidatesExcludeCompletedBlockedDirection(t *testing.T) {
 	repo, db := testRepository(t)
 	seedProjectAndTasks(t, db)
 	actual := time.Date(2026, 7, 27, 0, 0, 0, 0, time.UTC)
-	if err := db.Model(&taskModel{}).Where("id = ?", "b").Update("actual_end", actual).Error; err != nil {
+	if err := db.Model(&taskModel{}).Where("id = ?", "b").Updates(map[string]any{"actual_start": actual, "actual_end": actual}).Error; err != nil {
 		t.Fatal(err)
 	}
 	page, err := repo.Candidates(context.Background(), "a", domain.Blocks, "", 1, 5)
@@ -350,7 +350,7 @@ func TestDeleteRejectsCompletedBlockedHistory(t *testing.T) {
 
 	if err := db.Model(&taskModel{}).
 		Where("id = ?", "b").
-		Update("actual_end", actual).Error; err != nil {
+		Updates(map[string]any{"actual_start": actual, "actual_end": actual}).Error; err != nil {
 		t.Fatal(err)
 	}
 
@@ -862,7 +862,7 @@ func TestCreateAllowsCompletedTaskAsBlocker(t *testing.T) {
 	repo, db := testRepository(t)
 	seedProjectAndTasks(t, db)
 	actual := time.Date(2026, 7, 27, 0, 0, 0, 0, time.UTC)
-	if err := db.Model(&taskModel{}).Where("id = ?", "a").Update("actual_end", actual).Error; err != nil {
+	if err := db.Model(&taskModel{}).Where("id = ?", "a").Updates(map[string]any{"actual_start": actual, "actual_end": actual}).Error; err != nil {
 		t.Fatal(err)
 	}
 	created, err := repo.Create(
@@ -903,7 +903,7 @@ func TestCreateRejectsCompletedTaskAsBlockedTask(t *testing.T) {
 
 	if err := db.Model(&taskModel{}).
 		Where("id = ?", "b").
-		Update("actual_end", actual).Error; err != nil {
+		Updates(map[string]any{"actual_start": actual, "actual_end": actual}).Error; err != nil {
 		t.Fatal(err)
 	}
 
@@ -1057,13 +1057,14 @@ func TestCandidatesIncludeTasksFromAllActiveProjects(t *testing.T) {
 			Position:  1,
 		},
 		{
-			ID:        "beta-task",
-			ProjectID: "beta",
-			Name:      "Beta Blocker",
-			NameKey:   "beta blocker",
-			ParentKey: "",
-			Position:  1,
-			ActualEnd: &actualEnd,
+			ID:          "beta-task",
+			ProjectID:   "beta",
+			Name:        "Beta Blocker",
+			NameKey:     "beta blocker",
+			ParentKey:   "",
+			Position:    1,
+			ActualStart: &actualEnd,
+			ActualEnd:   &actualEnd,
 		},
 		{
 			ID:        "gamma-task",

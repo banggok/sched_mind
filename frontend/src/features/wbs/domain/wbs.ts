@@ -14,6 +14,7 @@ export interface WBSNode {
     commitmentTimeline: { start?: string; end?: string };
     executionUnscheduledReason?: string;
     commitmentUnscheduledReason?: string;
+    actualStart?: string;
     actualEnd?: string;
   };
   children: WBSNode[];

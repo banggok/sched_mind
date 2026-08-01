@@ -150,7 +150,7 @@ func (project *Project) ChangeStatus(target Status, hasLeaves, hasUnfinishedLeav
 	}
 	allowed := (project.Status == StatusOpen && target == StatusLocked) ||
 		((project.Status == StatusOpen || project.Status == StatusLocked) && target == StatusClosed) ||
-		(project.Status == StatusClosed && target == StatusOpen)
+		((project.Status == StatusClosed || project.Status == StatusLocked) && target == StatusOpen)
 	if !allowed {
 		return ErrStatusTransitionNotAllowed
 	}
@@ -173,6 +173,8 @@ func (project *Project) ChangeStatus(target Status, hasLeaves, hasUnfinishedLeav
 	}
 	if target == StatusOpen {
 		project.ClosedAt = nil
+		project.LockedExecutionSnapshot = nil
+		project.LockedCommitmentSnapshot = nil
 	}
 	project.Status, project.UpdatedAt = target, now
 	return nil

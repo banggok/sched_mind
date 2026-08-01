@@ -1,10 +1,22 @@
 # US-4.1 Manage WBS
 
+> **Product decision update — US-7.1:** Home Portfolio Gantt reuses the same
+> Project, Group, and Task forms and the same Add Task/Add Child application
+> flows as Project Structure. The Gantt grid, bars, and dependency arrows are
+> read-only; US-4.1 remains the owner of WBS mutation and conversion rules.
+
 > **Product decision updates — US-6.1 and US-4.3:** WBS mutations use the
 > concrete portfolio scheduler when Automatic Scheduling is ON. Dependency
 > remains owned by US-5.1; Task Lag and generated timeline algorithms are owned
 > by US-6.1. View Group and Edit Project may display the recursive read-only summary owned by
 > US-4.3 without making executable attributes belong to the Group or writable aggregate fields belong to Project.
+> **Product decision update — US-6.2:** Completion uses required Actual Date
+> (`Actual Start` and `Actual End`) entered together. Locked Project WBS and Task
+> planning are immutable, but Actual Date may be recorded without changing the
+> protected baseline; its Actual Allocation may recalculate impacted Open
+> Projects. Task details expose read-only Execution, Commitment, and Actual daily
+> allocation for verification. Any other WBS/Task mutation requires explicit
+> Project Reopen to Open.
 
 ## User Story
 
@@ -19,9 +31,11 @@
 A Project consists of a hierarchical WBS. A WBS without children is automatically an Executable WBS. A WBS with children is automatically a Grouping WBS. There is no separate Task entity.
 
 The UI uses product-friendly derived labels without changing this model:
-**Project Structure** for the feature, **Task** for an Executable WBS, and
-**Group** for a Grouping WBS. These are presentation labels, not persisted
-entity types.
+**Project Structure** and the US-7.1 **Home Portfolio Gantt** are presentation
+surfaces, **Task** labels an Executable WBS, and **Group** labels a Grouping
+WBS. These are presentation labels, not persisted entity types. Both surfaces
+must invoke the same application use cases and forms rather than duplicating
+mutation rules.
 
 ---
 
@@ -32,7 +46,7 @@ entity types.
 - Create, rename, move and delete WBS
 - Unlimited hierarchy
 - Automatic conversion between Grouping and Executable WBS
-- Manage executable attributes owned by this story: Role, Assignee, Effort, Manual Execution Timeline, Manual Commitment Timeline, Actual End
+- Manage executable attributes owned by this story: Role, Assignee, Effort, Manual Execution Timeline, Manual Commitment Timeline, Actual Start, Actual End
 - Integrate with Dependency from US-5.1 and Lag/generated dates from US-6.1 without duplicating their business rules
 - Validation, Persistence, API and UI
 
@@ -55,14 +69,15 @@ entity types.
   read-only recursive descendant summary defined by US-4.3; the summary is not
   persisted on the Group.
 - When adding the first child to an Executable WBS, display a warning and move executable attributes to the first child.
-- Manual Execution/Commitment Timeline is editable only when Automatic Scheduling is OFF.
-- Actual End is only available on Executable WBS.
+- Manual Execution/Commitment Timeline is editable only when Automatic Scheduling is OFF and the Project is Open.
+- Actual Date is only available on Executable WBS. Actual Start and Actual End are entered together after completion. On Locked Project, baseline remains unchanged while Actual Allocation may recalculate impacted Open Projects.
+- All other WBS/Task create, edit, delete, move, reorder, conversion, and planning mutations are rejected while the Project is Locked.
 
 ---
 
 ## Move Rules
 
-- A WBS node may be moved to any valid parent within the same Project.
+- A WBS node may be moved to any valid parent within the same Open Project. Locked and Closed Projects reject Move.
 - Moving a node also moves its entire descendant subtree.
 - A node cannot be moved under itself or under one of its descendants.
 - The move must preserve a valid acyclic tree.
@@ -81,10 +96,10 @@ entity types.
 - A Grouping WBS that still has one or more children cannot be deleted.
 - The user must first delete or move all children before deleting that parent.
 - Delete requires confirmation.
-- Delete is a hard delete for a leaf that has no descendants, subject to Project lifecycle restrictions.
+- Delete is a hard delete for a leaf that has no descendants and is allowed only while the Project is Open, subject to completed-task restrictions.
 - Deleting a leaf may cause its parent to have no remaining children; that parent then automatically becomes an Executable WBS.
 - Deleting a WBS must not cascade-delete descendants because deletion of a node with descendants is prohibited.
-- When Automatic Scheduling is ON, confirmed deletion triggers the concrete portfolio scheduler from US-6.1 for the affected active scope.
+- When Automatic Scheduling is ON, confirmed deletion triggers the concrete portfolio scheduler from US-6.1 only when the deleted Task has scheduling impact: Assignee, Effort, non-zero Lag, generated Execution/Commitment state, an automatic unscheduled projection, or dependency endpoints. Deleting a Name-only or Role-only unfinished Task with no dependency does not invoke scheduling. The presence of completed Tasks elsewhere in the Project does not change this trigger rule.
 - When Automatic Scheduling is OFF, remaining manual dates stay unchanged.
 
 ---
@@ -107,17 +122,18 @@ entity types.
 14. A WBS with children cannot be deleted.
 15. The delete conflict explains that children must be moved or deleted first.
 16. Deleting the last child converts the parent to Executable.
-17. With Automatic Scheduling ON, a successful delete invokes concrete portfolio recalculation and refreshes affected generated dates.
+17. With Automatic Scheduling ON, deleting an unfinished Name-only or Role-only leaf with no dependency succeeds without concrete portfolio recalculation and leaves all remaining Task state unchanged. Deleting a Task that has scheduling input, generated projection, or dependency endpoints still invokes affected-scope recalculation.
 18. With Automatic Scheduling OFF, successful deletion preserves remaining manual dates.
-19. Executable WBS supports Role, Assignee, Effort, Manual Execution Timeline, Manual Commitment Timeline and Actual End.
+19. Executable WBS supports Role, Assignee, Effort, Manual Execution Timeline, Manual Commitment Timeline, Actual Start, and Actual End.
 20. Grouping WBS cannot own or edit executable fields; View Group may display
     the read-only recursive descendant summary defined by US-4.3.
 21. Manual timeline is editable only when Automatic Scheduling is OFF.
-22. Actual End is only available for Executable WBS.
-23. With Automatic Scheduling ON, a root or child Task created only with Name and without structural conversion persists with empty generated dates and does not invoke concrete portfolio recalculation. Create that converts an existing Executable WBS and moves executable data or dependency endpoints, sibling reorder, Assignee change, Effort change, Lag change, and other established structural conversions still invoke concrete portfolio recalculation.
-24. Rename and Role-only changes do not invoke scheduling when Assignee is unchanged.
-25. WBS mutation and required scheduling are atomic; scheduling failure rolls back hierarchy, executable data, generated dates, and confirmed UI state.
-26. On an Open unfinished automatic Task, blur previews generated dates and automatic dependency ownership without persisting the Task when Role, valid Effort, and valid Lag are present. Assignee may be selected or explicitly cleared: a selected Assignee previews its reconciled schedule, while a cleared Assignee still calls preview to remove stale automatic ownership and return a missing-Assignee unscheduled projection. Missing or invalid Role, Effort, or Lag makes no preview request.
+22. Complete Actual Date is only available for Executable WBS. On an Open Project it actualizes timelines and creates Actual Allocation through US-6.2; on a Locked Project it preserves baseline while Actual Allocation may recalculate impacted Open Projects.
+23. Locked Project rejects every WBS/Task planning or structural mutation, including create, rename, edit, delete, move, reorder, conversion, and Task Reopen. Complete Actual Date entry is the only Task mutation exception.
+24. With Automatic Scheduling ON, a root or child Task created only with Name and without structural conversion persists with empty generated dates and does not invoke concrete portfolio recalculation. Create that converts an existing Executable WBS and moves executable data or dependency endpoints, sibling reorder, Assignee change, Effort change, Lag change, and other established structural conversions still invoke concrete portfolio recalculation.
+25. Rename and Role-only changes do not invoke scheduling when Assignee is unchanged.
+26. WBS mutation and required scheduling are atomic; scheduling failure rolls back hierarchy, executable data, generated dates, and confirmed UI state.
+27. On an Open unfinished automatic Task, blur previews generated dates and automatic dependency ownership without persisting the Task when Role, valid Effort, and valid Lag are present. Assignee may be selected or explicitly cleared: a selected Assignee previews its reconciled schedule, while a cleared Assignee still calls preview to remove stale automatic ownership and return a missing-Assignee unscheduled projection. Missing or invalid Role, Effort, or Lag makes no preview request.
 
 ---
 
@@ -137,10 +153,11 @@ entity types.
 - Move with Automatic Scheduling OFF and verify manual dates remain unchanged.
 - Delete a leaf.
 - Delete the last child and verify the parent becomes Executable.
-- Delete with Automatic Scheduling ON and verify generated Execution/Commitment dates are recalculated.
+- Delete a Name-only unfinished leaf from a Project that also contains a completed Task and verify deletion succeeds without scheduler invocation or changes to remaining Task state.
+- Delete a Task with scheduling input, generated projection, or dependency endpoints while Automatic Scheduling is ON and verify affected Execution/Commitment dates are recalculated.
 - Delete with Automatic Scheduling OFF and verify remaining manual dates are unchanged.
 - Edit executable attributes.
-- Enter Actual End.
+- Enter complete Actual Date and verify allocation.
 
 ### Validation
 
@@ -163,7 +180,7 @@ entity types.
 - Child ordering remains deterministic.
 - Executable-to-Grouping conversion preserves executable data in the first child.
 - Grouping-to-Executable conversion does not invent executable field values.
-- Actual End persists.
+- Actual Start and Actual End persist atomically.
 - Failed move or delete leaves hierarchy and dates unchanged.
 - Older in-flight list/tree responses cannot restore stale hierarchy after mutation.
 
@@ -206,9 +223,10 @@ not claim completion from a no-op adapter after US-6.1 is implemented.
 - A node and its subtree may move to any valid parent within the same Project.
 - Tree cycles and cross-Project moves are prohibited.
 - Only leaf WBS nodes may be deleted; parents must have all children moved or deleted first.
-- Move/delete invokes scheduler recalculation only when Automatic Scheduling is ON.
+- Move invokes scheduler recalculation only when Automatic Scheduling is ON. Delete invokes recalculation only when Automatic Scheduling is ON and the deleted Task has scheduling input, generated projection, or dependency endpoints; Name-only and Role-only unfinished leaves without dependencies are pure structural deletes.
 - Automatic Scheduling OFF preserves existing manual dates after structural changes.
-- Manual timeline only when Automatic Scheduling is OFF.
+- Manual timeline only when Automatic Scheduling is OFF and Project Open.
+- Locked Project rejects every WBS/Task planning and structural mutation. Actual Date entry is the only Task mutation exception; protected timeline stays unchanged while Actual Allocation may recalculate impacted Open Projects.
 - For an Open unfinished Task with Automatic Scheduling ON, leaving Role,
   Assignee, Effort, or Lag requests the rollback-only schedule preview defined
   by US-6.1 when Role, valid Effort, and valid Lag are present. Assignee may be
@@ -247,7 +265,7 @@ duplicate their domain rules.
 - Manual dates are editable only for an Open Project with Automatic Scheduling
   OFF.
 - The Task form uses shared calendar behaviour. Execution and Commitment each
-  use one date-range picker; Actual End uses one single-date picker. These
+  use one date-range picker; Actual Date uses one date-range picker requiring both Actual Start and Actual End. These
   calendars share holiday/weekend marking, viewport-aware placement, scroll
   fallback, Escape and outside-click dismissal, and read-only behaviour with
   the rest of the product.
@@ -293,20 +311,25 @@ With Automatic Scheduling ON, creating a root or child using only Name does
 not invoke the concrete portfolio scheduler and leaves generated dates empty.
 Create invokes the scheduler only when it also converts an existing Executable
 WBS and moves executable data or dependency endpoints. Sibling reorder, move,
-delete, Assignee change, Effort change, Lag change, and other established
-structural conversions continue to invoke the concrete portfolio scheduler from
-US-6.1. Rename and Role-only changes do not when Assignee is unchanged. Cancelled, failed, and manual-mode mutations do not
-invoke it. Actual End invokes a separate Forecast recalculation contract. WBS
-mutation and required scheduling must commit or roll back atomically.
+Assignee change, Effort change, Lag change, and other established structural
+conversions continue to invoke the concrete portfolio scheduler from US-6.1.
+Delete invokes scheduling only when the removed Task has scheduling input,
+generated projection, or dependency endpoints. Deleting a Name-only or
+Role-only unfinished Task without dependencies is a pure structural mutation:
+it hard-deletes the leaf, compacts sibling positions, and leaves existing Task,
+dependency, allocation, and timeline state unchanged. Rename and Role-only
+changes do not invoke scheduling when Assignee is unchanged. Cancelled, failed,
+and manual-mode mutations do not invoke it. Actual Date and Reopen Task follow
+the US-6.2 cross-project impact/recalculation contract. WBS mutation and required scheduling must
+commit or roll back atomically.
 
-### Actual End and Completion
+### Actual Date, Completion, and Allocation
 
-- Actual End is date-only and only valid on Executable WBS.
-- Setting Actual End completes the Executable WBS. A completed Task remains
-  read-only for normal planning, executable-field, and structural mutation.
-- `US-4.2 — Reopen Completed Task` is the only explicit exception that may
-  clear Actual End. Reopen uses a dedicated command; generic Task update may
-  not clear Actual End or bypass the completed-task read-only invariant.
+- Actual Start and Actual End are date-only, valid only on Executable WBS, and required together.
+- Setting complete Actual Date completes the Executable WBS. A completed Task remains read-only for normal planning, executable-field, and structural mutation.
+- On an Open Project, Actual Date actualizes Execution/Commitment dates, creates Actual Allocation, uses Actual End for readiness, and recalculates impacted scope according to US-6.2.
+- On a Locked Project, Actual Date may be entered without changing protected dates/dependencies/order; Actual Allocation is persisted and may recalculate impacted Open Projects.
+- `US-4.2 — Reopen Completed Task` clears both Actual Start and Actual End only while the owning Project is Open. Locked Project must be reopened first.
 
 ### Reorder
 
@@ -333,7 +356,7 @@ retarget failure rolls back both hierarchy and graph.
 
 A completed leaf or subtree containing completed descendants may be moved.
 Structural movement may change only parent/path and sibling position; completed
-executable fields and Actual End remain immutable.
+executable fields and Actual Date remain immutable.
 
 
 ### Group and Project Summary Ownership

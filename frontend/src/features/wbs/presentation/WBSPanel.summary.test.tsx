@@ -107,6 +107,7 @@ function group(id: string, name: string, children: WBSNode[]): WBSNode {
     hasChildren: true,
     executable: {
       effortMinutes: 9999,
+      actualStart: "2020-01-01",
       actualEnd: "2020-01-01",
       lagDays: 0,
       executionTimeline: { start: "2020-01-01", end: "2030-01-01" },
@@ -121,6 +122,7 @@ function realisticTree(): WBSNode[] {
     group("delivery", "Delivery", [
       task("a", "Task A", {
         effortMinutes: 960,
+        actualStart: "2026-08-01",
         actualEnd: "2026-08-03",
         executionTimeline: { start: "2026-08-01", end: "2026-08-03" },
         commitmentTimeline: { start: "2026-08-01", end: "2026-08-05" },
@@ -133,6 +135,7 @@ function realisticTree(): WBSNode[] {
         }),
         group("deep", "Deep", [
           task("c", "Task C", {
+            actualStart: "2026-08-09",
             actualEnd: "2026-08-10",
             commitmentTimeline: {
               start: "2026-08-09",
@@ -141,6 +144,7 @@ function realisticTree(): WBSNode[] {
           }),
           task("d", "Task D", {
             effortMinutes: 480,
+            actualStart: "2026-08-08",
             actualEnd: "2026-08-12",
             executionTimeline: {
               start: "2026-08-08",
@@ -157,13 +161,16 @@ function realisticTree(): WBSNode[] {
 function mutableGateway(initial: WBSNode[]): {
   gateway: WBSGateway;
   current(): WBSNode[];
-  confirmActualEnd(id: string, actualEnd: string): void;
+  confirmActualDate(id: string, actualStart: string, actualEnd: string): void;
 } {
   let values = initial;
   const listeners = new Set<() => void>();
   const notify = () => listeners.forEach((listener) => listener());
   const gateway: WBSGateway = {
     tree: vi.fn(async () => values),
+    allocations: vi
+      .fn()
+      .mockResolvedValue({ execution: [], commitment: [], actual: [] }),
     subscribeToConfirmedChanges: (listener) => {
       listeners.add(listener);
       return () => listeners.delete(listener);
@@ -192,10 +199,10 @@ function mutableGateway(initial: WBSNode[]): {
         dependencies: { blockedBy: [], blocks: [] },
       };
     }),
-    complete: vi.fn(async (_projectId, id, actualEnd) => {
+    complete: vi.fn(async (_projectId, id, actualStart, actualEnd) => {
       values = replace(values, id, (value) => ({
         ...value,
-        executable: { ...value.executable, actualEnd },
+        executable: { ...value.executable, actualStart, actualEnd },
       }));
       notify();
     }),
@@ -204,7 +211,11 @@ function mutableGateway(initial: WBSNode[]): {
       values = replace(values, id, (value) => {
         confirmed = {
           ...value,
-          executable: { ...value.executable, actualEnd: undefined },
+          executable: {
+            ...value.executable,
+            actualStart: undefined,
+            actualEnd: undefined,
+          },
         };
         return confirmed;
       });
@@ -216,10 +227,10 @@ function mutableGateway(initial: WBSNode[]): {
   return {
     gateway,
     current: () => values,
-    confirmActualEnd: (id, actualEnd) => {
+    confirmActualDate: (id, actualStart, actualEnd) => {
       values = replace(values, id, (value) => ({
         ...value,
-        executable: { ...value.executable, actualEnd },
+        executable: { ...value.executable, actualStart, actualEnd },
       }));
       notify();
     },
@@ -387,6 +398,7 @@ describe("US-4.3 acceptance workflow through Project Structure", () => {
     renderPanel([
       group("delivery", "Unknown Effort", [
         task("completed", "Completed without Effort", {
+          actualStart: "2026-08-01",
           actualEnd: "2026-08-01",
         }),
         task("unfinished", "Unfinished without Effort"),
@@ -414,6 +426,7 @@ describe("US-4.3 acceptance workflow through Project Structure", () => {
       group("delivery", "Exact Completion", [
         task("completed", "Completed", {
           effortMinutes: 1440,
+          actualStart: "2026-08-01",
           actualEnd: "2026-08-01",
         }),
         task("unfinished", "Unfinished", { effortMinutes: 960 }),
@@ -430,6 +443,7 @@ describe("US-4.3 acceptance workflow through Project Structure", () => {
       group("delivery", "Half Hour", [
         task("completed", "Completed", {
           effortMinutes: 750,
+          actualStart: "2026-08-01",
           actualEnd: "2026-08-01",
         }),
       ]),
@@ -455,7 +469,7 @@ describe("US-4.3 acceptance workflow through Project Structure", () => {
       within(dialog).getByText("0 of 24 hours completed (0%)"),
     ).toBeTruthy();
 
-    act(() => setup.confirmActualEnd("target", "2026-08-01"));
+    act(() => setup.confirmActualDate("target", "2026-08-01", "2026-08-01"));
 
     expect(
       await within(dialog).findByText("16 of 24 hours completed (66.7%)"),
@@ -504,12 +518,15 @@ describe("US-4.3 acceptance workflow through Project Structure", () => {
     taskDialog = await openTask("Target");
     fireEvent.click(
       within(taskDialog).getByRole("button", {
-        name: "Actual End: Select date",
+        name: "Actual Date: Select start and end date",
       }),
     );
     const current = new Date();
-    const selectedDate = `${current.getUTCFullYear()}-${String(current.getUTCMonth() + 1).padStart(2, "0")}-15`;
-    fireEvent.click(screen.getByRole("button", { name: selectedDate }));
+    const currentMonth = `${current.getUTCFullYear()}-${String(current.getUTCMonth() + 1).padStart(2, "0")}`;
+    const selectedStartDate = `${currentMonth}-14`;
+    const selectedEndDate = `${currentMonth}-15`;
+    fireEvent.click(screen.getByRole("button", { name: selectedStartDate }));
+    fireEvent.click(screen.getByRole("button", { name: selectedEndDate }));
     await userEvent.click(
       within(taskDialog).getByRole("button", { name: "Mark completed" }),
     );
