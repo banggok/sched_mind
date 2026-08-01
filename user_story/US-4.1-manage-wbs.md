@@ -1,9 +1,11 @@
 # US-4.1 Manage WBS
 
-> **Product decision update — US-7.1:** Home Portfolio Gantt reuses the same
-> Project, Group, and Task forms and the same Add Task/Add Child application
-> flows as Project Structure. The Gantt grid, bars, and dependency arrows are
-> read-only; US-4.1 remains the owner of WBS mutation and conversion rules.
+> **Product decision update — US-7.1:** Home Portfolio Gantt is the canonical
+> active-Project WBS presentation surface. The standalone Project Structure
+> entry point is removed. Home reuses the same Project, Group, and Task forms and
+> the same Add Task/Add Child, rename, reorder, move, and delete application
+> use cases. The Gantt cells, bars, and dependency arrows remain read-only;
+> US-4.1 remains the owner of WBS mutation and conversion rules.
 
 > **Product decision updates — US-6.1 and US-4.3:** WBS mutations use the
 > concrete portfolio scheduler when Automatic Scheduling is ON. Dependency
@@ -31,11 +33,11 @@
 A Project consists of a hierarchical WBS. A WBS without children is automatically an Executable WBS. A WBS with children is automatically a Grouping WBS. There is no separate Task entity.
 
 The UI uses product-friendly derived labels without changing this model:
-**Project Structure** and the US-7.1 **Home Portfolio Gantt** are presentation
-surfaces, **Task** labels an Executable WBS, and **Group** labels a Grouping
-WBS. These are presentation labels, not persisted entity types. Both surfaces
-must invoke the same application use cases and forms rather than duplicating
-mutation rules.
+the US-7.1 **Home Portfolio Gantt** is the canonical active-Project WBS
+presentation surface, **Task** labels an Executable WBS, and **Group** labels a
+Grouping WBS. These are presentation labels, not persisted entity types. Home
+must invoke the existing application use cases and reusable dialogs rather than
+duplicating mutation rules.
 
 ---
 
@@ -71,21 +73,48 @@ mutation rules.
 - When adding the first child to an Executable WBS, display a warning and move executable attributes to the first child.
 - Manual Execution/Commitment Timeline is editable only when Automatic Scheduling is OFF and the Project is Open.
 - Actual Date is only available on Executable WBS. Actual Start and Actual End are entered together after completion. On Locked Project, baseline remains unchanged while Actual Allocation may recalculate impacted Open Projects.
-- All other WBS/Task create, edit, delete, move, reorder, conversion, and planning mutations are rejected while the Project is Locked.
+- All other WBS/Task create, edit, delete, move, reorder, conversion, and planning mutations are rejected while the Project is Locked. Project Name rename is a Project-level exception owned by US-3.1 and does not make Group/Task structure editable.
+
+---
+
+## Home Presentation Contract
+
+US-7.1 owns placement and interaction composition; this story owns the invoked
+WBS commands.
+
+- The standalone Project Structure entry point/page is removed.
+- Active Project WBS create, rename, reorder, Move to, and Delete are initiated
+  from Home.
+- Activating Group Name opens one dialog that combines this story's Group rename
+  with the read-only US-4.3 Group summary.
+- Activating Task Name opens Edit Task for unfinished, completed, and Locked
+  Tasks. Completed Task Reopen remains inside that dialog under US-4.2.
+- Project Add Task and eligible Group/Task Add Child remain visually distinct
+  icon-only quick actions.
+- Move Up, Move Down, Move to, and Delete are secondary actions in the Home row
+  overflow menu.
+- Home invokes reusable dialogs/use cases directly and must not mount an
+  intermediate Project Structure page.
+- Acceptance-level evidence for active WBS management must exercise the Home
+  workflow rather than the removed Project Structure workflow.
 
 ---
 
 ## Move Rules
 
 - A WBS node may be moved to any valid parent within the same Open Project. Locked and Closed Projects reject Move.
+- The user-facing **Move to** operation changes parent only. It does not accept a sibling position or perform Move Up/Down.
 - Moving a node also moves its entire descendant subtree.
 - A node cannot be moved under itself or under one of its descendants.
 - The move must preserve a valid acyclic tree.
-- The moved node receives a deterministic position among the destination parent's children.
+- The moved node receives the existing deterministic position among the destination parent's children; the user does not choose that position.
 - When the source parent has no remaining children after the move, it automatically becomes an Executable WBS.
 - When the destination parent receives its first child, it automatically becomes a Grouping WBS.
 - If the destination parent was an Executable WBS with executable attributes, the normal Executable-to-Grouping conversion and confirmation rules apply.
 - Cross-Project moves are not allowed in this story.
+- Home Role filtering does not change Move validity. The destination picker must
+  resolve the authoritative full Project tree and include every valid parent,
+  including a parent hidden by the current Role filter.
 - When Project Automatic Scheduling is ON, a confirmed move triggers the concrete portfolio scheduler from US-6.1 for the affected active scope.
 - When Project Automatic Scheduling is OFF, existing manual Execution and Commitment dates remain unchanged.
 - US-4.1 owns the mutation trigger and atomic coordination; US-6.1 owns the scheduling algorithm. Integrated acceptance tests must verify observable generated-date changes, not only port invocation.
@@ -134,6 +163,14 @@ mutation rules.
 25. Rename and Role-only changes do not invoke scheduling when Assignee is unchanged.
 26. WBS mutation and required scheduling are atomic; scheduling failure rolls back hierarchy, executable data, generated dates, and confirmed UI state.
 27. On an Open unfinished automatic Task, blur previews generated dates and automatic dependency ownership without persisting the Task when Role, valid Effort, and valid Lag are present. Assignee may be selected or explicitly cleared: a selected Assignee previews its reconciled schedule, while a cleared Assignee still calls preview to remove stale automatic ownership and return a missing-Assignee unscheduled projection. Missing or invalid Role, Effort, or Lag makes no preview request.
+28. Home is the canonical active WBS management surface and the standalone Project Structure entry point is removed.
+29. Activating Group Name opens one summary/rename dialog; activating Task Name opens Edit Task for unfinished, completed, and Locked Tasks.
+30. Add Task and Add Child are distinct icon-only quick actions; Move Up, Move Down, Move to, and Delete are placed in one row overflow menu according to eligibility.
+31. Move Up/Down swap only adjacent siblings under the same parent and are disabled at the unavailable boundary.
+32. Home disables Move Up/Down while a restrictive Role filter may hide siblings and explains that all Roles must be shown; Move to remains available.
+33. Move to changes parent only, offers no sibling-position input, and resolves all valid destinations from the full authoritative Project tree.
+34. A completed Task in an Open Project may be reordered or moved under existing BAU, but cannot Add Child or Delete; its executable data and Actual Date remain immutable.
+35. Active WBS acceptance-level tests exercise `Home → row action/dialog → confirm → refreshed Home` and prove that no Projects/Project Structure background navigation occurs.
 
 ---
 
@@ -302,8 +339,8 @@ duplicate their domain rules.
   parents are allowed. Rename excludes the current node from the uniqueness
   check.
 - Executable Task name and executable details are edited in one form and saved
-  by one atomic backend request. The Project Structure row exposes only one
-  `Edit Task` action. Group rename remains a structural Group action.
+  by one atomic backend request. The Home Task Name exposes one `Edit Task`
+  action. Group rename is composed into the Home Group summary dialog.
 
 ### Scheduling Contracts
 
@@ -326,17 +363,25 @@ commit or roll back atomically.
 ### Actual Date, Completion, and Allocation
 
 - Actual Start and Actual End are date-only, valid only on Executable WBS, and required together.
-- Setting complete Actual Date completes the Executable WBS. A completed Task remains read-only for normal planning, executable-field, and structural mutation.
+- Setting complete Actual Date completes the Executable WBS. A completed Task remains read-only for normal planning and executable-field mutation. While the Project is Open, established sibling reorder and Move to may change only its structural parent/position; Add Child and Delete remain unavailable.
 - On an Open Project, Actual Date actualizes Execution/Commitment dates, creates Actual Allocation, uses Actual End for readiness, and recalculates impacted scope according to US-6.2.
 - On a Locked Project, Actual Date may be entered without changing protected dates/dependencies/order; Actual Allocation is persisted and may recalculate impacted Open Projects.
 - `US-4.2 — Reopen Completed Task` clears both Actual Start and Actual End only while the owning Project is Open. Locked Project must be reopened first.
 
 ### Reorder
 
-- Move Up and Move Down atomically swap adjacent siblings and are the
-  keyboard-accessible reorder mechanism.
+- Move Up and Move Down atomically swap adjacent siblings under the same parent
+  and are the keyboard-accessible reorder mechanism.
 - The unavailable boundary direction is disabled.
-- Move is a separate operation that changes parent and moves the full subtree.
+- Home places both actions in row overflow.
+- When the applied Role filter does not include every available Role option,
+  including `No role`, Home disables both directions and explains
+  `Show all roles to reorder WBS items.`
+- Project filtering alone does not disable reorder.
+- Reorder changes persisted sibling position and may affect scheduler ordering;
+  generated Start/End dates never become the source of WBS row order.
+- Move to is a separate operation that changes parent and moves the full subtree
+  without accepting a sibling position.
 
 ### Move Into an Executable Destination
 
@@ -370,6 +415,23 @@ The summary does not weaken the rule that Grouping WBS cannot own executable att
 US-4.1 stores only Effort minutes and date-only manual boundaries. Per-working-
 date allocation projections and all capacity consumption belong to US-6.1 and
 must not be reimplemented inside the WBS feature.
+
+### Home WBS Presentation
+
+- Home row Name opens the reusable Project/Group/Task dialog directly over Home.
+- Group summary and rename are proven in one Open-Project dialog; Locked Group
+  remains read-only.
+- Add Task and Add Child use distinct icon-only controls.
+- Overflow eligibility is proven for Open Group, unfinished Task, completed Task,
+  and Locked rows.
+- Move Up/Down boundary behavior and restrictive-Role-filter disabled reason are
+  proven against full persisted sibling order.
+- Move to remains available under Role filtering and lists a valid hidden
+  destination from the authoritative full tree.
+- Completed Task may reorder/move but cannot Add Child/Delete.
+- Delete remains confirmed and backend-authoritative.
+- No acceptance workflow navigates through or renders the removed Project
+  Structure page.
 
 ## Unresolved Questions
 

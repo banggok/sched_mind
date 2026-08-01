@@ -251,3 +251,50 @@ func TestRepositoryMarksAutomaticProjectUnscheduledWithoutProjectAnchor(t *testi
 		t.Fatalf("enable without anchor: %#v %v", updated, err)
 	}
 }
+
+func TestRepositoryRenameLockedProjectUpdatesOnlyIdentityFields_US31_AC11_US62_AC16A(t *testing.T) {
+	repository := testRepository(t)
+	ctx := context.Background()
+	createdAt := time.Date(2026, 8, 1, 8, 0, 0, 0, time.UTC)
+	updatedAt := createdAt.Add(2 * time.Hour)
+	anchor := time.Date(2026, 8, 3, 0, 0, 0, 0, time.UTC)
+	executionSnapshot := `[{"taskId":"task-1","end":"2026-08-04"}]`
+	commitmentSnapshot := `[{"taskId":"task-1","end":"2026-08-05"}]`
+	created, err := repository.CreateNext(ctx, "project", "Alpha", false, &anchor, 35, createdAt)
+	if err != nil || created == nil {
+		t.Fatalf("create: %#v %v", created, err)
+	}
+	if err := repository.database.Model(&projectModel{}).Where("id = ?", created.ID).Updates(map[string]interface{}{
+		"status":                     string(domain.StatusLocked),
+		"schedule_version":           int64(11),
+		"locked_execution_snapshot":  executionSnapshot,
+		"locked_commitment_snapshot": commitmentSnapshot,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	before, err := repository.Find(ctx, created.ID)
+	if err != nil || before == nil {
+		t.Fatalf("before: %#v %v", before, err)
+	}
+
+	renamed, err := repository.Rename(ctx, created.ID, " Renamed ", updatedAt)
+	if err != nil || renamed == nil {
+		t.Fatalf("rename: %#v %v", renamed, err)
+	}
+	after, err := repository.Find(ctx, created.ID)
+	if err != nil || after == nil {
+		t.Fatalf("after: %#v %v", after, err)
+	}
+	if after.Name != "Renamed" || !after.UpdatedAt.Equal(updatedAt) {
+		t.Fatalf("identity fields: %#v", after)
+	}
+	if after.ID != before.ID || after.Status != before.Status || after.Priority != before.Priority ||
+		after.ScheduleVersion != before.ScheduleVersion || after.AutomaticScheduling != before.AutomaticScheduling ||
+		after.ProjectBuffer != before.ProjectBuffer || after.SchedulingStartDate == nil || before.SchedulingStartDate == nil ||
+		!after.SchedulingStartDate.Equal(*before.SchedulingStartDate) || after.LockedExecutionSnapshot == nil ||
+		before.LockedExecutionSnapshot == nil || *after.LockedExecutionSnapshot != *before.LockedExecutionSnapshot ||
+		after.LockedCommitmentSnapshot == nil || before.LockedCommitmentSnapshot == nil ||
+		*after.LockedCommitmentSnapshot != *before.LockedCommitmentSnapshot || !after.CreatedAt.Equal(before.CreatedAt) {
+		t.Fatalf("protected fields changed: before=%#v after=%#v", before, after)
+	}
+}

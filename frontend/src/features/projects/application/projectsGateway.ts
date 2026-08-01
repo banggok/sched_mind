@@ -17,6 +17,7 @@ export interface ProjectsGateway {
     schedulingStartDate: string | undefined,
     projectBuffer: number,
   ): Promise<Project>;
+  rename(id: string, name: string): Promise<Project>;
   update(
     id: string,
     name: string,

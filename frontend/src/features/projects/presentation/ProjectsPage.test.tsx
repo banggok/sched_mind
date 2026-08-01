@@ -26,6 +26,7 @@ function gateway(items: Project[] = [alpha]): ProjectsGateway {
       .mockResolvedValue({ items, page: 1, pageSize: 5, total: items.length }),
     get: vi.fn(),
     create: vi.fn().mockResolvedValue(alpha),
+    rename: vi.fn().mockResolvedValue(alpha),
     update: vi.fn().mockResolvedValue(alpha),
     changeStatus: vi.fn().mockResolvedValue({ ...alpha, status: "locked" }),
     bulkReopen: vi.fn().mockResolvedValue([alpha]),
@@ -42,6 +43,28 @@ describe("Projects page", () => {
     expect(await screen.findByText("Alpha")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Lock" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Reopen" })).toBeNull();
+  });
+
+  it("allows a Locked Project to be reopened from the Projects page", async () => {
+    const locked = { ...alpha, status: "locked" as const };
+    const api = gateway([locked]);
+    const user = userEvent.setup();
+    render(<ProjectsPage gateway={api} />);
+
+    await screen.findByText("Alpha");
+    expect(screen.queryByRole("button", { name: "Lock" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Reopen" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Close" })).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: "Reopen" }));
+    expect(
+      screen.getByRole("alertdialog", { name: "Reopen Alpha?" }),
+    ).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Reopen project" }));
+
+    await waitFor(() =>
+      expect(api.changeStatus).toHaveBeenCalledWith("p1", "open"),
+    );
   });
 
   it("creates a project and prevents fields outside the approved contract", async () => {
@@ -166,7 +189,7 @@ describe("Projects page", () => {
     );
   });
 
-  it("discards unsaved settings and makes locked settings read-only", async () => {
+  it("keeps Locked settings read-only while allowing a Name-only save", async () => {
     const api = gateway([{ ...alpha, status: "locked" }]);
     const user = userEvent.setup();
     render(<ProjectsPage gateway={api} />);
@@ -181,11 +204,122 @@ describe("Projects page", () => {
         .hasAttribute("disabled"),
     ).toBe(true);
     expect(screen.getByRole("button", { name: "Save" })).toBeTruthy();
+    await user.clear(screen.getByLabelText("Project name"));
+    await user.type(screen.getByLabelText("Project name"), "Renamed");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() =>
+      expect(api.rename).toHaveBeenCalledWith("p1", "Renamed"),
+    );
+    expect(api.update).not.toHaveBeenCalled();
+  });
+
+  it("removes the standalone Project Structure entry point", async () => {
+    render(<ProjectsPage gateway={gateway()} />);
+    await screen.findByText("Alpha");
+    expect(
+      screen.queryByRole("button", { name: "Project Structure" }),
+    ).toBeNull();
+  });
+
+  it("discards unsaved locked Project name changes", async () => {
+    const api = gateway([{ ...alpha, status: "locked" }]);
+    const user = userEvent.setup();
+    render(<ProjectsPage gateway={api} />);
+    await screen.findByText("Alpha");
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    await user.clear(screen.getByLabelText("Project name"));
+    await user.type(screen.getByLabelText("Project name"), "Unsaved");
     await user.click(
       within(screen.getByRole("dialog")).getByRole("button", {
         name: "Cancel",
       }),
     );
+    expect(api.rename).not.toHaveBeenCalled();
+  });
+
+  it("renders the same Project editor directly over Home without a Projects page background", async () => {
+    const user = userEvent.setup();
+    const api = gateway();
+    const close = vi.fn();
+    render(
+      <ProjectsPage
+        gateway={api}
+        dialogOnly
+        initialEditProject={alpha}
+        returnPageOnClose="home"
+        onReturnToPage={close}
+      />,
+    );
+
+    expect(
+      await screen.findByRole("dialog", { name: "Edit Alpha" }),
+    ).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Projects" })).toBeNull();
+    expect(screen.queryByRole("navigation", { name: "Breadcrumb" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(api.list).not.toHaveBeenCalled();
+  });
+
+  it("uses the name-only command when a Locked Project editor is opened directly over Home", async () => {
+    const user = userEvent.setup();
+    const locked = { ...alpha, status: "locked" as const };
+    const api = gateway([locked]);
+    const completed = vi.fn();
+    render(
+      <ProjectsPage
+        gateway={api}
+        dialogOnly
+        initialEditProject={locked}
+        onOverlayComplete={completed}
+      />,
+    );
+
+    const dialog = await screen.findByRole("dialog", { name: "Edit Alpha" });
+    expect(
+      within(dialog)
+        .getByRole("switch", { name: "Automatic scheduling" })
+        .hasAttribute("disabled"),
+    ).toBe(true);
+    expect(
+      within(dialog)
+        .getByLabelText("Project buffer (%)")
+        .hasAttribute("disabled"),
+    ).toBe(true);
+    const name = within(dialog).getByLabelText("Project name");
+    await user.clear(name);
+    await user.type(name, "Renamed from Home");
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(api.rename).toHaveBeenCalledWith("p1", "Renamed from Home"),
+    );
     expect(api.update).not.toHaveBeenCalled();
+    expect(completed).toHaveBeenCalledTimes(1);
+    expect(api.list).not.toHaveBeenCalled();
+  });
+
+  it("renders the shared Project lifecycle confirmation directly over Home", async () => {
+    const user = userEvent.setup();
+    const api = gateway();
+    const completed = vi.fn();
+    render(
+      <ProjectsPage
+        gateway={api}
+        dialogOnly
+        initialCommand={{ kind: "lock", project: alpha }}
+        onOverlayComplete={completed}
+      />,
+    );
+
+    expect(
+      await screen.findByRole("alertdialog", { name: "Lock Alpha?" }),
+    ).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Lock project" }));
+    await waitFor(() =>
+      expect(api.changeStatus).toHaveBeenCalledWith("p1", "locked"),
+    );
+    expect(completed).toHaveBeenCalledTimes(1);
+    expect(api.list).not.toHaveBeenCalled();
   });
 });

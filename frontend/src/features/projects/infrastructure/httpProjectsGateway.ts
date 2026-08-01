@@ -123,6 +123,9 @@ export function createHTTPProjectsGateway(apiBaseURL: string): ProjectsGateway {
         projectBuffer,
       });
     },
+    rename(id, name) {
+      return mutation(`/projects/${encodeURIComponent(id)}`, "PUT", { name });
+    },
     update(id, name, automaticScheduling, schedulingStartDate, projectBuffer) {
       return mutation(`/projects/${encodeURIComponent(id)}`, "PUT", {
         name,

@@ -1,24 +1,23 @@
 import { useEffect, useRef, useState } from "react";
-import type { Project } from "../../projects/domain/project";
-import { WBSOperationError, type WBSGateway } from "../application/wbsGateway";
-import type { WBSNode } from "../domain/wbs";
 import { Alert } from "../../../shared/presentation/Alert";
 import { Button } from "../../../shared/presentation/Button";
 import { Dialog } from "../../../shared/presentation/Dialog";
-import { EmptyState } from "../../../shared/presentation/EmptyState";
 import { FormField } from "../../../shared/presentation/FormField";
 import { ListSkeleton } from "../../../shared/presentation/ListSkeleton";
-import { Toast } from "../../../shared/presentation/Toast";
+import type { DependenciesGateway } from "../../dependencies/application/dependenciesGateway";
+import type { Project } from "../../projects/domain/project";
 import type { RolesGateway } from "../../roles/application/rolesGateway";
 import type { TeamMembersGateway } from "../../team-members/application/teamMembersGateway";
+import { WBSOperationError, type WBSGateway } from "../application/wbsGateway";
+import type { WBSNode } from "../domain/wbs";
 import { WBSDetailDialog } from "./WBSDetailDialog";
-import type { DependenciesGateway } from "../../dependencies/application/dependenciesGateway";
 
 type Draft = {
-  mode: "create" | "rename" | "move";
+  mode: "create" | "move";
   node?: WBSNode;
   parentId?: string;
 };
+
 export function WBSPanel({
   project,
   gateway,
@@ -28,7 +27,7 @@ export function WBSPanel({
   loadPublicHolidayDates,
   initialNodeId,
   initialCreateParentId,
-  returnToCallerOnComplete = false,
+  initialMoveNodeId,
   onClose,
 }: {
   project: Project;
@@ -42,7 +41,7 @@ export function WBSPanel({
   ): Promise<string[]>;
   initialNodeId?: string;
   initialCreateParentId?: string | null;
-  returnToCallerOnComplete?: boolean;
+  initialMoveNodeId?: string;
   onClose(): void;
 }) {
   const [tree, setTree] = useState<WBSNode[]>([]);
@@ -54,15 +53,16 @@ export function WBSPanel({
   const [target, setTarget] = useState("");
   const [busy, setBusy] = useState(false);
   const [operationError, setOperationError] = useState("");
-  const [toast, setToast] = useState("");
   const [detail, setDetail] = useState<WBSNode>();
   const [conversion, setConversion] = useState(false);
   const initialActionApplied = useRef(false);
+
   useEffect(() => {
     return gateway.subscribeToConfirmedChanges?.(() =>
       setReload((value) => value + 1),
     );
   }, [gateway]);
+
   useEffect(() => {
     const controller = new AbortController();
     setLoading(true);
@@ -71,50 +71,101 @@ export function WBSPanel({
       .tree(project.id, controller.signal)
       .then((confirmedTree) => {
         setTree(confirmedTree);
-        setDetail((current) =>
-          current ? findNode(confirmedTree, current.id) : undefined,
-        );
-        if (!initialActionApplied.current) {
-          if (initialNodeId) setDetail(findNode(confirmedTree, initialNodeId));
-          if (initialCreateParentId !== undefined) {
-            setDraft({
-              mode: "create",
-              parentId: initialCreateParentId ?? undefined,
-            });
-            setName("");
+        if (initialActionApplied.current) {
+          if (initialNodeId) {
+            const selected = findNode(confirmedTree, initialNodeId);
+            if (selected) setDetail(selected);
+            else {
+              setDetail(undefined);
+              setError("The selected WBS item no longer exists.");
+            }
+          } else if (
+            initialCreateParentId !== undefined &&
+            initialCreateParentId !== null &&
+            !findNode(confirmedTree, initialCreateParentId)
+          ) {
+            setDraft(undefined);
+            setError("The selected parent no longer exists.");
+          } else if (initialMoveNodeId) {
+            const selected = findNode(confirmedTree, initialMoveNodeId);
+            if (selected)
+              setDraft((current) =>
+                current?.mode === "move"
+                  ? { ...current, node: selected }
+                  : current,
+              );
+            else {
+              setDraft(undefined);
+              setError("The selected WBS item no longer exists.");
+            }
           }
-          initialActionApplied.current = true;
+          return;
+        }
+
+        const actionCount =
+          Number(initialNodeId !== undefined) +
+          Number(initialCreateParentId !== undefined) +
+          Number(initialMoveNodeId !== undefined);
+        initialActionApplied.current = true;
+        if (actionCount !== 1) {
+          setError("Choose one WBS action from Home and try again.");
+          return;
+        }
+        if (initialNodeId) {
+          const selected = findNode(confirmedTree, initialNodeId);
+          if (selected) setDetail(selected);
+          else setError("The selected WBS item no longer exists.");
+          return;
+        }
+        if (initialCreateParentId !== undefined) {
+          if (
+            initialCreateParentId !== null &&
+            !findNode(confirmedTree, initialCreateParentId)
+          ) {
+            setError("The selected parent no longer exists.");
+            return;
+          }
+          setDraft({
+            mode: "create",
+            parentId: initialCreateParentId ?? undefined,
+          });
+          setName("");
+          return;
+        }
+        if (initialMoveNodeId) {
+          const selected = findNode(confirmedTree, initialMoveNodeId);
+          if (selected) {
+            setDraft({ mode: "move", node: selected });
+            setTarget("");
+          } else setError("The selected WBS item no longer exists.");
         }
       })
       .catch((reason: unknown) => {
         if (!(reason instanceof DOMException && reason.name === "AbortError"))
-          setError("Project structure could not be loaded. Try again.");
+          setError("The WBS item could not be loaded. Try again.");
       })
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [gateway, initialCreateParentId, initialNodeId, project.id, reload]);
+  }, [
+    gateway,
+    initialCreateParentId,
+    initialMoveNodeId,
+    initialNodeId,
+    project.id,
+    reload,
+  ]);
+
   const all = flatten(tree);
-  const refresh = (message: string) => {
-    dependenciesGateway?.invalidateAll();
-    setToast(message);
-    setDraft(undefined);
-    setConversion(false);
-    setReload((v) => v + 1);
-  };
-  const mutate = async (
-    action: () => Promise<void>,
-    message: string,
-    closeAfter = false,
-  ) => {
+  const mutate = async (action: () => Promise<void>) => {
     if (busy) return;
     setBusy(true);
     setOperationError("");
     try {
       await action();
-      refresh(message);
-      if (closeAfter) onClose();
+      dependenciesGateway?.invalidateAll();
+      onClose();
     } catch (reason: unknown) {
       if (
         reason instanceof WBSOperationError &&
@@ -135,120 +186,45 @@ export function WBSPanel({
     if (!draft) return;
     const selected = draft.node;
     if (draft.mode === "create")
-      void mutate(
-        () => gateway.create(project.id, draft.parentId, name, false),
-        "Task added.",
-        returnToCallerOnComplete && initialCreateParentId !== undefined,
-      );
-    else if (draft.mode === "rename" && selected)
-      void mutate(
-        () => gateway.rename(project.id, selected.id, name),
-        "Item updated.",
+      void mutate(() =>
+        gateway.create(project.id, draft.parentId, name, false),
       );
     else if (selected)
-      void mutate(
-        () => gateway.move(project.id, selected.id, target || undefined, false),
-        "Item moved.",
+      void mutate(() =>
+        gateway.move(project.id, selected.id, target || undefined, false),
       );
   };
+
   return (
-    <Dialog titleID="wbs-title" onClose={onClose} wide>
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <p className="text-sm font-bold text-action">
-            Projects / {project.name}
-          </p>
-          <h2 id="wbs-title" className="mt-2 text-2xl font-extrabold">
-            Project Structure
+    <>
+      {loading && !draft && !detail ? (
+        <Dialog titleID="wbs-direct-loading-title" onClose={onClose}>
+          <h2 id="wbs-direct-loading-title" className="text-xl font-extrabold">
+            Loading WBS item
           </h2>
-          <p className="mt-1 text-sm text-muted">
-            Organise project work into groups and tasks.
-          </p>
-        </div>
-        <Button onClick={onClose}>Close</Button>
-      </div>
-      <div className="mt-6 flex justify-end">
-        <Button
-          variant="primary"
-          disabled={project.status !== "open"}
-          onClick={() => {
-            setDraft({ mode: "create" });
-            setName("");
-          }}
-        >
-          + Add Task
-        </Button>
-      </div>
-      <div className="mt-5 rounded-panel border border-border-subtle">
-        {loading && tree.length === 0 ? (
-          <ListSkeleton label="Loading project structure" />
-        ) : error ? (
-          <div className="p-8 text-center">
-            <Alert tone="danger">{error}</Alert>
-            <Button className="mt-4" onClick={() => setReload((v) => v + 1)}>
-              Try again
-            </Button>
+          <div className="mt-5">
+            <ListSkeleton label="Loading WBS item" />
           </div>
-        ) : tree.length === 0 ? (
-          <EmptyState
-            title="No tasks or groups yet"
-            description="Add the first task to start planning this project."
-            action={
-              <Button
-                variant="quiet"
-                onClick={() => {
-                  setDraft({ mode: "create" });
-                  setName("");
-                }}
-              >
-                Add Task
-              </Button>
-            }
-          />
-        ) : (
-          <ul className="p-4" role="tree">
-            {tree.map((node, index) => (
-              <TreeNode
-                key={node.id}
-                node={node}
-                first={index === 0}
-                last={index === tree.length - 1}
-                disabled={busy || project.status !== "open"}
-                onCreate={(selected) => {
-                  setDraft({ mode: "create", parentId: selected.id });
-                  setName("");
-                }}
-                onRename={(selected) => {
-                  setDraft({ mode: "rename", node: selected });
-                  setName(selected.name);
-                }}
-                onMove={(selected) => {
-                  setDraft({ mode: "move", node: selected });
-                  setTarget("");
-                }}
-                onReorder={(selected, d) =>
-                  void mutate(
-                    () => gateway.reorder(project.id, selected.id, d),
-                    "Item reordered.",
-                  )
-                }
-                onDelete={(selected) =>
-                  void mutate(
-                    () => gateway.remove(project.id, selected.id),
-                    "Task deleted.",
-                  )
-                }
-                onDetail={setDetail}
-              />
-            ))}
-          </ul>
-        )}
-      </div>
+        </Dialog>
+      ) : error && !draft && !detail ? (
+        <Dialog titleID="wbs-direct-error-title" onClose={onClose}>
+          <h2 id="wbs-direct-error-title" className="text-xl font-extrabold">
+            WBS item unavailable
+          </h2>
+          <Alert tone="danger" className="mt-4">
+            {error}
+          </Alert>
+          <div className="mt-6 flex justify-end">
+            <Button onClick={onClose}>Close</Button>
+          </div>
+        </Dialog>
+      ) : null}
       {draft ? (
         <Dialog
-          nested
           titleID="wbs-form-title"
-          onClose={() => !busy && setDraft(undefined)}
+          onClose={() => {
+            if (!busy) onClose();
+          }}
         >
           <form
             onSubmit={(event) => {
@@ -256,17 +232,15 @@ export function WBSPanel({
               submit();
             }}
           >
-            <h3 id="wbs-form-title" className="text-xl font-extrabold">
+            <h2 id="wbs-form-title" className="text-xl font-extrabold">
               {conversion
                 ? "This task will become a group"
                 : draft.mode === "create"
                   ? draft.parentId
                     ? "Add Child"
                     : "Add Task"
-                  : draft.mode === "rename"
-                    ? `Edit ${draft.node?.hasChildren ? "Group" : "Task"}`
-                    : "Move Item"}
-            </h3>
+                  : "Move Item"}
+            </h2>
             <div className="mt-5">
               {conversion ? (
                 <Alert tone="success">
@@ -286,18 +260,18 @@ export function WBSPanel({
                     id="wbs-parent"
                     className="ui-input mt-2"
                     value={target}
-                    onChange={(e) => setTarget(e.target.value)}
+                    onChange={(event) => setTarget(event.target.value)}
                   >
                     <option value="">Project root</option>
                     {all
                       .filter(
-                        (n) =>
-                          n.id !== draft.node?.id &&
-                          !descendants(draft.node, n.id),
+                        (node) =>
+                          node.id !== draft.node?.id &&
+                          !descendants(draft.node, node.id),
                       )
-                      .map((n) => (
-                        <option key={n.id} value={n.id}>
-                          {n.name}
+                      .map((node) => (
+                        <option key={node.id} value={node.id}>
+                          {node.name}
                         </option>
                       ))}
                   </select>
@@ -307,7 +281,7 @@ export function WBSPanel({
                   label="Name"
                   id="wbs-name"
                   value={name}
-                  onChange={(e) => setName(e.target.value)}
+                  onChange={(event) => setName(event.target.value)}
                   autoFocus
                 />
               )}
@@ -323,7 +297,7 @@ export function WBSPanel({
                 disabled={busy}
                 onClick={() => {
                   setConversion(false);
-                  setDraft(undefined);
+                  onClose();
                 }}
               >
                 Cancel
@@ -336,29 +310,23 @@ export function WBSPanel({
                   conversion
                     ? () => {
                         if (draft.mode === "create")
-                          void mutate(
-                            () =>
-                              gateway.create(
-                                project.id,
-                                draft.parentId,
-                                name,
-                                true,
-                              ),
-                            "Child added and task converted to a group.",
-                            returnToCallerOnComplete &&
-                              initialCreateParentId !== undefined,
+                          void mutate(() =>
+                            gateway.create(
+                              project.id,
+                              draft.parentId,
+                              name,
+                              true,
+                            ),
                           );
                         else if (draft.node) {
                           const selected = draft.node;
-                          void mutate(
-                            () =>
-                              gateway.move(
-                                project.id,
-                                selected.id,
-                                target || undefined,
-                                true,
-                              ),
-                            "Item moved and destination converted to a group.",
+                          void mutate(() =>
+                            gateway.move(
+                              project.id,
+                              selected.id,
+                              target || undefined,
+                              true,
+                            ),
                           );
                         }
                       }
@@ -381,154 +349,22 @@ export function WBSPanel({
           rolesGateway={rolesGateway}
           membersGateway={membersGateway}
           loadPublicHolidayDates={loadPublicHolidayDates}
-          onClose={() => {
-            if (returnToCallerOnComplete && initialNodeId) onClose();
-            else setDetail(undefined);
-          }}
-          onChanged={(message) => {
-            setDetail(undefined);
-            refresh(message);
-            if (returnToCallerOnComplete && initialNodeId) onClose();
-          }}
-          onReopened={(confirmed, message) => {
+          nested={false}
+          onClose={onClose}
+          onChanged={() => {
             dependenciesGateway?.invalidateAll();
-            setTree((current) => replaceNode(current, confirmed));
-            setToast(message);
-            if (returnToCallerOnComplete && initialNodeId) onClose();
-            else setDetail(confirmed);
+            onClose();
+          }}
+          onReopened={() => {
+            dependenciesGateway?.invalidateAll();
+            onClose();
           }}
         />
       ) : null}
-      <Toast message={toast} onDismiss={() => setToast("")} />
-    </Dialog>
+    </>
   );
 }
 
-function replaceNode(values: WBSNode[], replacement: WBSNode): WBSNode[] {
-  return values.map((value) => {
-    if (value.id === replacement.id) return replacement;
-    if (value.children.length === 0) return value;
-    return {
-      ...value,
-      children: replaceNode(value.children, replacement),
-    };
-  });
-}
-
-function TreeNode({
-  node,
-  first,
-  last,
-  disabled,
-  onCreate,
-  onRename,
-  onMove,
-  onReorder,
-  onDelete,
-  onDetail,
-}: {
-  node: WBSNode;
-  first: boolean;
-  last: boolean;
-  disabled: boolean;
-  onCreate(node: WBSNode): void;
-  onRename(node: WBSNode): void;
-  onMove(node: WBSNode): void;
-  onReorder(node: WBSNode, d: "up" | "down"): void;
-  onDelete(node: WBSNode): void;
-  onDetail(node: WBSNode): void;
-}) {
-  return (
-    <li
-      role="treeitem"
-      aria-expanded={node.hasChildren || undefined}
-      className="py-2"
-    >
-      <div className="flex flex-wrap items-center gap-2 rounded-control border border-border-subtle p-3">
-        <div className="mr-auto min-w-0">
-          <strong>{node.name}</strong>
-          <span className="ml-2 text-xs text-muted">
-            {node.hasChildren ? "Group" : "Task"}
-          </span>
-          {node.executable.effortMinutes ? (
-            <span className="ml-2 text-xs text-muted">
-              {node.executable.effortMinutes / 60}h
-            </span>
-          ) : null}
-        </div>
-        <Button compact onClick={() => onDetail(node)}>
-          {node.hasChildren ? "View Group" : "Edit Task"}
-        </Button>
-        <Button
-          compact
-          disabled={disabled || first}
-          aria-label={`Move ${node.name} up`}
-          onClick={() => onReorder(node, "up")}
-        >
-          ↑
-        </Button>
-        <Button
-          compact
-          disabled={disabled || last}
-          aria-label={`Move ${node.name} down`}
-          onClick={() => onReorder(node, "down")}
-        >
-          ↓
-        </Button>
-        <Button compact disabled={disabled} onClick={() => onCreate(node)}>
-          Add Child
-        </Button>
-        {node.hasChildren ? (
-          <Button
-            compact
-            disabled={
-              disabled ||
-              Boolean(node.executable.actualStart && node.executable.actualEnd)
-            }
-            onClick={() => onRename(node)}
-          >
-            Edit Group
-          </Button>
-        ) : null}
-        <Button compact disabled={disabled} onClick={() => onMove(node)}>
-          Move Item
-        </Button>
-        {!node.hasChildren ? (
-          <Button
-            compact
-            variant="danger"
-            disabled={
-              disabled ||
-              Boolean(node.executable.actualStart && node.executable.actualEnd)
-            }
-            onClick={() => onDelete(node)}
-          >
-            Delete Task
-          </Button>
-        ) : null}
-      </div>
-      {node.children.length ? (
-        <ul role="group" className="ml-6 border-l border-border-subtle pl-3">
-          {node.children.map((child, index) => (
-            <TreeNode
-              key={child.id}
-              node={child}
-              first={index === 0}
-              last={index === node.children.length - 1}
-              disabled={disabled}
-              onCreate={onCreate}
-              onRename={onRename}
-              onMove={onMove}
-              onReorder={onReorder}
-              onDelete={onDelete}
-              onDetail={onDetail}
-            />
-          ))}
-        </ul>
-      ) : null}
-    </li>
-  );
-}
 function findNode(nodes: WBSNode[], id: string): WBSNode | undefined {
   const pending = [...nodes];
   while (pending.length > 0) {
@@ -543,6 +379,7 @@ function findNode(nodes: WBSNode[], id: string): WBSNode | undefined {
 function flatten(nodes: WBSNode[]): WBSNode[] {
   return nodes.flatMap((node) => [node, ...flatten(node.children)]);
 }
+
 function descendants(node: WBSNode | undefined, id: string): boolean {
   return node ? flatten(node.children).some((child) => child.id === id) : false;
 }

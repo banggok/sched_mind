@@ -140,6 +140,37 @@ func (r *Repository) CreateNext(ctx context.Context, id, name string, automaticS
 	return nil, errors.New("create project with next priority: concurrent allocation did not settle")
 }
 
+func (r *Repository) Rename(ctx context.Context, id, name string, now time.Time) (*domain.Project, error) {
+	var changed *domain.Project
+	err := r.database.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		value, err := find(tx, id, true)
+		if err != nil {
+			return err
+		}
+		if value == nil {
+			return errors.New("rename project: find returned nil")
+		}
+		if err := value.Rename(name, now); err != nil {
+			return err
+		}
+		result := tx.Model(&projectModel{}).Where("id = ?", id).Updates(map[string]interface{}{
+			"name": value.Name, "name_key": domain.NormalizedNameKey(value.Name), "updated_at": value.UpdatedAt,
+		})
+		if errors.Is(result.Error, gorm.ErrDuplicatedKey) {
+			return domain.ErrNameExists
+		}
+		if result.Error != nil {
+			return result.Error
+		}
+		changed = value
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return changed, nil
+}
+
 func (r *Repository) UpdateDetails(ctx context.Context, id, name string, automaticScheduling bool, schedulingStartDate *time.Time, projectBuffer int, now time.Time, schedule func(context.Context, string) error, markUnscheduled func(context.Context, string, string) error) (*domain.Project, error) {
 	ctx, release := sharedpersistence.SerializeScheduleMutation(ctx)
 	defer release()

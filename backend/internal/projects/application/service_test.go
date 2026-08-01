@@ -12,6 +12,7 @@ import (
 
 type storeStub struct {
 	items      map[string]domain.Project
+	rename     func(context.Context, string, string, time.Time) (*domain.Project, error)
 	move       func(context.Context, string, domain.PriorityDirection, time.Time, func(context.Context) error) (*domain.Project, error)
 	status     func(context.Context, string, domain.Status, time.Time, func(context.Context) error) (*domain.Project, error)
 	bulkReopen func(context.Context, string, string, time.Time, func(context.Context) error) ([]domain.Project, error)
@@ -43,6 +44,20 @@ func (s *storeStub) CreateNext(_ context.Context, id, name string, automatic boo
 	}
 	s.items[id] = *value
 	return value, nil
+}
+func (s *storeStub) Rename(ctx context.Context, id, name string, now time.Time) (*domain.Project, error) {
+	if s.rename != nil {
+		return s.rename(ctx, id, name, now)
+	}
+	value, ok := s.items[id]
+	if !ok {
+		return nil, domain.ErrNotFound
+	}
+	if err := value.Rename(name, now); err != nil {
+		return nil, err
+	}
+	s.items[id] = value
+	return &value, nil
 }
 func (s *storeStub) UpdateDetails(ctx context.Context, id, name string, automatic bool, anchor *time.Time, buffer int, now time.Time, schedule func(context.Context, string) error, markUnscheduled func(context.Context, string, string) error) (*domain.Project, error) {
 	value := s.items[id]
@@ -170,6 +185,43 @@ func TestServiceSettingsCoordinatesProjectScheduler(t *testing.T) {
 	value, err := service.Update(context.Background(), "p1", "Renamed", true, &anchor, 35)
 	if err != nil || value == nil || value.ProjectBuffer != 35 || scheduler.calls != 1 || scheduler.projectID != "p1" {
 		t.Fatalf("settings: %#v %v scheduler=%#v", value, err, scheduler)
+	}
+}
+
+func TestServiceRenameLockedProjectPreservesProtectedFieldsWithoutScheduling_US31_AC11_US62_AC16A(t *testing.T) {
+	store := newStoreStub()
+	now := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
+	updatedAt := now.Add(time.Hour)
+	anchor := time.Date(2026, 8, 3, 0, 0, 0, 0, time.UTC)
+	executionSnapshot := `[{"taskId":"task-1"}]`
+	commitmentSnapshot := `[{"taskId":"task-1"}]`
+	project, err := domain.Rehydrate(
+		"p1", "Alpha", domain.StatusLocked, nil, nil, true, true, &anchor, 35, 4, 9, nil,
+		&executionSnapshot, &commitmentSnapshot, now, now,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.items[project.ID] = *project
+	scheduler := &schedulerStub{}
+	service := NewServiceWithDependencies(store, scheduler, func() time.Time { return updatedAt }, func() (string, error) { return "unused", nil })
+
+	renamed, err := service.Rename(context.Background(), "p1", " Renamed ")
+	if err != nil || renamed == nil {
+		t.Fatalf("rename: %#v %v", renamed, err)
+	}
+	if renamed.Name != "Renamed" || !renamed.UpdatedAt.Equal(updatedAt) {
+		t.Fatalf("identity fields: %#v", renamed)
+	}
+	if renamed.Status != domain.StatusLocked || renamed.Priority != 4 || renamed.ScheduleVersion != 9 ||
+		renamed.ProjectBuffer != 35 || !renamed.AutomaticScheduling || renamed.SchedulingStartDate == nil ||
+		!renamed.SchedulingStartDate.Equal(anchor) || renamed.LockedExecutionSnapshot == nil ||
+		*renamed.LockedExecutionSnapshot != executionSnapshot || renamed.LockedCommitmentSnapshot == nil ||
+		*renamed.LockedCommitmentSnapshot != commitmentSnapshot {
+		t.Fatalf("protected fields changed: %#v", renamed)
+	}
+	if scheduler.calls != 0 {
+		t.Fatalf("scheduler calls = %d, want 0", scheduler.calls)
 	}
 }
 

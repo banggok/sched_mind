@@ -43,6 +43,7 @@ function projectGateway(projects: Project[] = [alpha]): ProjectsGateway {
     }),
     get: vi.fn(),
     create: vi.fn().mockResolvedValue(alpha),
+    rename: vi.fn().mockResolvedValue(alpha),
     update: vi.fn().mockResolvedValue(alpha),
     changeStatus: vi.fn().mockResolvedValue(alpha),
     bulkReopen: vi.fn().mockResolvedValue([alpha]),

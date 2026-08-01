@@ -1,13 +1,14 @@
 import {
+  act,
   fireEvent,
   render,
   screen,
   waitFor,
   within,
 } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { DependenciesGateway } from "../../dependencies/application/dependenciesGateway";
-import type { DependencyDetail } from "../../dependencies/domain/dependency";
 import type { Project } from "../../projects/domain/project";
 import type { RolesGateway } from "../../roles/application/rolesGateway";
 import type { TeamMembersGateway } from "../../team-members/application/teamMembersGateway";
@@ -32,7 +33,10 @@ const options = {
     list: vi
       .fn()
       .mockResolvedValue({ items: [], page: 1, pageSize: 100, total: 0 }),
-  } as unknown as RolesGateway,
+    create: vi.fn(),
+    update: vi.fn(),
+    delete: vi.fn(),
+  } satisfies RolesGateway,
   membersGateway: {
     list: vi
       .fn()
@@ -40,8 +44,9 @@ const options = {
     create: vi.fn(),
     update: vi.fn(),
     delete: vi.fn(),
-  } as unknown as TeamMembersGateway,
+  } satisfies TeamMembersGateway,
 };
+
 function node(id: string, name: string, children: WBSNode[] = []): WBSNode {
   return {
     id,
@@ -53,6 +58,7 @@ function node(id: string, name: string, children: WBSNode[] = []): WBSNode {
     children,
   };
 }
+
 function gateway(tree: WBSNode[]): WBSGateway {
   return {
     tree: vi.fn().mockResolvedValue(tree),
@@ -60,146 +66,84 @@ function gateway(tree: WBSNode[]): WBSGateway {
       .fn()
       .mockResolvedValue({ execution: [], commitment: [], actual: [] }),
     create: vi.fn().mockResolvedValue(undefined),
-    rename: vi.fn(),
-    reorder: vi.fn(),
-    move: vi.fn(),
-    remove: vi.fn(),
-    updateExecutable: vi.fn(),
+    rename: vi.fn().mockResolvedValue(undefined),
+    reorder: vi.fn().mockResolvedValue(undefined),
+    move: vi.fn().mockResolvedValue(undefined),
+    remove: vi.fn().mockResolvedValue(undefined),
+    updateExecutable: vi.fn().mockResolvedValue(undefined),
     previewExecutableSchedule: vi.fn(),
-    complete: vi.fn(),
+    complete: vi.fn().mockResolvedValue(undefined),
     reopen: vi.fn(),
   };
 }
 
-describe("WBS presentation terminology", () => {
-  it("AC-1 shows one dependency from both directions through contextual Edit Task", async () => {
-    const dependencyId = "dependency-ab";
-    const taskA = node("a", "API");
-    const taskB = node("b", "Build");
-    const dependenciesGateway: DependenciesGateway = {
-      list: vi.fn(async (taskId: string): Promise<DependencyDetail> => {
-        if (taskId === taskA.id) {
-          return {
-            blockedBy: [],
-            blocks: [
-              {
-                id: dependencyId,
-                source: "manual",
-                manualRemovable: true,
-                task: {
-                  id: taskB.id,
-                  name: taskB.name,
-                  projectId: project.id,
-                  projectName: project.name,
-                  hierarchyPath: `${project.name} > ${taskB.name}`,
-                  completed: false,
-                },
-              },
-            ],
-          };
-        }
-        if (taskId === taskB.id) {
-          return {
-            blockedBy: [
-              {
-                id: dependencyId,
-                source: "manual",
-                manualRemovable: true,
-                task: {
-                  id: taskA.id,
-                  name: taskA.name,
-                  projectId: project.id,
-                  projectName: project.name,
-                  hierarchyPath: `${project.name} > ${taskA.name}`,
-                  completed: false,
-                },
-              },
-            ],
-            blocks: [],
-          };
-        }
-        throw new Error(`unexpected task ${taskId}`);
-      }),
-      candidates: vi.fn().mockResolvedValue({
-        items: [],
-        page: 1,
-        pageSize: 5,
-        totalItems: 0,
-      }),
-      create: vi.fn().mockResolvedValue(undefined),
-      remove: vi.fn().mockResolvedValue(undefined),
-      keepAsManual: vi.fn().mockResolvedValue(undefined),
-      invalidateTask: vi.fn(),
-      invalidateAll: vi.fn(),
-    };
+function dependenciesGateway(): DependenciesGateway {
+  return {
+    list: vi.fn().mockResolvedValue({ blockedBy: [], blocks: [] }),
+    candidates: vi.fn().mockResolvedValue({
+      items: [],
+      page: 1,
+      pageSize: 5,
+      totalItems: 0,
+    }),
+    create: vi.fn().mockResolvedValue(undefined),
+    remove: vi.fn().mockResolvedValue(undefined),
+    keepAsManual: vi.fn().mockResolvedValue(undefined),
+    invalidateTask: vi.fn(),
+    invalidateAll: vi.fn(),
+  };
+}
+
+describe("WBS direct Home action controller", () => {
+  it("opens a Task directly and exposes dependency state without Project Structure", async () => {
+    const task = node("task", "Backend API");
+    const deps = dependenciesGateway();
+    vi.mocked(deps.list).mockResolvedValue({
+      blockedBy: [],
+      blocks: [
+        {
+          id: "dependency",
+          source: "manual",
+          manualRemovable: true,
+          task: {
+            id: "deploy",
+            name: "Deploy",
+            projectId: "project",
+            projectName: "Alpha",
+            hierarchyPath: "Alpha > Deploy",
+            completed: false,
+          },
+        },
+      ],
+    });
 
     render(
       <WBSPanel
         project={project}
-        gateway={gateway([taskA, taskB])}
-        dependenciesGateway={dependenciesGateway}
+        gateway={gateway([task])}
+        dependenciesGateway={deps}
         {...options}
+        initialNodeId="task"
         onClose={() => undefined}
       />,
     );
 
-    const tree = await screen.findByRole("tree");
-    const apiTreeItem = within(tree)
-      .getByText("API")
-      .closest<HTMLElement>('[role="treeitem"]');
-
-    expect(apiTreeItem).not.toBeNull();
-    if (!apiTreeItem) {
-      throw new Error("API tree item was not found");
-    }
-
-    fireEvent.click(
-      within(apiTreeItem).getByRole("button", { name: "Edit Task" }),
-    );
-
-    let detailDialog = await screen.findByRole("dialog", { name: "Edit Task" });
-    const blocksHeading = await within(detailDialog).findByRole("heading", {
+    const detail = await screen.findByRole("dialog", { name: "Edit Task" });
+    expect(screen.queryByText("Project Structure")).toBeNull();
+    expect(
+      (within(detail).getByLabelText("Name") as HTMLInputElement).value,
+    ).toBe("Backend API");
+    const blocksHeading = await within(detail).findByRole("heading", {
       name: "Blocks",
     });
     const blocksSection = blocksHeading.parentElement?.parentElement;
     expect(blocksSection).not.toBeNull();
     if (!blocksSection) return;
-    expect(within(blocksSection).getByText("Build")).not.toBeNull();
-
-    fireEvent.click(
-      within(detailDialog).getByRole("button", { name: "Close" }),
-    );
-
-    const buildTreeItem = within(tree)
-      .getByText("Build")
-      .closest<HTMLElement>('[role="treeitem"]');
-
-    expect(buildTreeItem).not.toBeNull();
-    if (!buildTreeItem) {
-      throw new Error("Build tree item was not found");
-    }
-
-    fireEvent.click(
-      within(buildTreeItem).getByRole("button", { name: "Edit Task" }),
-    );
-
-    detailDialog = await screen.findByRole("dialog", { name: "Edit Task" });
-    await waitFor(() => {
-      expect(dependenciesGateway.list).toHaveBeenCalledWith(
-        taskB.id,
-        expect.any(AbortSignal),
-      );
-    });
-    const blockedByHeading = await within(detailDialog).findByRole("heading", {
-      name: "Blocked by",
-    });
-    const blockedBySection = blockedByHeading.parentElement?.parentElement;
-    expect(blockedBySection).not.toBeNull();
-    if (!blockedBySection) return;
-    expect(within(blockedBySection).getByText("API")).not.toBeNull();
+    expect(within(blocksSection).getByText("Deploy")).not.toBeNull();
+    expect(deps.list).toHaveBeenCalledWith("task", expect.any(AbortSignal));
   });
 
-  it("AC-2 keeps confirmed Task data visible while dependencies are loading", async () => {
+  it("keeps confirmed Task data visible while dependencies load", async () => {
     let resolveDependencies:
       | ((value: Awaited<ReturnType<DependenciesGateway["list"]>>) => void)
       | undefined;
@@ -208,351 +152,235 @@ describe("WBS presentation terminology", () => {
     >((resolve) => {
       resolveDependencies = resolve;
     });
-    const task = node("task", "Backend API");
-    const dependenciesGateway: DependenciesGateway = {
-      list: vi.fn().mockReturnValue(pendingDependencies),
-      candidates: vi.fn().mockResolvedValue({
-        items: [],
-        page: 1,
-        pageSize: 5,
-        totalItems: 0,
-      }),
-      create: vi.fn().mockResolvedValue(undefined),
-      remove: vi.fn().mockResolvedValue(undefined),
-      keepAsManual: vi.fn().mockResolvedValue(undefined),
-      invalidateTask: vi.fn(),
-      invalidateAll: vi.fn(),
-    };
+    const deps = dependenciesGateway();
+    vi.mocked(deps.list).mockReturnValue(pendingDependencies);
 
     render(
       <WBSPanel
         project={project}
-        gateway={gateway([task])}
-        dependenciesGateway={dependenciesGateway}
+        gateway={gateway([node("task", "Backend API")])}
+        dependenciesGateway={deps}
         {...options}
+        initialNodeId="task"
         onClose={() => undefined}
       />,
     );
 
-    const tree = await screen.findByRole("tree");
-    const taskTreeItem = within(tree)
-      .getByText("Backend API")
-      .closest<HTMLElement>('[role="treeitem"]');
-
-    expect(taskTreeItem).not.toBeNull();
-    if (!taskTreeItem) {
-      throw new Error("Backend API tree item was not found");
-    }
-
-    fireEvent.click(
-      within(taskTreeItem).getByRole("button", { name: "Edit Task" }),
-    );
-
-    const detailDialog = await screen.findByRole("dialog", {
-      name: "Edit Task",
-    });
-
-    const nameInput = within(detailDialog).getByLabelText(
-      "Name",
-    ) as HTMLInputElement;
-    expect(nameInput.value).toBe("Backend API");
+    const detail = await screen.findByRole("dialog", { name: "Edit Task" });
     expect(
-      within(detailDialog).getByRole("status", {
-        name: "Loading dependencies",
-      }),
+      (within(detail).getByLabelText("Name") as HTMLInputElement).value,
+    ).toBe("Backend API");
+    expect(
+      within(detail).getByRole("status", { name: "Loading dependencies" }),
     ).not.toBeNull();
-    expect(within(detailDialog).queryByText("No dependencies.")).toBeNull();
-
     resolveDependencies?.({ blockedBy: [], blocks: [] });
-
-    await waitFor(() => {
-      expect(
-        within(detailDialog).getAllByText("No dependencies."),
-      ).toHaveLength(2);
-    });
+    await waitFor(() =>
+      expect(within(detail).getAllByText("No dependencies.")).toHaveLength(2),
+    );
   });
 
-  it("AC-3 shows empty dependency states and Add actions through contextual Edit Task", async () => {
-    const task = node("task", "Backend API");
-    const dependenciesGateway: DependenciesGateway = {
-      list: vi.fn().mockResolvedValue({ blockedBy: [], blocks: [] }),
-      candidates: vi.fn().mockResolvedValue({
-        items: [],
-        page: 1,
-        pageSize: 5,
-        totalItems: 0,
-      }),
-      create: vi.fn().mockResolvedValue(undefined),
-      remove: vi.fn().mockResolvedValue(undefined),
-      keepAsManual: vi.fn().mockResolvedValue(undefined),
-      invalidateTask: vi.fn(),
-      invalidateAll: vi.fn(),
-    };
-
+  it("does not render the removed standalone panel when no Home action is supplied", async () => {
     render(
       <WBSPanel
         project={project}
-        gateway={gateway([task])}
-        dependenciesGateway={dependenciesGateway}
+        gateway={gateway([])}
         {...options}
         onClose={() => undefined}
       />,
     );
 
-    const tree = await screen.findByRole("tree");
-    const taskTreeItem = within(tree)
-      .getByText("Backend API")
-      .closest<HTMLElement>('[role="treeitem"]');
-
-    expect(taskTreeItem).not.toBeNull();
-    if (!taskTreeItem) {
-      throw new Error("Backend API tree item was not found");
-    }
-
-    fireEvent.click(
-      within(taskTreeItem).getByRole("button", { name: "Edit Task" }),
-    );
-
-    const detailDialog = await screen.findByRole("dialog", {
-      name: "Edit Task",
-    });
-
-    const blockedByHeading = await within(detailDialog).findByRole("heading", {
-      name: "Blocked by",
-    });
-    const blocksHeading = within(detailDialog).getByRole("heading", {
-      name: "Blocks",
-    });
-    const blockedBySection = blockedByHeading.parentElement?.parentElement;
-    const blocksSection = blocksHeading.parentElement?.parentElement;
-
-    expect(blockedBySection).not.toBeNull();
-    expect(blocksSection).not.toBeNull();
-    if (!blockedBySection || !blocksSection) {
-      throw new Error("Dependency sections were not found");
-    }
-
     expect(
-      within(blockedBySection).getByText("No dependencies."),
+      await screen.findByRole("dialog", { name: "WBS item unavailable" }),
     ).not.toBeNull();
-    expect(within(blocksSection).getByText("No dependencies.")).not.toBeNull();
-
-    const blockedByAdd = within(blockedBySection).getByRole("button", {
-      name: "Add",
-    });
-    const blocksAdd = within(blocksSection).getByRole("button", {
-      name: "Add",
-    });
-
-    fireEvent.click(blockedByAdd);
-    expect(within(detailDialog).getByLabelText("Search tasks")).not.toBeNull();
-    await waitFor(() => {
-      expect(dependenciesGateway.candidates).toHaveBeenCalledWith(
-        task.id,
-        "blockedBy",
-        "",
-        1,
-        5,
-        expect.any(AbortSignal),
-      );
-    });
-    expect(
-      await within(detailDialog).findByText("No matching tasks."),
-    ).not.toBeNull();
-
-    fireEvent.click(
-      within(detailDialog).getByRole("button", { name: "Cancel" }),
-    );
-    fireEvent.click(blocksAdd);
-    expect(within(detailDialog).getByLabelText("Search tasks")).not.toBeNull();
-    await waitFor(() => {
-      expect(dependenciesGateway.candidates).toHaveBeenCalledWith(
-        task.id,
-        "blocks",
-        "",
-        1,
-        5,
-        expect.any(AbortSignal),
-      );
-    });
-    expect(
-      await within(detailDialog).findByText("No matching tasks."),
-    ).not.toBeNull();
+    expect(screen.getByText(/Choose one WBS action from Home/)).not.toBeNull();
+    expect(screen.queryByText("Project Structure")).toBeNull();
+    expect(screen.queryByRole("tree")).toBeNull();
   });
 
-  it("AC-4 retries a failed dependency load through contextual Edit Task", async () => {
-    const task = node("task", "Backend API");
-    const dependenciesGateway: DependenciesGateway = {
-      list: vi
-        .fn()
-        .mockRejectedValueOnce(new Error("database timeout"))
-        .mockResolvedValueOnce({
-          blockedBy: [
-            {
-              id: "dependency-auth-api",
-              source: "manual",
-              manualRemovable: true,
-              task: {
-                id: "authentication",
-                name: "Authentication",
-                projectId: "security",
-                projectName: "Security",
-                hierarchyPath: "Security > Authentication",
-                completed: false,
-              },
-            },
-          ],
-          blocks: [],
-        }),
-      candidates: vi.fn().mockResolvedValue({
-        items: [],
-        page: 1,
-        pageSize: 5,
-        totalItems: 0,
-      }),
-      create: vi.fn().mockResolvedValue(undefined),
-      remove: vi.fn().mockResolvedValue(undefined),
-      keepAsManual: vi.fn().mockResolvedValue(undefined),
-      invalidateTask: vi.fn(),
-      invalidateAll: vi.fn(),
-    };
-
+  it("opens the shared Group summary and rename dialog directly", async () => {
+    vi.mocked(options.rolesGateway.list).mockClear();
+    vi.mocked(options.membersGateway.list).mockClear();
+    const group = node("group", "Development", [node("task", "Backend API")]);
+    const api = gateway([group]);
+    const onClose = vi.fn();
     render(
       <WBSPanel
         project={project}
-        gateway={gateway([task])}
-        dependenciesGateway={dependenciesGateway}
+        gateway={api}
         {...options}
-        onClose={() => undefined}
+        initialNodeId="group"
+        onClose={onClose}
       />,
     );
 
-    const tree = await screen.findByRole("tree");
-    const taskTreeItem = within(tree)
-      .getByText("Backend API")
-      .closest<HTMLElement>('[role="treeitem"]');
+    const dialog = await screen.findByRole("dialog", { name: "Development" });
+    const name = within(dialog).getByLabelText("Name");
+    fireEvent.change(name, { target: { value: "Delivery" } });
+    fireEvent.submit(name.closest("form")!);
+    await waitFor(() =>
+      expect(api.rename).toHaveBeenCalledWith("project", "group", "Delivery"),
+    );
+    expect(options.rolesGateway.list).not.toHaveBeenCalled();
+    expect(options.membersGateway.list).not.toHaveBeenCalled();
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
 
-    expect(taskTreeItem).not.toBeNull();
-    if (!taskTreeItem) {
-      throw new Error("Backend API tree item was not found");
-    }
-
-    fireEvent.click(
-      within(taskTreeItem).getByRole("button", { name: "Edit Task" }),
+  it("opens Move to with destinations from the full authoritative tree", async () => {
+    const source = node("source", "Source");
+    const destination = node("destination", "Destination", [
+      node("nested", "Nested"),
+    ]);
+    const api = gateway([source, destination]);
+    const onClose = vi.fn();
+    render(
+      <WBSPanel
+        project={project}
+        gateway={api}
+        {...options}
+        initialMoveNodeId="source"
+        onClose={onClose}
+      />,
     );
 
-    const detailDialog = await screen.findByRole("dialog", {
-      name: "Edit Task",
-    });
-
-    expect(
-      await within(detailDialog).findByText(
-        /dependencies could not be loaded/i,
+    const dialog = await screen.findByRole("dialog", { name: "Move Item" });
+    const destinationSelect =
+      within(dialog).getByLabelText("Destination group");
+    expect(within(destinationSelect).getByText("Destination")).not.toBeNull();
+    expect(within(destinationSelect).getByText("Nested")).not.toBeNull();
+    fireEvent.change(destinationSelect, { target: { value: "destination" } });
+    fireEvent.submit(destinationSelect.closest("form")!);
+    await waitFor(() =>
+      expect(api.move).toHaveBeenCalledWith(
+        "project",
+        "source",
+        "destination",
+        false,
       ),
-    ).not.toBeNull();
-    expect(within(detailDialog).queryByText("database timeout")).toBeNull();
-
-    fireEvent.click(
-      within(detailDialog).getByRole("button", { name: "Retry" }),
     );
-
-    expect(
-      await within(detailDialog).findByText("Authentication"),
-    ).not.toBeNull();
-
-    await waitFor(() => {
-      expect(
-        within(detailDialog).queryByText(/dependencies could not be loaded/i),
-      ).toBeNull();
-      expect(dependenciesGateway.list).toHaveBeenCalledTimes(2);
-    });
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it("uses Project Structure, Task, Group, and the product empty state", async () => {
-    const empty = gateway([]);
-    const view = render(
-      <WBSPanel
-        project={project}
-        gateway={empty}
-        {...options}
-        onClose={() => undefined}
-      />,
+  it("rejects a stale direct Move draft when the source disappears", async () => {
+    let confirmedTree = [node("source", "Source"), node("target", "Target")];
+    let notifyConfirmedChange: (() => void) | undefined;
+    const api = gateway(confirmedTree);
+    vi.mocked(api.tree).mockImplementation(() =>
+      Promise.resolve(confirmedTree),
     );
-    expect(
-      await screen.findByRole("heading", { name: "Project Structure" }),
-    ).not.toBeNull();
-    expect(await screen.findByText("No tasks or groups yet")).not.toBeNull();
-    expect(
-      screen.getAllByRole("button", { name: /Add Task/ }).length,
-    ).toBeGreaterThan(0);
-    expect(view.container.textContent).not.toMatch(
-      /Executable WBS|Grouping WBS|Add WBS/,
-    );
-    view.unmount();
+    api.subscribeToConfirmedChanges = (listener) => {
+      notifyConfirmedChange = listener;
+      return () => undefined;
+    };
+
     render(
       <WBSPanel
         project={project}
-        gateway={gateway([
-          node("group", "Development", [node("task", "Backend API")]),
-        ])}
+        gateway={api}
         {...options}
+        initialMoveNodeId="source"
         onClose={() => undefined}
       />,
     );
-    expect(await screen.findByText("Group")).not.toBeNull();
-    expect(screen.getByText("Task")).not.toBeNull();
-    expect(screen.getAllByRole("button", { name: "Edit Task" })).toHaveLength(
-      1,
-    );
+
+    expect(
+      await screen.findByRole("dialog", { name: "Move Item" }),
+    ).not.toBeNull();
+    confirmedTree = [node("target", "Target")];
+    await act(async () => {
+      notifyConfirmedChange?.();
+    });
+
+    expect(
+      await screen.findByRole("dialog", { name: "WBS item unavailable" }),
+    ).not.toBeNull();
+    expect(
+      screen.getByText(/selected WBS item no longer exists/),
+    ).not.toBeNull();
+    expect(api.move).not.toHaveBeenCalled();
   });
-  it("returns directly to Home after closing an initially opened Group", async () => {
-    const close = vi.fn();
+
+  it("keeps the shared Group dialog read-only for a Locked Project", async () => {
+    const locked = { ...project, status: "locked" as const };
     const group = node("group", "Development", [node("task", "Backend API")]);
     render(
       <WBSPanel
-        project={project}
+        project={locked}
         gateway={gateway([group])}
         {...options}
         initialNodeId="group"
-        returnToCallerOnComplete
-        onClose={close}
+        onClose={() => undefined}
       />,
     );
 
-    const detailDialog = await screen.findByRole("dialog", {
-      name: "Development",
-    });
-    fireEvent.click(
-      within(detailDialog).getByRole("button", { name: "Close" }),
+    const dialog = await screen.findByRole("dialog", { name: "Development" });
+    expect(within(dialog).getByLabelText("Name").hasAttribute("disabled")).toBe(
+      true,
     );
-
-    expect(close).toHaveBeenCalledTimes(1);
+    expect(within(dialog).queryByRole("button", { name: "Save" })).toBeNull();
+    expect(
+      within(dialog).getByRole("button", { name: "Close" }),
+    ).not.toBeNull();
   });
 
-  it("returns directly to Home after an initially requested Add Task succeeds", async () => {
-    const close = vi.fn();
+  it("opens a Locked Task with planning fields read-only and Actual Date writable", async () => {
+    const locked = { ...project, status: "locked" as const };
+    const task = node("task", "Backend API");
+    const api = gateway([task]);
+    const onClose = vi.fn();
+    render(
+      <WBSPanel
+        project={locked}
+        gateway={api}
+        {...options}
+        initialNodeId="task"
+        onClose={onClose}
+      />,
+    );
+
+    const dialog = await screen.findByRole("dialog", { name: "Edit Task" });
+    expect(within(dialog).getByLabelText("Name").hasAttribute("disabled")).toBe(
+      true,
+    );
+    const actualDate = within(dialog).getByRole("button", {
+      name: "Actual Date: Select start and end date",
+    });
+    expect(actualDate.hasAttribute("disabled")).toBe(false);
+    fireEvent.click(actualDate);
+    const current = new Date();
+    const currentMonth = `${current.getUTCFullYear()}-${String(
+      current.getUTCMonth() + 1,
+    ).padStart(2, "0")}`;
+    const start = `${currentMonth}-14`;
+    const end = `${currentMonth}-15`;
+    fireEvent.click(screen.getByRole("button", { name: start }));
+    fireEvent.click(screen.getByRole("button", { name: end }));
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Mark completed" }),
+    );
+    await waitFor(() =>
+      expect(api.complete).toHaveBeenCalledWith("project", "task", start, end),
+    );
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns to Home after an Add Task request succeeds", async () => {
     const api = gateway([]);
+    const onClose = vi.fn();
     render(
       <WBSPanel
         project={project}
         gateway={api}
         {...options}
         initialCreateParentId={null}
-        returnToCallerOnComplete
-        onClose={close}
+        onClose={onClose}
       />,
     );
 
-    const createDialog = await screen.findByRole("dialog", {
-      name: "Add Task",
-    });
-    fireEvent.change(within(createDialog).getByLabelText("Name"), {
+    const dialog = await screen.findByRole("dialog", { name: "Add Task" });
+    fireEvent.change(within(dialog).getByLabelText("Name"), {
       target: { value: "API" },
     });
-    fireEvent.submit(
-      within(createDialog).getByLabelText("Name").closest("form")!,
-    );
-
+    fireEvent.submit(within(dialog).getByLabelText("Name").closest("form")!);
     await waitFor(() =>
       expect(api.create).toHaveBeenCalledWith(
         "project",
@@ -561,10 +389,10 @@ describe("WBS presentation terminology", () => {
         false,
       ),
     );
-    expect(close).toHaveBeenCalledTimes(1);
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it("shows an explicit user-facing conversion confirmation", async () => {
+  it("shows explicit conversion confirmation for direct Add Child", async () => {
     const task = node("task", "Backend API");
     const api = gateway([task]);
     vi.mocked(api.create)
@@ -572,20 +400,22 @@ describe("WBS presentation terminology", () => {
         new WBSOperationError("WBS_CONVERSION_REQUIRED", "technical message"),
       )
       .mockResolvedValueOnce(undefined);
+    const onClose = vi.fn();
     render(
       <WBSPanel
         project={project}
         gateway={api}
         {...options}
-        onClose={() => undefined}
+        initialCreateParentId="task"
+        onClose={onClose}
       />,
     );
-    await screen.findByText("Backend API");
-    fireEvent.click(screen.getByRole("button", { name: "Add Child" }));
-    fireEvent.change(screen.getByLabelText("Name"), {
+
+    const dialog = await screen.findByRole("dialog", { name: "Add Child" });
+    fireEvent.change(within(dialog).getByLabelText("Name"), {
       target: { value: "API tests" },
     });
-    fireEvent.submit(screen.getByLabelText("Name").closest("form")!);
+    fireEvent.submit(within(dialog).getByLabelText("Name").closest("form")!);
     expect(
       await screen.findByRole("heading", {
         name: "This task will become a group",
@@ -594,7 +424,7 @@ describe("WBS presentation terminology", () => {
     expect(
       screen.getByText(/current task details will be moved/),
     ).not.toBeNull();
-    fireEvent.click(
+    await userEvent.click(
       screen.getByRole("button", { name: "Add Child and Convert" }),
     );
     await waitFor(() =>
@@ -605,5 +435,6 @@ describe("WBS presentation terminology", () => {
         true,
       ),
     );
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });

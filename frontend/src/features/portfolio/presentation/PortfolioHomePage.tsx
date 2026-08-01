@@ -6,6 +6,7 @@ import {
   type CSSProperties,
   type FormEvent,
 } from "react";
+import { createPortal } from "react-dom";
 import { PageContent } from "../../../app/PageContent";
 import { Alert } from "../../../shared/presentation/Alert";
 import { Button } from "../../../shared/presentation/Button";
@@ -15,6 +16,10 @@ import { FormField } from "../../../shared/presentation/FormField";
 import { ListSkeleton } from "../../../shared/presentation/ListSkeleton";
 import { Toast } from "../../../shared/presentation/Toast";
 import { subscribeScheduleProjectionVersion } from "../../../shared/infrastructure/scheduleProjectionClock";
+import {
+  WBSOperationError,
+  type WBSGateway,
+} from "../../wbs/application/wbsGateway";
 import type { PortfolioGateway } from "../application/portfolioGateway";
 import {
   PortfolioOperationError,
@@ -31,9 +36,23 @@ const systemFilterID = "__all-active-projects__";
 const unassignedRoleKey = "__unassigned__";
 const dayWidth = 34;
 const rowHeight = 40;
-const ganttHeaderHeight = 60;
+const ganttHeaderHeight = 84;
 const maximumRenderedRows = 80;
 const rowOverscan = 8;
+const shortMonthNames = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
 
 const initialColumns: GridColumn[] = [
   { key: "wbs", label: "WBS", width: 48, minimum: 44, maximum: 96 },
@@ -52,11 +71,14 @@ const initialColumns: GridColumn[] = [
 ];
 
 type ValidRange = { from: string; to: string };
+type BarFractions = { start: number; end: number };
 type WBSOpenRequest = {
   projectId: string;
   nodeId?: string;
   createParentId?: string | null;
+  moveNodeId?: string;
 };
+export type HomeProjectCommandKind = "lock" | "close" | "reopen" | "delete";
 type RoleOption = { key: string; label: string };
 type GridColumn = {
   key: "wbs" | "name" | "role" | "assignee" | "effort" | "start" | "end";
@@ -68,11 +90,15 @@ type GridColumn = {
 
 export function PortfolioHomePage({
   gateway,
+  wbsGateway,
   onOpenProject,
+  onProjectCommand,
   onOpenWBS,
 }: {
   gateway: PortfolioGateway;
+  wbsGateway: WBSGateway;
   onOpenProject(projectId: string): void;
+  onProjectCommand(kind: HomeProjectCommandKind, projectId: string): void;
   onOpenWBS(request: WBSOpenRequest): void;
 }) {
   const [projects, setProjects] = useState<PortfolioProject[]>([]);
@@ -105,6 +131,8 @@ export function PortfolioHomePage({
   const [filterError, setFilterError] = useState("");
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState("");
+  const [actionBusyRowID, setActionBusyRowID] = useState("");
+  const [pendingDelete, setPendingDelete] = useState<PortfolioRow>();
   const activeFilterIDRef = useRef(activeFilterID);
   const metadataInitializedRef = useRef(false);
 
@@ -236,6 +264,8 @@ export function PortfolioHomePage({
     () => visiblePortfolioRows(roleAdjustedRows, collapsed),
     [collapsed, roleAdjustedRows],
   );
+  const restrictiveRoleFilter =
+    roleFilterActive && effectiveRoleKeys.length < roleOptions.length;
   const filterProjectDraftSet = useMemo(
     () => new Set(filterProjectDraft),
     [filterProjectDraft],
@@ -407,6 +437,43 @@ export function PortfolioHomePage({
     }
   }
 
+  async function mutateWBS(
+    row: PortfolioRow,
+    action: () => Promise<void>,
+    successMessage: string,
+  ): Promise<boolean> {
+    if (actionBusyRowID) return false;
+    setActionBusyRowID(row.id);
+    try {
+      await action();
+      setReloadProjection((value) => value + 1);
+      setToast(successMessage);
+      return true;
+    } catch (reason: unknown) {
+      setToast(
+        reason instanceof WBSOperationError
+          ? reason.message
+          : reason instanceof Error
+            ? reason.message
+            : "The WBS item could not be updated.",
+      );
+      return false;
+    } finally {
+      setActionBusyRowID("");
+    }
+  }
+
+  async function confirmWBSDelete() {
+    if (!pendingDelete) return;
+    const selected = pendingDelete;
+    const deleted = await mutateWBS(
+      selected,
+      () => wbsGateway.remove(selected.projectId, selected.id),
+      "Task deleted.",
+    );
+    if (deleted) setPendingDelete(undefined);
+  }
+
   return (
     <>
       <PageContent>
@@ -465,6 +532,7 @@ export function PortfolioHomePage({
             ) : (
               <Gantt
                 rows={visibleRows}
+                authoritativeRows={portfolio.rows}
                 dependencies={portfolio.dependencies}
                 holidays={portfolio.holidays}
                 holidayMap={holidayMap}
@@ -472,6 +540,8 @@ export function PortfolioHomePage({
                 days={days}
                 timelineWidth={timelineWidth}
                 collapsed={collapsed}
+                restrictiveRoleFilter={restrictiveRoleFilter}
+                busyRowID={actionBusyRowID}
                 onToggle={(id) =>
                   setCollapsed((current) => {
                     const next = new Set(current);
@@ -481,7 +551,16 @@ export function PortfolioHomePage({
                   })
                 }
                 onOpenProject={onOpenProject}
+                onProjectCommand={onProjectCommand}
                 onOpenWBS={onOpenWBS}
+                onReorder={(row, direction) =>
+                  void mutateWBS(
+                    row,
+                    () => wbsGateway.reorder(row.projectId, row.id, direction),
+                    "Item reordered.",
+                  )
+                }
+                onDelete={setPendingDelete}
               />
             )}
           </section>
@@ -823,6 +902,38 @@ export function PortfolioHomePage({
           </div>
         </Dialog>
       ) : null}
+      {pendingDelete ? (
+        <Dialog
+          titleID="home-wbs-delete-title"
+          kind="alertdialog"
+          onClose={() => !actionBusyRowID && setPendingDelete(undefined)}
+        >
+          <h2
+            id="home-wbs-delete-title"
+            className="text-dialog-title font-black"
+          >
+            Delete {pendingDelete.name}?
+          </h2>
+          <p className="mt-3 text-sm text-muted">
+            This permanently removes the unfinished leaf Task.
+          </p>
+          <div className="form-actions">
+            <Button
+              disabled={Boolean(actionBusyRowID)}
+              onClick={() => setPendingDelete(undefined)}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              loading={Boolean(actionBusyRowID)}
+              onClick={() => void confirmWBSDelete()}
+            >
+              Delete Task
+            </Button>
+          </div>
+        </Dialog>
+      ) : null}
       {toast ? <Toast message={toast} onDismiss={() => setToast("")} /> : null}
     </>
   );
@@ -830,6 +941,7 @@ export function PortfolioHomePage({
 
 function Gantt({
   rows,
+  authoritativeRows,
   dependencies,
   holidays,
   holidayMap,
@@ -837,11 +949,17 @@ function Gantt({
   days,
   timelineWidth,
   collapsed,
+  restrictiveRoleFilter,
+  busyRowID,
   onToggle,
   onOpenProject,
+  onProjectCommand,
   onOpenWBS,
+  onReorder,
+  onDelete,
 }: {
   rows: PortfolioRow[];
+  authoritativeRows: PortfolioRow[];
   dependencies: PortfolioDependency[];
   holidays: PortfolioHoliday[];
   holidayMap: Map<string, PortfolioHoliday>;
@@ -849,9 +967,14 @@ function Gantt({
   days: string[];
   timelineWidth: number;
   collapsed: Set<string>;
+  restrictiveRoleFilter: boolean;
+  busyRowID: string;
   onToggle(id: string): void;
   onOpenProject(projectId: string): void;
+  onProjectCommand(kind: HomeProjectCommandKind, projectId: string): void;
   onOpenWBS(request: WBSOpenRequest): void;
+  onReorder(row: PortfolioRow, direction: "up" | "down"): void;
+  onDelete(row: PortfolioRow): void;
 }) {
   const leftBodyRef = useRef<HTMLDivElement>(null);
   const timelineHeaderRef = useRef<HTMLDivElement>(null);
@@ -913,6 +1036,11 @@ function Gantt({
   const bottomSpacerHeight =
     Math.max(0, rows.length - rowWindow.end) * rowHeight;
   const rowIndex = new Map(rows.map((row, index) => [row.id, index]));
+  const rowByID = new Map(rows.map((row) => [row.id, row]));
+  const barFractions = useMemo(
+    () => sameDayDependencyFractions(rows, dependencies),
+    [dependencies, rows],
+  );
   const projectStatus = new Map(
     rows
       .filter((row) => row.kind === "project")
@@ -921,8 +1049,8 @@ function Gantt({
   const from = days[0];
   const to = days.at(-1);
   const arrows = dependencies.flatMap((dependency) => {
-    const blocking = rows.find((row) => row.id === dependency.blockingTaskId);
-    const blocked = rows.find((row) => row.id === dependency.blockedTaskId);
+    const blocking = rowByID.get(dependency.blockingTaskId);
+    const blocked = rowByID.get(dependency.blockedTaskId);
     if (
       !blocking?.end ||
       !blocked?.start ||
@@ -947,14 +1075,23 @@ function Gantt({
     return [
       {
         ...dependency,
-        x1: (daysBetweenISO(from, blocking.end) + 1) * dayWidth,
+        x1: barEndAnchor(
+          blocking.end,
+          from,
+          barFractions.get(blocking.id)?.end,
+        ),
         y1: blockingIndex * rowHeight + rowHeight / 2,
-        x2: daysBetweenISO(from, blocked.start) * dayWidth,
+        x2: barStartAnchor(
+          blocked.start,
+          from,
+          barFractions.get(blocked.id)?.start,
+        ),
         y2: blockedIndex * rowHeight + rowHeight / 2,
       },
     ];
   });
   const nonWorkingBackground = nonWorkingGradient(days, holidayMap);
+  const months = monthSegments(days);
 
   function updateRowWindow(scrollTop: number, clientHeight: number) {
     const visibleCount = Math.max(1, Math.ceil(clientHeight / rowHeight));
@@ -1046,6 +1183,21 @@ function Gantt({
               </div>
             ))}
           </div>
+          <div
+            className="flex h-6 border-b border-border-subtle"
+            role="group"
+            aria-label="Timeline months"
+          >
+            {months.map((month) => (
+              <div
+                key={month.key}
+                className="grid shrink-0 place-items-center border-r border-border-subtle text-[10px] font-extrabold"
+                style={{ width: month.dayCount * dayWidth }}
+              >
+                {month.label}
+              </div>
+            ))}
+          </div>
           <div className="flex h-9">
             {days.map((date) => {
               const holiday = holidayMap.get(date);
@@ -1056,14 +1208,14 @@ function Gantt({
                   className={`grid shrink-0 place-items-center border-r border-border-subtle text-center text-[10px] leading-3 ${nonWorking ? "bg-surface-muted" : ""}`}
                   style={{ width: dayWidth }}
                   title={holiday?.description}
-                  aria-label={
-                    holiday
-                      ? `${date}, public holiday: ${holiday.description}`
-                      : date
-                  }
                 >
-                  <span>{shortWeekday(date)}</span>
-                  <span>{dayOfMonth(date)}</span>
+                  <span aria-hidden="true">{shortWeekday(date)}</span>
+                  <span aria-hidden="true">{dayOfMonth(date)}</span>
+                  <span className="sr-only">
+                    {holiday
+                      ? `${date}, public holiday: ${holiday.description}`
+                      : date}
+                  </span>
                 </div>
               );
             })}
@@ -1114,7 +1266,7 @@ function Gantt({
                   {row.kind === "project" ? "" : row.wbsNumber}
                 </GridCell>
                 <div
-                  className="flex min-w-0 items-center gap-1 overflow-hidden border-r border-border-subtle px-2"
+                  className="group relative flex min-w-0 items-center gap-1 overflow-hidden border-r border-border-subtle px-2"
                   role="gridcell"
                   style={{
                     paddingLeft: `${Math.min(row.depth, 8) * 10 + 6}px`,
@@ -1155,6 +1307,7 @@ function Gantt({
                   ) : null}
                   {row.incompleteEffort ? (
                     <span
+                      role="img"
                       title="Contains task without effort"
                       aria-label="Contains task without effort"
                     >
@@ -1163,58 +1316,36 @@ function Gantt({
                   ) : null}
                   {row.incompleteSchedule ? (
                     <span
+                      role="img"
                       title="Contains unscheduled task"
                       aria-label="Contains unscheduled task"
                     >
                       ◌
                     </span>
                   ) : null}
-                  <span className="ml-auto flex shrink-0 gap-1">
-                    {row.kind === "project" && row.status === "open" ? (
-                      <button
-                        type="button"
-                        className="grid size-6 place-items-center rounded-action text-brand-strong hover:bg-brand-soft"
-                        aria-label="Add Task"
-                        title={`Add Task to ${row.name}`}
-                        onClick={() =>
-                          onOpenWBS({
-                            projectId: row.projectId,
-                            createParentId: null,
-                          })
-                        }
-                      >
-                        <AddTaskIcon />
-                      </button>
-                    ) : null}
-                    {row.kind !== "project" &&
-                    !row.completed &&
-                    projectStatus.get(row.projectId) === "open" ? (
-                      <button
-                        type="button"
-                        className="grid size-6 place-items-center rounded-action text-brand-strong hover:bg-brand-soft"
-                        aria-label="Add Child"
-                        title={`Add Child under ${row.name}`}
-                        onClick={() =>
-                          onOpenWBS({
-                            projectId: row.projectId,
-                            createParentId: row.id,
-                          })
-                        }
-                      >
-                        <AddChildIcon />
-                      </button>
-                    ) : null}
-                  </span>
+                  <RowActions
+                    row={row}
+                    authoritativeRows={authoritativeRows}
+                    projectStatus={projectStatus.get(row.projectId)}
+                    restrictiveRoleFilter={restrictiveRoleFilter}
+                    busy={Boolean(busyRowID)}
+                    onProjectCommand={onProjectCommand}
+                    onOpenWBS={onOpenWBS}
+                    onReorder={onReorder}
+                    onDelete={onDelete}
+                  />
                 </div>
-                <GridCell>{row.roleName ?? ""}</GridCell>
+                <GridCell>
+                  {row.kind === "task" ? (row.roleName ?? "") : ""}
+                </GridCell>
                 <GridCell>{row.assigneeName ?? ""}</GridCell>
                 <GridCell>
                   {row.effortMinutes === undefined
                     ? ""
                     : formatEffort(row.effortMinutes)}
                 </GridCell>
-                <GridCell>{row.start ?? ""}</GridCell>
-                <GridCell>{row.end ?? ""}</GridCell>
+                <GridCell>{formatDisplayDate(row.start)}</GridCell>
+                <GridCell>{formatDisplayDate(row.end)}</GridCell>
               </div>
             ))}
           </div>
@@ -1224,6 +1355,7 @@ function Gantt({
       <div
         ref={timelineBodyRef}
         className="overflow-auto"
+        role="region"
         tabIndex={0}
         aria-label="Scrollable portfolio timeline"
         onScroll={(event) => {
@@ -1262,20 +1394,15 @@ function Gantt({
                 className="border-b border-border-subtle"
                 style={{ height: rowHeight }}
               >
-                <button
-                  type="button"
+                <div
                   className="relative h-full w-full overflow-hidden text-left"
                   style={{ backgroundImage: nonWorkingBackground }}
+                  role="img"
                   aria-label={`${row.name}: ${
                     row.start && row.end
                       ? `${row.start} through ${row.end}`
                       : "unscheduled"
                   }`}
-                  onClick={() =>
-                    row.kind === "project"
-                      ? onOpenProject(row.projectId)
-                      : onOpenWBS({ projectId: row.projectId, nodeId: row.id })
-                  }
                 >
                   {row.start &&
                   row.end &&
@@ -1289,11 +1416,17 @@ function Gantt({
                           ? "border-brand bg-brand/80"
                           : "border-brand-dark bg-brand-soft"
                       }`}
-                      style={barStyle(row.start, row.end, from, days.length)}
+                      style={barStyle(
+                        row.start,
+                        row.end,
+                        from,
+                        days.length,
+                        barFractions.get(row.id),
+                      )}
                       title={`${row.name}: ${row.start} – ${row.end}`}
                     />
                   ) : null}
-                </button>
+                </div>
               </div>
             ))}
           </div>
@@ -1315,11 +1448,11 @@ function Gantt({
               </marker>
             </defs>
             {arrows.map((arrow) => {
-              const middle = Math.max(arrow.x1 + 8, (arrow.x1 + arrow.x2) / 2);
               return (
                 <path
                   key={arrow.id}
-                  d={`M ${arrow.x1} ${arrow.y1} H ${middle} V ${arrow.y2} H ${arrow.x2}`}
+                  data-portfolio-dependency={arrow.id}
+                  d={dependencyPath(arrow.x1, arrow.y1, arrow.x2, arrow.y2)}
                   fill="none"
                   stroke="currentColor"
                   strokeWidth="1.5"
@@ -1369,6 +1502,279 @@ function GanttConfigurationIcon() {
       <circle cx="16" cy="7" r="2" />
       <circle cx="8" cy="17" r="2" />
     </svg>
+  );
+}
+
+type RowAction = {
+  value: string;
+  label: string;
+  disabled?: boolean;
+  disabledReason?: string;
+  destructive?: boolean;
+};
+
+function RowActions({
+  row,
+  authoritativeRows,
+  projectStatus,
+  restrictiveRoleFilter,
+  busy,
+  onProjectCommand,
+  onOpenWBS,
+  onReorder,
+  onDelete,
+}: {
+  row: PortfolioRow;
+  authoritativeRows: PortfolioRow[];
+  projectStatus?: "open" | "locked";
+  restrictiveRoleFilter: boolean;
+  busy: boolean;
+  onProjectCommand(kind: HomeProjectCommandKind, projectId: string): void;
+  onOpenWBS(request: WBSOpenRequest): void;
+  onReorder(row: PortfolioRow, direction: "up" | "down"): void;
+  onDelete(row: PortfolioRow): void;
+}) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 });
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const open = projectStatus === "open";
+  const quickAction =
+    row.kind === "project" && row.status === "open"
+      ? "task"
+      : row.kind !== "project" && open && !row.completed
+        ? "child"
+        : undefined;
+  const siblings = authoritativeRows
+    .filter(
+      (candidate) =>
+        candidate.kind !== "project" &&
+        candidate.projectId === row.projectId &&
+        candidate.parentId === row.parentId,
+    )
+    .sort((left, right) => left.position - right.position);
+  const siblingIndex = siblings.findIndex(
+    (candidate) => candidate.id === row.id,
+  );
+  const actions: RowAction[] = [];
+
+  if (row.kind === "project") {
+    if (row.status === "open") {
+      actions.push({ value: "lock", label: "Lock" });
+      actions.push({ value: "close", label: "Close" });
+      if (!row.hasChildren)
+        actions.push({
+          value: "delete-project",
+          label: "Delete",
+          destructive: true,
+        });
+    } else if (row.status === "locked") {
+      actions.push({ value: "reopen", label: "Reopen" });
+      actions.push({ value: "close", label: "Close" });
+    }
+  } else if (open) {
+    actions.push({
+      value: "move-up",
+      label: "Move Up",
+      disabled: restrictiveRoleFilter || siblingIndex <= 0,
+      disabledReason: restrictiveRoleFilter
+        ? "Show all roles to reorder WBS items."
+        : "This item is already the first sibling.",
+    });
+    actions.push({
+      value: "move-down",
+      label: "Move Down",
+      disabled:
+        restrictiveRoleFilter ||
+        siblingIndex < 0 ||
+        siblingIndex === siblings.length - 1,
+      disabledReason: restrictiveRoleFilter
+        ? "Show all roles to reorder WBS items."
+        : "This item is already the last sibling.",
+    });
+    actions.push({ value: "move-to", label: "Move to…" });
+    if (row.kind === "task" && !row.completed && !row.hasChildren)
+      actions.push({
+        value: "delete-task",
+        label: "Delete",
+        destructive: true,
+      });
+  }
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const menu = menuRef.current;
+    const firstAction =
+      menu?.querySelector<HTMLButtonElement>('[role="menuitem"]');
+    firstAction?.focus();
+
+    function closeOnOutsideInteraction(event: Event) {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (menuRef.current?.contains(target)) return;
+      if (triggerRef.current?.contains(target)) return;
+      setMenuOpen(false);
+    }
+    function closeForViewportChange() {
+      setMenuOpen(false);
+    }
+    document.addEventListener("pointerdown", closeOnOutsideInteraction);
+    document.addEventListener("focusin", closeOnOutsideInteraction);
+    window.addEventListener("resize", closeForViewportChange);
+    window.addEventListener("scroll", closeForViewportChange, true);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsideInteraction);
+      document.removeEventListener("focusin", closeOnOutsideInteraction);
+      window.removeEventListener("resize", closeForViewportChange);
+      window.removeEventListener("scroll", closeForViewportChange, true);
+    };
+  }, [menuOpen]);
+
+  function toggleMenu() {
+    if (menuOpen) {
+      setMenuOpen(false);
+      return;
+    }
+    const trigger = triggerRef.current;
+    if (!trigger) return;
+    const bounds = trigger.getBoundingClientRect();
+    const width = 160;
+    const estimatedHeight = actions.length * 36 + 8;
+    const below = bounds.bottom + 4;
+    setMenuPosition({
+      top:
+        below + estimatedHeight <= window.innerHeight
+          ? below
+          : Math.max(8, bounds.top - estimatedHeight - 4),
+      left: Math.max(
+        8,
+        Math.min(bounds.right - width, window.innerWidth - width - 8),
+      ),
+    });
+    setMenuOpen(true);
+  }
+
+  function closeMenuAndFocus() {
+    setMenuOpen(false);
+    triggerRef.current?.focus();
+  }
+
+  function invoke(value: string) {
+    closeMenuAndFocus();
+    if (value === "lock" || value === "close" || value === "reopen")
+      onProjectCommand(value, row.projectId);
+    else if (value === "delete-project")
+      onProjectCommand("delete", row.projectId);
+    else if (value === "move-up") onReorder(row, "up");
+    else if (value === "move-down") onReorder(row, "down");
+    else if (value === "move-to")
+      onOpenWBS({ projectId: row.projectId, moveNodeId: row.id });
+    else if (value === "delete-task") onDelete(row);
+  }
+
+  if (!quickAction && actions.length === 0) return null;
+
+  return (
+    <div
+      className={`absolute inset-y-0 right-1 z-20 flex items-center justify-end gap-1 bg-surface pl-1 transition-opacity ${
+        menuOpen
+          ? "pointer-events-auto opacity-100"
+          : "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100"
+      }`}
+      data-row-actions={row.id}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          event.stopPropagation();
+          closeMenuAndFocus();
+        }
+      }}
+    >
+      {quickAction ? (
+        <button
+          type="button"
+          className="grid size-7 place-items-center rounded-action text-brand-strong hover:bg-brand-soft disabled:opacity-50"
+          aria-label={`${quickAction === "task" ? "Add Task" : "Add Child"} for ${row.name}`}
+          title={`${quickAction === "task" ? "Add Task to" : "Add Child under"} ${row.name}`}
+          disabled={busy}
+          onClick={() =>
+            onOpenWBS({
+              projectId: row.projectId,
+              createParentId: quickAction === "task" ? null : row.id,
+            })
+          }
+        >
+          {quickAction === "task" ? <AddTaskIcon /> : <AddChildIcon />}
+        </button>
+      ) : null}
+      {actions.length > 0 ? (
+        <>
+          <button
+            ref={triggerRef}
+            type="button"
+            className="grid size-7 place-items-center rounded-action border border-transparent bg-surface text-base font-black hover:border-border-strong disabled:opacity-50"
+            aria-label={`More actions for ${row.name}`}
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            title={`More actions for ${row.name}`}
+            disabled={busy}
+            onClick={toggleMenu}
+          >
+            ⋯
+          </button>
+          {menuOpen
+            ? createPortal(
+                <div
+                  ref={menuRef}
+                  className="fixed z-[100] min-w-40 rounded-control border border-border-strong bg-surface p-1 shadow-surface"
+                  role="menu"
+                  aria-label={`Actions for ${row.name}`}
+                  style={menuPosition}
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape") {
+                      event.stopPropagation();
+                      closeMenuAndFocus();
+                    }
+                  }}
+                >
+                  {actions.map((action) => {
+                    const blocked = Boolean(action.disabled || busy);
+                    return (
+                      <button
+                        key={action.value}
+                        type="button"
+                        role="menuitem"
+                        aria-disabled={blocked}
+                        className={`block w-full rounded-action px-3 py-2 text-left text-xs font-semibold hover:bg-surface-muted ${
+                          blocked ? "cursor-not-allowed opacity-50" : ""
+                        } ${
+                          action.destructive
+                            ? "mt-1 border-t border-border-subtle text-danger"
+                            : ""
+                        }`}
+                        title={
+                          action.disabled ? action.disabledReason : undefined
+                        }
+                        onClick={() => {
+                          if (!blocked) invoke(action.value);
+                        }}
+                      >
+                        {action.label}
+                        {action.disabled && action.disabledReason ? (
+                          <span className="sr-only">
+                            {" "}
+                            {action.disabledReason}
+                          </span>
+                        ) : null}
+                      </button>
+                    );
+                  })}
+                </div>,
+                document.body,
+              )
+            : null}
+        </>
+      ) : null}
+    </div>
   );
 }
 
@@ -1496,14 +1902,11 @@ function applyRoleFilter(
     const knownEffort = descendants.flatMap((task) =>
       task.effortMinutes === undefined ? [] : [task.effortMinutes],
     );
-    const roles = uniqueStrings(
-      descendants.map((task) => task.roleName ?? "No role"),
-    ).sort((left, right) => left.localeCompare(right));
     return [
       {
         ...row,
         roleId: undefined,
-        roleName: roles.join(", "),
+        roleName: undefined,
         effortMinutes:
           knownEffort.length === 0
             ? undefined
@@ -1628,13 +2031,170 @@ function barStyle(
   end: string,
   from: string,
   dayCount: number,
+  fractions?: BarFractions,
 ): CSSProperties {
   const leftDays = Math.max(0, daysBetweenISO(from, start));
   const endDays = Math.min(dayCount - 1, daysBetweenISO(from, end));
+  const startFraction = start < from ? 0 : (fractions?.start ?? 0);
+  const visibleTo = addDays(from, dayCount - 1);
+  const endFraction = end > visibleTo ? 1 : (fractions?.end ?? 1);
+  const left = leftDays * dayWidth + clamp(startFraction, 0, 1) * dayWidth + 3;
+  const right = endDays * dayWidth + clamp(endFraction, 0, 1) * dayWidth - 3;
   return {
-    left: leftDays * dayWidth + 3,
-    width: Math.max(dayWidth - 6, (endDays - leftDays + 1) * dayWidth - 6),
+    left,
+    width: Math.max(2, right - left),
   };
+}
+
+function barStartAnchor(date: string, from: string, fraction = 0): number {
+  return (
+    daysBetweenISO(from, date) * dayWidth + clamp(fraction, 0, 1) * dayWidth + 3
+  );
+}
+
+function barEndAnchor(date: string, from: string, fraction = 1): number {
+  return (
+    daysBetweenISO(from, date) * dayWidth + clamp(fraction, 0, 1) * dayWidth - 3
+  );
+}
+
+function dependencyPath(
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+): string {
+  if (x2 >= x1) {
+    const middle = x1 + (x2 - x1) / 2;
+    return `M ${x1} ${y1} H ${middle} V ${y2} H ${x2}`;
+  }
+  const departure = x1 + 8;
+  const approach = Math.max(0, x2 - 8);
+  return `M ${x1} ${y1} H ${departure} V ${y2} H ${approach} H ${x2}`;
+}
+
+function sameDayDependencyFractions(
+  rows: PortfolioRow[],
+  dependencies: PortfolioDependency[],
+): Map<string, BarFractions> {
+  // Equal slots communicate order only. They deliberately do not claim exact
+  // intraday allocation duration, which is outside the Home projection.
+  const rowByID = new Map(rows.map((row) => [row.id, row]));
+  const edgesByDate = new Map<
+    string,
+    { blockingTaskId: string; blockedTaskId: string }[]
+  >();
+  for (const dependency of dependencies) {
+    const blocking = rowByID.get(dependency.blockingTaskId);
+    const blocked = rowByID.get(dependency.blockedTaskId);
+    if (
+      blocking?.kind !== "task" ||
+      blocked?.kind !== "task" ||
+      !blocking.end ||
+      !blocked.start ||
+      blocking.end !== blocked.start ||
+      !blocking.assigneeId ||
+      blocking.assigneeId !== blocked.assigneeId ||
+      blocking.id === blocked.id
+    )
+      continue;
+    const edges = edgesByDate.get(blocking.end) ?? [];
+    edges.push({
+      blockingTaskId: blocking.id,
+      blockedTaskId: blocked.id,
+    });
+    edgesByDate.set(blocking.end, edges);
+  }
+
+  const result = new Map<string, BarFractions>();
+  for (const [date, edges] of edgesByDate) {
+    const outgoing = new Map<string, string[]>();
+    const incoming = new Map<string, string[]>();
+    const connected = new Map<string, Set<string>>();
+    for (const edge of edges) {
+      outgoing.set(edge.blockingTaskId, [
+        ...(outgoing.get(edge.blockingTaskId) ?? []),
+        edge.blockedTaskId,
+      ]);
+      incoming.set(edge.blockedTaskId, [
+        ...(incoming.get(edge.blockedTaskId) ?? []),
+        edge.blockingTaskId,
+      ]);
+      const blockingConnected =
+        connected.get(edge.blockingTaskId) ?? new Set<string>();
+      blockingConnected.add(edge.blockedTaskId);
+      connected.set(edge.blockingTaskId, blockingConnected);
+      const blockedConnected =
+        connected.get(edge.blockedTaskId) ?? new Set<string>();
+      blockedConnected.add(edge.blockingTaskId);
+      connected.set(edge.blockedTaskId, blockedConnected);
+    }
+
+    const remaining = new Set(connected.keys());
+    while (remaining.size > 0) {
+      const first = remaining.values().next().value as string;
+      const component = new Set<string>();
+      const stack = [first];
+      while (stack.length > 0) {
+        const id = stack.pop();
+        if (!id || component.has(id)) continue;
+        component.add(id);
+        remaining.delete(id);
+        for (const adjacent of connected.get(id) ?? []) stack.push(adjacent);
+      }
+
+      const indegree = new Map<string, number>();
+      const rank = new Map<string, number>();
+      for (const id of component) {
+        indegree.set(
+          id,
+          (incoming.get(id) ?? []).filter((value) => component.has(value))
+            .length,
+        );
+        rank.set(id, 0);
+      }
+      const queue = [...component]
+        .filter((id) => indegree.get(id) === 0)
+        .sort();
+      let processed = 0;
+      while (queue.length > 0) {
+        const id = queue.shift();
+        if (!id) continue;
+        processed += 1;
+        for (const next of outgoing.get(id) ?? []) {
+          if (!component.has(next)) continue;
+          rank.set(
+            next,
+            Math.max(rank.get(next) ?? 0, (rank.get(id) ?? 0) + 1),
+          );
+          const nextIndegree = (indegree.get(next) ?? 0) - 1;
+          indegree.set(next, nextIndegree);
+          if (nextIndegree === 0) {
+            queue.push(next);
+            queue.sort();
+          }
+        }
+      }
+      if (processed !== component.size) continue;
+
+      const slotCount =
+        Math.max(...[...component].map((id) => rank.get(id) ?? 0)) + 1;
+      for (const id of component) {
+        const row = rowByID.get(id);
+        if (!row) continue;
+        const current = result.get(id) ?? { start: 0, end: 1 };
+        const slot = rank.get(id) ?? 0;
+        if ((incoming.get(id)?.length ?? 0) > 0 && row.start === date) {
+          current.start = Math.max(current.start, slot / slotCount);
+        }
+        if ((outgoing.get(id)?.length ?? 0) > 0 && row.end === date) {
+          current.end = Math.min(current.end, (slot + 1) / slotCount);
+        }
+        result.set(id, current);
+      }
+    }
+  }
+  return result;
 }
 
 function isWeekend(date: string): boolean {
@@ -1653,6 +2213,33 @@ function shortWeekday(date: string): string {
 
 function dayOfMonth(date: string): string {
   return String(parseISODate(date).getUTCDate());
+}
+
+function formatDisplayDate(value: string | undefined): string {
+  if (!value) return "";
+  const date = parseISODate(value);
+  return `${date.getUTCDate()} ${shortMonthNames[date.getUTCMonth()]} ${date.getUTCFullYear()}`;
+}
+
+function monthSegments(
+  days: string[],
+): { key: string; label: string; dayCount: number }[] {
+  const segments: { key: string; label: string; dayCount: number }[] = [];
+  for (const date of days) {
+    const key = date.slice(0, 7);
+    const current = segments.at(-1);
+    if (current?.key === key) {
+      current.dayCount += 1;
+      continue;
+    }
+    const parsed = parseISODate(date);
+    segments.push({
+      key,
+      label: `${shortMonthNames[parsed.getUTCMonth()]} ${parsed.getUTCFullYear()}`,
+      dayCount: 1,
+    });
+  }
+  return segments;
 }
 
 function parseISODate(value: string): Date {

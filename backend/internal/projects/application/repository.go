@@ -14,6 +14,7 @@ type Store interface {
 	List(context.Context, listing.Query) (listing.Page[domain.Project], error)
 	Find(context.Context, string) (*domain.Project, error)
 	CreateNext(context.Context, string, string, bool, *time.Time, int, time.Time) (*domain.Project, error)
+	Rename(context.Context, string, string, time.Time) (*domain.Project, error)
 	UpdateDetails(context.Context, string, string, bool, *time.Time, int, time.Time, func(context.Context, string) error, func(context.Context, string, string) error) (*domain.Project, error)
 	DeleteChildless(context.Context, string) error
 	ChangeStatus(context.Context, string, domain.Status, time.Time, func(context.Context) error) (*domain.Project, error)

@@ -24,6 +24,14 @@ Scheduling Start Date.` No task-level Earliest Start or equivalent anchor is
 > Actual Date. US-6.2 supersedes contradictory lifecycle, priority, completion,
 > and Locked-edit wording in earlier revisions of this story.
 
+> **Product decision update — US-7.1:** Home is the canonical active-Project
+> WBS surface. Project lifecycle commands remain available on Projects and are
+> also exposed from eligible active Project rows on Home through the same
+> application commands. The standalone Project Structure entry point is removed.
+> Edit Project opened from Home renders directly over Home. A Locked Project may
+> rename Project Name only; Settings and every scheduling-relevant field remain
+> read-only.
+
 ## 1. User Story
 
 **Sebagai** Engineering Lead,
@@ -53,13 +61,15 @@ scheduler, timeline calculation, dan Gantt dimiliki story berikutnya.
 
 Engineering Lead dapat:
 
-1. Membuka page **Projects** di bawah navigation group **Project**.
+1. Membuka page **Projects** di bawah navigation group **Project** dan membuka
+   active Project dari Home.
 2. Melihat paginated Project List.
 3. Mencari Project berdasarkan Name secara case-insensitive.
 4. Membuka Project detail.
 5. Membuat Project dengan data yang valid.
 6. Melihat status Project.
-7. Mengubah data Project yang berstatus Open.
+7. Mengubah seluruh data Project yang diizinkan ketika Open dan hanya Name
+   ketika Locked.
 8. Mengubah status sesuai transition yang diizinkan.
 9. Mengunci Open Project dan melindungi Execution serta Commitment baseline.
 10. Menutup Open atau Locked Project yang seluruh Executable Leaf-nya selesai.
@@ -67,6 +77,8 @@ Engineering Lead dapat:
 12. Melihat Closed Project setelah seluruh active Project pada Project List.
 13. Mengubah Priority melalui Move Up atau Move Down.
 14. Menghapus Project yang belum mempunyai child WBS/Executable Leaf.
+15. Menjalankan lifecycle action melalui Projects atau eligible active Project
+    row pada Home dengan behaviour yang sama.
 
 Kontrak berikut ditetapkan sekarang untuk consumer pada story berikutnya:
 
@@ -77,7 +89,7 @@ Kontrak berikut ditetapkan sekarang untuk consumer pada story berikutnya:
 - Completed Executable Leaf ditentukan oleh complete Actual Date pair dan tidak dapat diedit melalui normal planning mutation.
 - Actual Date tetap dapat diisi pada unfinished Task milik Locked Project tanpa mengubah protected baseline. Actual Allocation dapat memicu recalculation pada impacted Open Projects, tetapi tidak boleh memutasi Locked Project.
 - Close validation memeriksa seluruh descendant Executable Leaf.
-- Locked Project harus direopen secara eksplisit ke Open sebelum Task, WBS, Settings, timeline, atau dependency dapat diubah.
+- Locked Project harus direopen secara eksplisit ke Open sebelum Task, WBS, Settings, timeline, atau dependency dapat diubah. Project Name rename adalah satu-satunya Project-field mutation yang tetap diizinkan saat Locked dan tidak menjalankan scheduler.
 - Forecast behaviour while Locked is deferred to its owning future requirement.
 
 Story ini tidak mewajibkan implementasi WBS editor, task editor, Scheduling
@@ -117,13 +129,21 @@ memenuhi story ini.
 
 ## 5. UI Placement and User Flow
 
-- Navigation menambahkan group **Project** dengan menu **Projects**.
+### 5.1 Projects Surface
+
+- Navigation tetap menyediakan group **Project** dengan menu **Projects**.
 - Page menggunakan persistent application shell; top bar, sidebar, dan global
   chrome tidak diduplikasi atau diremount.
 - Page title dan menu label adalah **Projects**.
 - Primary action adalah **Add Project**.
 - Project List mengikuti shared list, search, pagination, skeleton, empty state,
   no-results, Retry, background refresh, dan Toast patterns.
+- The standalone **Project Structure** action/page is removed.
+- Projects remains the surface for Add Project, list/search/pagination, Edit
+  Project, and lifecycle actions for Open, Locked, and Closed Projects.
+
+### 5.2 Shared Add/Edit Project Dialog
+
 - Add form tidak meminta user memilih status; status Open dijelaskan sebagai
   default yang ditetapkan backend.
 - Add/Edit Project menggunakan combined form dari US-3.3: Project Name,
@@ -134,21 +154,46 @@ memenuhi story ini.
 - Edit Project uses the existing shared wide Dialog variant so settings and the
   summary are not constrained to the standard dialog width; Add Project may
   retain the standard width.
+- The same Edit Project dialog is opened from Projects and from Project Name on
+  Home. Home invocation renders directly over Home without a route/background
+  switch.
+- Open Project exposes all fields allowed by US-3.1 and US-3.3.
+- Locked Project exposes Project Name as the only editable field. Automatic
+  Scheduling, Scheduling Start Date, Project Buffer, and other Settings remain
+  visible/read-only.
+- Closed Project remains fully read-only until Reopen.
+- Locked Project Name rename is a non-scheduling mutation: no impact preview,
+  scheduler invocation, baseline mutation, allocation mutation, or status
+  transition occurs.
 - Draft dipertahankan setelah validation atau backend failure.
 - Controls terkait dinonaktifkan selama mutation untuk mencegah duplicate
   submission tanpa memblokir seluruh page.
+
+### 5.3 Lifecycle Actions on Projects and Home
+
 - Status ditampilkan sebagai text label, bukan hanya warna.
-- Open Project menyediakan action **Lock Project** dan **Close Project**.
-- Locked Project menyediakan action **Reopen Project** dan **Close Project**. Planning actions read-only; entering complete Actual Date on unfinished Task remains available through the Task workflow.
-- Closed Project menyediakan action **Reopen Project**; mutation lain tidak tersedia dan alasan read-only dapat dipahami.
+- Projects exposes the established lifecycle actions for every status.
+- Home active Project row overflow exposes the same eligible commands:
+  - Open: Lock Project, Close Project, and Delete Project when childless.
+  - Locked: Reopen Project and Close Project.
+  - Closed: absent from Home; Reopen Project remains available on Projects.
+- Both surfaces invoke the same command, eligibility validation, impact preview,
+  confirmation, transaction, error mapping, cache invalidation, and rollback.
+- No second Home-specific lifecycle state machine is permitted.
 - Project tanpa child menyediakan confirmed **Delete Project**. Project yang
   mempunyai child tidak dapat dihapus dan diarahkan menggunakan Close setelah
   completion requirement terpenuhi.
-- Lock confirmation menjelaskan bahwa Execution dan Commitment dates menjadi protected baseline dan Lock ditolak bila ada unfinished Task yang unscheduled.
-- Close confirmation menjelaskan bahwa semua Task harus mempunyai complete Actual Date pair.
-- Reopen confirmation membedakan `Locked → Open` dan `Closed → Open`; keduanya menjelaskan bahwa Project kembali editable dan eligible untuk scheduling. Locked Reopen juga menjelaskan bahwa unfinished work dalam transitive impacted scope akan dihitung ulang.
-- Locked Project tidak berubah menjadi Open secara implicit. User harus memilih Reopen Project sebelum planning mutation.
-- Dialog mengelola focus dan mengembalikannya ke trigger.
+- Lock confirmation menjelaskan bahwa Execution dan Commitment dates menjadi
+  protected baseline dan Lock ditolak bila ada unfinished Task yang unscheduled.
+- Close confirmation menjelaskan bahwa semua Task harus mempunyai complete
+  Actual Date pair.
+- Reopen confirmation membedakan `Locked → Open` dan `Closed → Open`; keduanya
+  menjelaskan bahwa Project kembali editable dan eligible untuk scheduling.
+  Locked Reopen juga menjelaskan bahwa unfinished work dalam transitive impacted
+  scope akan dihitung ulang.
+- Locked Project tidak berubah menjadi Open secara implicit. User harus memilih
+  Reopen Project sebelum planning mutation selain Project Name rename.
+- Dialog dan overflow menu mengelola focus dan mengembalikannya ke trigger.
 - Core workflow tetap usable pada supported viewport tanpa horizontal scrolling
   pada normal page content.
 
@@ -189,7 +234,7 @@ granularity snapshot ditentukan saat contract timeline/WBS tersedia.
 | Status | Meaning | Editable | Scheduling | Gantt | Timeline behaviour |
 | --- | --- | --- | --- | --- | --- |
 | Open | Active planning | Project/Task/WBS/dependency subject to domain rules | Included | Visible | Execution and Commitment may recalculate |
-| Locked | Protected planning baseline with ongoing actual completion capture | Actual Date only for unfinished Task; planning read-only | Locked Project immutable; Actual Date may recalculate impacted Open Projects | Visible | Execution/Commitment baseline immutable; Actual Allocation historical; Forecast deferred |
+| Locked | Protected planning baseline with ongoing actual completion capture | Project Name and Actual Date on unfinished Task only; planning/settings read-only | Locked scheduling state immutable; Actual Date may recalculate impacted Open Projects | Visible | Execution/Commitment baseline immutable; Actual Allocation historical; Forecast deferred |
 | Closed | Completed historical Project | No | Excluded | Hidden | All planning, actual, and timeline data read-only |
 
 - Status saat create selalu `open`, ditegakkan backend.
@@ -234,6 +279,7 @@ granularity snapshot ditentukan saat contract timeline/WBS tersedia.
 - Execution/Commitment scheduler is not run for Locked Project mutations.
 - Actual Date may be recorded for unfinished Task. Protected Execution/Commitment baseline, order, and dependencies remain unchanged; Actual Allocation may recalculate impacted Open Projects.
 - All planning, WBS, Task, Settings, and dependency changes require explicit `Locked → Open` Reopen first.
+- Project Name may be renamed while Locked because it is identity metadata, not a scheduling input; the rename changes no protected baseline, allocation, dependency, Priority, or status.
 - Completed Task cannot be reopened while Locked.
 - Project remains visible in Gantt and may be read as an immutable cross-project scheduling anchor.
 - Forecast, Delivery Impact, and Health behaviour while Locked is deferred.
@@ -256,10 +302,20 @@ granularity snapshot ditentukan saat contract timeline/WBS tersedia.
 
 ### Locked Project
 
-- Project Settings, WBS structure/order, Task planning fields, Execution/Commitment dates, and dependency ownership/endpoints are read-only.
-- Complete Actual Date is the only Task mutation allowed. It does not change the locked baseline, but its Actual Allocation may trigger recalculation of impacted Open Projects.
-- Reopen completed Task is rejected until the Project is explicitly reopened to Open.
-- Priority may change only when internal simulation proves no Locked Project timeline, allocation, or dependency-validity impact.
+- Project Name is editable and remains subject to the same trim, length, and
+  case-insensitive uniqueness validation.
+- Project Name rename is persisted without scheduler invocation or generic
+  scheduling-impact preview because it cannot change timeline, allocation,
+  dependency validity, Priority, or capacity.
+- Project Settings, WBS structure/order, Task planning fields,
+  Execution/Commitment dates, and dependency ownership/endpoints are read-only.
+- Complete Actual Date is the only Task mutation allowed. It does not change the
+  locked baseline, but its Actual Allocation may trigger recalculation of
+  impacted Open Projects.
+- Reopen completed Task is rejected until the Project is explicitly reopened to
+  Open.
+- Priority may change only when internal simulation proves no Locked Project
+  timeline, allocation, or dependency-validity impact.
 - No planning mutation implicitly changes status to Open.
 
 ### Closed Project
@@ -340,11 +396,13 @@ granularity snapshot ditentukan saat contract timeline/WBS tersedia.
 
 ## 14. Acceptance Criteria
 
-### AC-1 — Projects navigation
+### AC-1 — Projects and Home navigation
 
 **Given** application shell tersedia
 **When** Engineering Lead membuka group Project
 **Then** menu Projects membuka page Projects
+**And** Home remains the canonical active-WBS surface
+**And** the standalone Project Structure entry point is absent
 **And** global chrome tetap stabil.
 
 ### AC-2 — Initial list, pagination, dan ordering
@@ -423,10 +481,17 @@ Execution, Commitment, dan Forecast Timeline boleh diperbarui.
 **And** grouped impact warning/confirmation applies when other Projects are impacted
 **And** impacted Open Projects may be recalculated while every Locked Project remains unchanged.
 
-### AC-11 — Locked planning is read-only
+### AC-11 — Locked planning is read-only with Name exception
 
 **Given** Project Locked
-**When** planning, WBS, Task, Settings, dependency, timeline, atau Task Reopen mutation diminta
+**When** Project Name is changed validly
+**Then** rename succeeds
+**And** status, Priority, Settings, WBS, timelines, allocations, dependencies,
+and schedule version remain unchanged
+**And** no scheduler or impact preview is invoked.
+
+**When** planning, WBS, Task, Settings, dependency, timeline, atau Task Reopen
+mutation selain Project Name diminta
 **Then** request ditolak dengan `PROJECT_LOCKED_READ_ONLY`
 **And** confirmed state remains unchanged.
 
@@ -548,6 +613,21 @@ state.
 **And** Edit Project uses the existing shared wide Dialog variant while preserving responsive viewport behaviour
 **And** summary loading/failure does not change Project lifecycle, validation, or mutation rules.
 
+### AC-26 — Shared Edit Project from Home
+
+**Given** an active Project row is visible on Home
+**When** Engineering Lead activates Project Name
+**Then** the shared Edit Project dialog opens directly over Home
+**And** Save or Close leaves Home as the route and visible background
+**And** Locked Project permits only Project Name mutation.
+
+### AC-27 — Lifecycle parity on two surfaces
+
+**Given** a lifecycle command is eligible for an active Project
+**When** it is invoked from Home row overflow or Projects
+**Then** both surfaces use the same confirmation, application command, impact
+handling, transaction, error mapping, and refresh contract.
+
 ---
 
 ## 15. API Contract
@@ -621,6 +701,12 @@ not accept system-derived fields or manually supplied locked baselines.
 Success: `201 Created` with `{ "data": Project }`.
 
 ### Update Project
+
+- Open Project may update fields allowed by US-3.3.
+- Locked Project update accepts Project Name only; any Settings/scheduling field
+  mutation returns `PROJECT_LOCKED_READ_ONLY`.
+- Locked Name-only update uses the normal Project name validation and does not
+  invoke scheduling impact preview.
 
 ```http
 PUT /api/projects/{projectId}
@@ -719,7 +805,7 @@ DELETE /api/projects/{projectId}
 | `PROJECT_STATUS_TRANSITION_NOT_ALLOWED`  |  409 | `status`    | Transition tidak diizinkan, termasuk Closed ke Locked                    |
 | `PROJECT_CANNOT_LOCK_WITHOUT_TASKS`      |  409 | `status`    | Lock diminta untuk Project tanpa Executable Leaf                         |
 | `PROJECT_CANNOT_LOCK_WITH_UNSCHEDULED_TASKS` | 409 | `status` | Sedikitnya satu unfinished Task belum fully scheduled                    |
-| `PROJECT_LOCKED_READ_ONLY`               |  409 | —           | Planning/Task/WBS/Settings/dependency mutation atau Task Reopen pada Locked Project |
+| `PROJECT_LOCKED_READ_ONLY`               |  409 | —           | Mutation selain Project Name, allowed Actual Date, atau eligible Priority command pada Locked Project |
 | `SCHEDULING_LOCKED_PROJECT_IMPACT`         |  409 | `direction` | Proposed priority would affect a Locked Project timeline, allocation, or dependency validity |
 | `SCHEDULING_IMPACT_CONFIRMATION_REQUIRED` | 409 | — | Priority affects other Open Projects and requires confirmation |
 | `SCHEDULING_IMPACT_STALE` | 409 | — | Impact set/version changed after preview |
@@ -764,6 +850,8 @@ mengekspos stack trace, SQL, database, atau infrastructure detail.
 | TC-18 | Lock with one unscheduled unfinished Task       | `409 PROJECT_CANNOT_LOCK_WITH_UNSCHEDULED_TASKS`; status Open                                   |
 | TC-19 | Actual Date on unfinished Locked Task           | Actual Date and Actual Allocation saved; baseline unchanged; impacted Open scope recalculated    |
 | TC-20 | Edit/create/delete/move Task while Locked       | `409 PROJECT_LOCKED_READ_ONLY`; state unchanged                                                |
+| TC-20A | Rename Locked Project Name                       | Success; no scheduler/impact; baseline and settings unchanged                                  |
+| TC-20B | Update Locked Project Settings with Name payload | Entire request rejected; no partial Name or Settings change                                    |
 | TC-21 | Reopen completed Task while Locked              | `409 PROJECT_LOCKED_READ_ONLY`; Project Reopen required                                        |
 | TC-22 | Locked to Open                                  | Status Open; transitive impacted scope recalculated                                             |
 | TC-23 | Locked Reopen produces unscheduled Task         | Reopen succeeds; Project Open; later Lock rejected until scheduled                              |
@@ -794,6 +882,8 @@ mengekspos stack trace, SQL, database, atau infrastructure detail.
 | TC-48 | Delete Project dengan child                    | `409 PROJECT_HAS_CHILDREN`; data tetap utuh                                                    |
 | TC-49 | Close Project tanpa Executable Leaf            | `409 PROJECT_CANNOT_CLOSE_WITHOUT_TASKS`; Delete tersedia                                      |
 | TC-50 | Lock Project tanpa Executable Leaf             | `409 PROJECT_CANNOT_LOCK_WITHOUT_TASKS`; status tetap Open                                     |
+| TC-51 | Open Edit Project from Home                       | Shared dialog over Home; no Projects/Project Structure route                                   |
+| TC-52 | Lifecycle command from Home and Projects          | Same command/confirmation/result and consistent refresh                                        |
 
 ### Acceptance Criteria Traceability
 
@@ -806,7 +896,7 @@ mengekspos stack trace, SQL, database, atau infrastructure detail.
 | AC-5—AC-7           | TC-10—TC-15        |
 | AC-8                | TC-16              |
 | AC-9—AC-10          | TC-17—TC-19, TC-50 |
-| AC-11               | TC-20—TC-21        |
+| AC-11               | TC-20—TC-21, TC-20A—TC-20B |
 | AC-12—AC-14         | TC-22—TC-26        |
 | AC-15—AC-16         | TC-27—TC-31, TC-49 |
 | AC-17               | TC-32—TC-33        |
@@ -815,6 +905,9 @@ mengekspos stack trace, SQL, database, atau infrastructure detail.
 | AC-22               | TC-45—TC-46        |
 | AC-23               | TC-38—TC-42        |
 | AC-24               | TC-47—TC-48        |
+| AC-25               | Project summary acceptance workflow |
+| AC-26               | TC-51              |
+| AC-27               | TC-52              |
 
 ---
 
@@ -833,16 +926,19 @@ mengekspos stack trace, SQL, database, atau infrastructure detail.
 - Zero-leaf lock rejection.
 - Locked baseline invariant and Actual Date/Actual Allocation exception.
 - Lock rejection when any unfinished Task is unscheduled.
+- Locked Project Name rename success without scheduling mutation.
 - Locked planning mutation and Task Reopen rejection.
 - Locked-to-Open transition, unscheduled-result success, and technical-failure rollback.
 - Positive integer Priority, valid/invalid move rules, and Locked-impact validation.
 
 ### Application Tests
 
-- Paginated list, Name search, create, get, dan Open update.
+- Paginated list, Name search, create, get, Open update, and Locked Name-only update.
 - Lock, Locked-to-Open, Open-to-Closed, Locked-to-Closed, and Closed-to-Open.
 - Reject Open-to-Locked when the Project has zero Executable Leaves or any unscheduled unfinished Task.
-- Reject Closed-to-Locked, Closed mutation, completed-leaf normal mutation, Locked planning mutation, and close with unfinished leaves.
+- Reject Closed-to-Locked, Closed mutation, completed-leaf normal mutation,
+  Locked mutation other than Name/Actual Date/eligible Priority, and close with
+  unfinished leaves.
 - Delete childless Project and reject delete when any child exists.
 - Preserve Locked baselines on Actual Date entry, persist Actual Allocation, recalculate impacted Open Projects, and reject Task Reopen while Locked.
 - Atomic Priority Move Up/Down with transitive impacted-scope recalculation and Locked-impact rejection.
@@ -878,23 +974,32 @@ mengekspos stack trace, SQL, database, atau infrastructure detail.
 
 ### Frontend Tests
 
-- Projects navigation, stable shell, initial loading, empty, error/Retry,
-  no-results/Clear, and pagination.
+- Projects navigation, Home Project-row entry, removed Project Structure
+  entry, stable shell, initial loading, empty, error/Retry, no-results/Clear,
+  and pagination.
 - Add form, valid create, backend default Open display, failure draft
   preservation, and duplicate prevention.
 - Conditional delete confirmation, success, rejection, and page correction.
-- Status labels and available actions for Open, Locked, dan Closed.
+- Status labels and available actions for Open, Locked, dan Closed on Projects,
+  plus eligible active lifecycle actions on Home.
 - Lock/close/reopen confirmations and close rejection.
 - Zero-leaf Lock rejection and actionable recovery message.
 - Closed read-only presentation.
-- Locked planning actions are read-only while complete Actual Date entry remains available.
+- Locked Project Name is editable while Settings/planning remain read-only and
+  complete Actual Date remains available through Task.
 - Locked Project Reopen, unscheduled-result feedback, and rollback recovery.
 - Priority Move Up/Down availability, no-impact success, Locked-impact rejection, scheduling feedback, and failure recovery.
 - Completed-leaf edit prevention where task UI exists.
 - Cache invalidation and stale-response protection.
 - Keyboard interaction, dialog focus, status accessibility, dan responsive
   layout.
-- Edit Project uses the shared wide Dialog variant and composes the US-4.3 whole-Project summary, including empty/loading/failure/Retry states without form draft, Save/Cancel, focus, or lifecycle regression.
+- Edit Project uses the shared wide Dialog variant and composes the US-4.3
+  whole-Project summary, including empty/loading/failure/Retry states without
+  form draft, Save/Cancel, focus, or lifecycle regression.
+- Home opens the shared Edit Project dialog directly without Projects/Project
+  Structure background navigation.
+- Lifecycle parity tests invoke the same Open/Locked commands from Home and
+  Projects.
 
 Tests verify observable behaviour and do not rely only on snapshots.
 
@@ -985,6 +1090,14 @@ This requirement is synchronized with US-3.3, US-4.1, US-4.2, US-4.3, and projec
 ---
 
 ## 21. Locked Product Decisions
+
+- Home is the canonical active-WBS surface; standalone Project Structure is
+  removed.
+- Project lifecycle commands remain available on Projects and eligible active
+  Home Project rows through the same use cases.
+- Locked Project may rename Project Name only; Settings and planning remain
+  read-only.
+- Locked Name rename never invokes scheduler or scheduling-impact preview.
 
 - Project is the root planning entity and logical WBS level `0`; no root WBS record is created.
 - Status values are exactly Open, Locked, and Closed; create defaults to Open.

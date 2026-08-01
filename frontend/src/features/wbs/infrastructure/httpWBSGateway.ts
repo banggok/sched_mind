@@ -434,11 +434,11 @@ function userMessage(code: string): string {
     case "PROJECT_CLOSED_READ_ONLY":
       return "Closed projects are read-only.";
     case "TASK_NOT_FOUND":
-      return "The Task could not be found. Refresh Project Structure.";
+      return "The Task could not be found. Refresh Home and try again.";
     case "EXECUTABLE_TASK_REQUIRED":
       return "Only a Task can be reopened.";
     case "TASK_NOT_COMPLETED":
-      return "This Task is already unfinished. Refresh Project Structure.";
+      return "This Task is already unfinished. Refresh Home and try again.";
     case "TASK_REOPEN_CONFLICT":
       return "The Task changed in another request. Refresh and try again.";
     case "TASK_REOPEN_FAILED":
