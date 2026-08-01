@@ -47,15 +47,16 @@ func TestDescriptionRules(t *testing.T) {
 		t.Fatalf("long description error=%v", err)
 	}
 }
-func TestOverlapAndResolution(t *testing.T) {
+func TestOverlappingPeriodsResolveToMinimumCapacity_D01(t *testing.T) {
 	if !Overlaps(date("2026-07-03"), date("2026-07-04"), date("2026-07-04"), date("2026-07-05")) {
 		t.Fatal("inclusive boundary must overlap")
 	}
 	if Overlaps(date("2026-07-03"), date("2026-07-04"), date("2026-07-05"), date("2026-07-06")) {
 		t.Fatal("adjacent periods must not overlap")
 	}
-	capacity, _ := NewCapacity(4)
-	if ResolveDailyCapacity(true, &capacity, 8) != 0 || ResolveDailyCapacity(false, &capacity, 8) != 4 || ResolveDailyCapacity(false, nil, 8) != 8 {
+	four, _ := NewCapacity(4)
+	six, _ := NewCapacity(6)
+	if ResolveDailyCapacity(true, []Capacity{six, four}, 8) != 0 || ResolveDailyCapacity(false, []Capacity{six, four}, 8) != 4 || ResolveDailyCapacity(false, nil, 8) != 8 {
 		t.Fatal("resolution precedence invalid")
 	}
 }

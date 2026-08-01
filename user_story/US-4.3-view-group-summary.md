@@ -1,9 +1,19 @@
 # US-4.3 — View Group and Project Summary
 
+> **Product decision update — US-7.1:** Home Portfolio Gantt reuses this
+> story's recursive confirmed-descendant date and known-Effort semantics for
+> Project and Group grid rows. US-7.1 owns the Gantt composition and timeline;
+> this story still owns the shared read-only aggregation rules.
+
+> **Product decision update — US-6.2:** Completion now requires a complete Actual
+> Date pair (`Actual Start` and `Actual End`). Effort Completion counts a Task as
+> completed only when both fields are present. Partial Actual Date is invalid and
+> must not be interpreted as completion.
+
 ## 1. User Story
 
-**Sebagai** Engineering Lead,  
-**Saya ingin** melihat ringkasan timeline dan penyelesaian effort pada sebuah Group maupun Project,  
+**Sebagai** Engineering Lead,
+**Saya ingin** melihat ringkasan timeline dan penyelesaian effort pada sebuah Group maupun Project,
 **Sehingga** saya dapat memahami rentang rencana dan progres pekerjaan pada subtree atau keseluruhan Project tanpa membuka setiap Task satu per satu.
 
 ---
@@ -44,7 +54,7 @@ Summary adalah projection dari current confirmed Task data. Summary bukan execut
 | Scheduled Task | Descendant Task yang mempunyai Start dan End lengkap untuk timeline terkait |
 | Known Effort | Effort Task yang mempunyai persisted `effortMinutes` |
 | Task Without Effort | Descendant Task dengan `effortMinutes == null` |
-| Completed Task | Descendant Task dengan persisted `Actual End != null` |
+| Completed Task | Descendant Task dengan persisted `actualStart != null` and `actualEnd != null` |
 | Effort Completion | Completed Known Effort dibagi Total Known Effort |
 | Confirmed WBS Tree | WBS tree yang berasal dari confirmed backend response/cache, bukan unconfirmed draft atau preview |
 
@@ -63,7 +73,7 @@ Summary adalah projection dari current confirmed Task data. Summary bukan execut
 - Menampilkan Commitment schedule coverage.
 - Menampilkan completed known effort, total known effort, dan percentage.
 - Menampilkan jumlah descendant Task tanpa Effort dan menjelaskan bahwa Task tersebut dikeluarkan dari effort calculation.
-- Menggunakan `Actual End` sebagai satu-satunya source of truth untuk completed effort.
+- Menggunakan complete Actual Date pair sebagai satu-satunya source of truth untuk completed effort.
 - Memperbarui summary setelah confirmed WBS state berubah tanpa browser hard refresh.
 - Menangani nested Group, Project tanpa Task, partially scheduled subtree, missing Effort, zero known effort, date-only formatting, local summary loading/failure, stale response, accessibility, dan responsive layout.
 - Menggunakan existing shared wide Dialog variant untuk Edit Project agar fields dan summary tidak dipaksa ke dialog sempit.
@@ -75,10 +85,10 @@ Summary adalah projection dari current confirmed Task data. Summary bukan execut
 - Menyimpan aggregate timeline, aggregate effort, atau percentage pada Group atau Project.
 - Menambahkan persisted progress percentage atau remaining effort.
 - Mengubah Effort menjadi remaining effort setelah Task completed.
-- Mengubah source of truth completion dari `Actual End`.
+- Mengubah source of truth completion dari complete Actual Date pair.
 - Menambahkan Task count completion sebagai primary progress metric.
 - Menampilkan jumlah direct child, total Group, atau structure summary.
-- Menampilkan Assignee summary, Role summary, dependency count, blocked state, Forecast, Delivery Impact, Project Health, atau Gantt data.
+- Mengimplementasikan Gantt workspace, timeline bars, dependency arrows, atau Project filtering; semua itu dimiliki US-7.1. Home Gantt hanya boleh menggunakan kembali recursive date/known-Effort semantics story ini.
 - Mengubah Execution atau Commitment scheduling algorithm.
 - Menambahkan backend endpoint, database column, migration, aggregate table, atau new summary-specific production query hanya untuk summary ini.
 - Mengubah Add Project menjadi summary view; Add Project belum mempunyai confirmed Task data.
@@ -129,7 +139,7 @@ Project Summary untuk Project yang memiliki tree di atas menggunakan Task 1, Tas
 - Tidak ada summary field baru pada WBS atau Project domain entity, persistence model, atau API DTO.
 - Tidak ada separate Group atau Project Summary aggregate.
 - Frontend menggunakan satu pure deterministic helper pada WBS feature domain/presentation boundary untuk menghasilkan view model dari confirmed tree; Group dan Project presentation tidak boleh menduplikasi calculation logic.
-- Backend tetap source of truth untuk Task Effort, Actual End, Execution Timeline, dan Commitment Timeline.
+- Backend tetap source of truth untuk Task Effort, Actual Start/End, Execution Timeline, dan Commitment Timeline.
 - Summary harus direcompute ketika confirmed WBS tree berubah; summary tidak boleh menyimpan copy independen yang dapat menjadi stale.
 
 ### 5.3 Execution Timeline Aggregate
@@ -148,7 +158,7 @@ Rules:
 - Task tanpa complete Execution pair tidak menyumbang date ke aggregate.
 - Task tanpa complete Execution pair tetap masuk total descendant Task untuk coverage.
 - Execution calculation tidak menggunakan Commitment dates.
-- Actual End tidak mengganti Execution dates dalam summary.
+- Actual Date tidak mengganti Execution dates dalam summary.
 - Date comparison menggunakan date-only value, bukan browser local timestamp.
 
 ### 5.4 Commitment Timeline Aggregate
@@ -167,7 +177,7 @@ Rules:
 - Task tanpa complete Commitment pair tidak menyumbang date ke aggregate.
 - Task tanpa complete Commitment pair tetap masuk total descendant Task untuk coverage.
 - Commitment calculation tidak menggunakan Execution dates.
-- Actual End tidak mengganti Commitment dates dalam summary.
+- Actual Date tidak mengganti Commitment dates dalam summary.
 - Date comparison menggunakan date-only value, bukan browser local timestamp.
 
 ### 5.5 Schedule Coverage
@@ -200,27 +210,27 @@ Rules:
 
 ### 5.6 Effort Completion
 
-Effort Completion menggunakan persisted Effort dan persisted Actual End dari seluruh descendant Task.
+Effort Completion menggunakan persisted Effort dan persisted Actual Start/End dari seluruh descendant Task.
 
 Definitions:
 
 ```text
 Total Known Effort = sum(effortMinutes) for descendant Tasks with effortMinutes != null
 Completed Known Effort = sum(effortMinutes) for descendant Tasks where:
-  effortMinutes != null AND Actual End != null
+  effortMinutes != null AND actualStart != null AND actualEnd != null
 Effort Completion Percentage = Completed Known Effort / Total Known Effort × 100
 ```
 
 Rules:
 
-- `Actual End` adalah satu-satunya completion source of truth.
+- Complete Actual Date pair adalah completion source of truth.
 - Unfinished Task dengan Effort masuk denominator tetapi tidak masuk numerator.
 - Completed Task dengan Effort masuk numerator dan denominator.
 - Task tanpa Effort tidak masuk numerator maupun denominator.
 - Completed Task tanpa Effort tetap dihitung sebagai Task Without Effort dan tidak boleh diberi invented effort.
-- Reopen Task menghapus Actual End; setelah confirmed Reopen, Effort Task tersebut tetap dalam denominator tetapi keluar dari numerator.
-- Mengubah Actual End tanpa mengubah Effort dapat mengubah completed known effort dan percentage.
-- Mengubah Effort dapat mengubah numerator, denominator, dan percentage sesuai current Actual End.
+- Reopen Task menghapus Actual Start dan Actual End; setelah confirmed Reopen, Effort Task tersebut tetap dalam denominator tetapi keluar dari numerator.
+- Mengubah complete Actual Date pair tanpa mengubah Effort dapat mengubah completed known effort dan percentage.
+- Mengubah Effort dapat mengubah numerator, denominator, dan percentage sesuai current complete Actual Date pair.
 - Summary tidak menyimpan completed effort atau percentage.
 - Summary tidak menghitung remaining effort per Task.
 - Summary tidak mengubah original Effort setelah completion.
@@ -321,7 +331,7 @@ Group dan Project Summary harus merefleksikan confirmed state setelah operation 
 
 - Task create/delete/move atau structural conversion.
 - Task Effort change.
-- Task Actual End set.
+- Task complete Actual Date pair set.
 - Reopen Task.
 - Execution/Commitment manual timeline change.
 - Automatic scheduling recalculation yang menghasilkan dates baru.
@@ -426,7 +436,7 @@ Project list DTO does not carry all Task fields needed for separate Execution/Co
 
 Input:
 
-| Task | Execution | Commitment | Effort | Actual End |
+| Task | Execution | Commitment | Effort | Actual Date |
 | --- | --- | --- | ---: | --- |
 | Task A | 2026-08-01 → 2026-08-03 | 2026-08-01 → 2026-08-05 | 16h | Set |
 | Task B | 2026-08-04 → 2026-08-06 | 2026-08-04 → 2026-08-08 | 24h | Empty |
@@ -513,203 +523,203 @@ It does not derive the two timeline summaries from Project `startDate`/`endDate`
 
 ### Recursive Aggregation
 
-**AC-1**  
-**Given** a Group contains direct Tasks and nested Groups at multiple levels  
-**When** Engineering Lead opens View Group  
+**AC-1**
+**Given** a Group contains direct Tasks and nested Groups at multiple levels
+**When** Engineering Lead opens View Group
 **Then** every descendant Task at every depth contributes to the applicable summary calculation.
 
-**AC-2**  
-**Given** a Group contains nested Groups  
-**When** summary is calculated  
+**AC-2**
+**Given** a Group contains nested Groups
+**When** summary is calculated
 **Then** nested Groups themselves do not count as Tasks and do not contribute executable values directly.
 
-**AC-3**  
-**Given** child order changes without descendant Task data changing  
-**When** View Group is reopened or refreshed  
+**AC-3**
+**Given** child order changes without descendant Task data changing
+**When** View Group is reopened or refreshed
 **Then** all summary values remain identical.
 
 ### Execution Timeline
 
-**AC-4**  
-**Given** some descendant Tasks have complete Execution pairs  
-**When** the applicable Group or Project summary is opened  
+**AC-4**
+**Given** some descendant Tasks have complete Execution pairs
+**When** the applicable Group or Project summary is opened
 **Then** Execution Start is the earliest complete descendant Execution Start and Execution End is the latest complete descendant Execution End.
 
-**AC-5**  
-**Given** only 3 of 5 descendant Tasks have complete Execution pairs  
-**When** Execution summary is rendered  
+**AC-5**
+**Given** only 3 of 5 descendant Tasks have complete Execution pairs
+**When** Execution summary is rendered
 **Then** the available aggregate range is shown and coverage reads `3 of 5 tasks scheduled`.
 
-**AC-6**  
-**Given** no descendant Task has a complete Execution pair  
-**When** Execution summary is rendered  
+**AC-6**
+**Given** no descendant Task has a complete Execution pair
+**When** Execution summary is rendered
 **Then** it displays `Not scheduled` and `0 of <total> tasks scheduled` without inventing a date.
 
 ### Commitment Timeline
 
-**AC-7**  
-**Given** some descendant Tasks have complete Commitment pairs  
-**When** the applicable Group or Project summary is opened  
+**AC-7**
+**Given** some descendant Tasks have complete Commitment pairs
+**When** the applicable Group or Project summary is opened
 **Then** Commitment Start is the earliest complete descendant Commitment Start and Commitment End is the latest complete descendant Commitment End.
 
-**AC-8**  
-**Given** only 3 of 5 descendant Tasks have complete Commitment pairs  
-**When** Commitment summary is rendered  
+**AC-8**
+**Given** only 3 of 5 descendant Tasks have complete Commitment pairs
+**When** Commitment summary is rendered
 **Then** the available aggregate range is shown and coverage reads `3 of 5 tasks scheduled`.
 
-**AC-9**  
-**Given** no descendant Task has a complete Commitment pair  
-**When** Commitment summary is rendered  
+**AC-9**
+**Given** no descendant Task has a complete Commitment pair
+**When** Commitment summary is rendered
 **Then** it displays `Not scheduled` and `0 of <total> tasks scheduled` without inventing a date.
 
-**AC-10**  
-**Given** Execution and Commitment coverage differ  
-**When** the applicable Group or Project summary is rendered  
+**AC-10**
+**Given** Execution and Commitment coverage differ
+**When** the applicable Group or Project summary is rendered
 **Then** each timeline displays its own range and coverage; neither reuses the other timeline's count or dates.
 
 ### Effort Completion
 
-**AC-11**  
-**Given** descendant Tasks have Known Effort and some have Actual End  
-**When** Effort Completion is calculated  
-**Then** completed known effort is the sum of Effort only for Tasks with Actual End, and total known effort is the sum of all Tasks with Effort.
+**AC-11**
+**Given** descendant Tasks have Known Effort and some have complete Actual Date pairs
+**When** Effort Completion is calculated
+**Then** completed known effort is the sum of Effort only for Tasks with complete Actual Date pairs, and total known effort is the sum of all Tasks with Effort.
 
-**AC-12**  
-**Given** completed known effort is 24 hours and total known effort is 40 hours  
-**When** the applicable Group or Project summary is rendered  
+**AC-12**
+**Given** completed known effort is 24 hours and total known effort is 40 hours
+**When** the applicable Group or Project summary is rendered
 **Then** it displays `24 of 40 hours completed (60%)`.
 
-**AC-13**  
-**Given** percentage has a non-integer result  
-**When** percentage is rendered  
+**AC-13**
+**Given** percentage has a non-integer result
+**When** percentage is rendered
 **Then** it is calculated from integer minutes, rounded to at most one decimal place, and trailing `.0` is removed.
 
-**AC-14**  
-**Given** one or more descendant Tasks have no Effort  
-**When** Effort Completion is rendered  
+**AC-14**
+**Given** one or more descendant Tasks have no Effort
+**When** Effort Completion is rendered
 **Then** those Tasks are excluded from completed/total known effort and an accurate singular/plural disclosure is displayed.
 
-**AC-15**  
-**Given** a completed descendant Task has no Effort  
-**When** Effort Completion is calculated  
+**AC-15**
+**Given** a completed descendant Task has no Effort
+**When** Effort Completion is calculated
 **Then** no effort is invented, the Task does not enter numerator or denominator, and it remains included in Task Without Effort disclosure.
 
-**AC-16**  
-**Given** every descendant Task has no Effort  
-**When** Effort Completion is rendered  
+**AC-16**
+**Given** every descendant Task has no Effort
+**When** Effort Completion is rendered
 **Then** it displays `Effort completion unavailable`, displays missing-effort disclosure, and does not display a percentage or divide by zero.
 
-**AC-17**  
-**Given** a known-effort Task changes from unfinished to completed through confirmed Actual End  
-**When** confirmed WBS state refreshes  
+**AC-17**
+**Given** a known-effort Task changes from unfinished to completed through confirmed Actual Date
+**When** confirmed WBS state refreshes
 **Then** its Effort enters completed known effort and every open/reopened applicable Group or Project percentage updates without hard refresh.
 
-**AC-18**  
-**Given** a known-effort completed Task is successfully reopened  
-**When** confirmed WBS state refreshes  
+**AC-18**
+**Given** a known-effort completed Task is successfully reopened
+**When** confirmed WBS state refreshes
 **Then** its Effort leaves completed known effort but remains in total known effort, and every open/reopened applicable Group or Project percentage updates without hard refresh.
 
 ### Projection, State, and Compatibility
 
-**AC-19**  
-**Given** a user edits an automatic Task and receives an unconfirmed schedule preview  
-**When** a Group or Project Summary is observed before Save  
+**AC-19**
+**Given** a user edits an automatic Task and receives an unconfirmed schedule preview
+**When** a Group or Project Summary is observed before Save
 **Then** summary continues to use confirmed WBS data and does not reflect preview-only dates or draft Effort.
 
-**AC-20**  
-**Given** a confirmed descendant mutation or schedule recalculation changes dates, Effort, Actual End, or subtree membership  
-**When** WBS confirmed state refreshes  
+**AC-20**
+**Given** a confirmed descendant mutation or schedule recalculation changes dates, Effort, Actual Date, or subtree membership
+**When** WBS confirmed state refreshes
 **Then** an open or subsequently opened View Group or Edit Project shows recomputed values without browser hard refresh.
 
-**AC-21**  
-**Given** an older WBS tree request resolves after a successful mutation and newer confirmed response  
-**When** cache coordination completes  
+**AC-21**
+**Given** an older WBS tree request resolves after a successful mutation and newer confirmed response
+**When** cache coordination completes
 **Then** the older response cannot restore stale Group or Project Summary values.
 
-**AC-22**  
-**Given** Engineering Lead opens View Group  
-**When** no mutation is performed  
+**AC-22**
+**Given** Engineering Lead opens View Group
+**When** no mutation is performed
 **Then** opening and closing the dialog sends no write request and persists no aggregate fields.
 
-**AC-23**  
-**Given** the Project is Open, Locked, or Closed  
-**When** View Group is available  
+**AC-23**
+**Given** the Project is Open, Locked, or Closed
+**When** View Group is available
 **Then** the same summary calculations are read-only and no Project lifecycle or scheduler action is triggered.
 
 ### UX, Accessibility, and Defensive Behaviour
 
-**AC-24**  
-**Given** View Group is rendered  
+**AC-24**
+**Given** View Group is rendered
 **Then** the obsolete direct-item alert is absent and the dialog displays exactly the required Execution Timeline, Commitment Timeline, and Effort Completion information groups.
 
-**AC-25**  
-**Given** long localized dates, large Task counts, large hour values, or a narrow supported viewport  
-**When** View Group is rendered  
+**AC-25**
+**Given** long localized dates, large Task counts, large hour values, or a narrow supported viewport
+**When** View Group is rendered
 **Then** content wraps without clipping or uncontrolled horizontal scrolling and Close remains usable.
 
-**AC-26**  
-**Given** a keyboard or screen-reader user opens View Group  
-**When** they navigate the dialog  
+**AC-26**
+**Given** a keyboard or screen-reader user opens View Group
+**When** they navigate the dialog
 **Then** heading, labels, values, coverage/disclosure, focus containment, Close action, and focus restoration satisfy the shared Dialog and accessibility contracts.
 
-**AC-27**  
-**Given** malformed or transient data marks a node as Group but contains no descendant Task  
-**When** View Group is rendered  
+**AC-27**
+**Given** malformed or transient data marks a node as Group but contains no descendant Task
+**When** View Group is rendered
 **Then** a safe `No descendant tasks are available for this group.` state is shown without crash or misleading aggregate values.
 
 ### Project Summary and Wide Edit Form
 
-**AC-28**  
-**Given** Project is the logical WBS level `0` and has multiple top-level WBS roots  
-**When** Engineering Lead opens Edit Project  
+**AC-28**
+**Given** Project is the logical WBS level `0` and has multiple top-level WBS roots
+**When** Engineering Lead opens Edit Project
 **Then** Project Summary recursively includes every Task in every root and nested descendant, using exactly the same timeline, coverage, effort, percentage, and missing-Effort rules as View Group.
 
-**AC-29**  
-**Given** Edit Project has loaded confirmed WBS data  
-**When** Project Summary is rendered  
+**AC-29**
+**Given** Edit Project has loaded confirmed WBS data
+**When** Project Summary is rendered
 **Then** it displays Execution Timeline, Commitment Timeline, and Effort Completion in the same semantic order and with the same copy/precision contract as View Group.
 
-**AC-30**  
-**Given** a Project has no confirmed Task  
-**When** Edit Project is opened  
+**AC-30**
+**Given** a Project has no confirmed Task
+**When** Edit Project is opened
 **Then** Project Summary displays `No tasks are available for this project.` and does not display `0 of 0`, a percentage, or invented dates.
 
-**AC-31**  
-**Given** Edit Project opens without a fresh confirmed WBS tree in cache  
-**When** summary data is being loaded  
+**AC-31**
+**Given** Edit Project opens without a fresh confirmed WBS tree in cache
+**When** summary data is being loaded
 **Then** the form opens immediately, Project fields remain usable according to lifecycle rules, focus remains on the form, and only the Project Summary region shows a local loading state.
 
-**AC-32**  
-**Given** Project Summary loading fails  
-**When** Edit Project remains open  
+**AC-32**
+**Given** Project Summary loading fails
+**When** Edit Project remains open
 **Then** a local recoverable error and Retry are shown without clearing Project draft, closing the dialog, or blocking valid Save/Cancel operations.
 
-**AC-33**  
-**Given** an older Project WBS response resolves after a newer confirmed response  
-**When** Project Summary state coordinates  
+**AC-33**
+**Given** an older Project WBS response resolves after a newer confirmed response
+**When** Project Summary state coordinates
 **Then** the older response cannot restore stale summary values.
 
-**AC-34**  
-**Given** Engineering Lead opens Edit Project on a supported desktop viewport  
+**AC-34**
+**Given** Engineering Lead opens Edit Project on a supported desktop viewport
 **Then** the dialog uses the existing shared wide variant and the Project fields plus summary are not constrained to the standard `28rem` dialog cap.
 
-**AC-35**  
-**Given** Edit Project is displayed on a narrow supported viewport  
-**When** the wide dialog and summary sections reflow  
+**AC-35**
+**Given** Edit Project is displayed on a narrow supported viewport
+**When** the wide dialog and summary sections reflow
 **Then** the dialog remains within viewport padding, summary sections stack in semantic order, no uncontrolled horizontal scrolling occurs, and form actions remain reachable.
 
-**AC-36**  
-**Given** Engineering Lead opens Add Project  
+**AC-36**
+**Given** Engineering Lead opens Add Project
 **Then** Project Summary is absent and the Add form is not required to use the wide variant.
 
-**AC-37**  
-**Given** Edit Project is Open, Locked, or Closed  
-**When** Project Summary is displayed  
+**AC-37**
+**Given** Edit Project is Open, Locked, or Closed
+**When** Project Summary is displayed
 **Then** the summary remains read-only, follows the same calculation rules, and does not change existing field permissions or lifecycle behaviour.
 
-**AC-38**  
-**Given** Project `startDate` and `endDate` are present  
-**When** Project Summary is calculated  
+**AC-38**
+**Given** Project `startDate` and `endDate` are present
+**When** Project Summary is calculated
 **Then** those generic Project fields are not used as a substitute for recursive Task Execution/Commitment pairs or Effort Completion.
 
 ---
@@ -759,7 +769,7 @@ It does not derive the two timeline summaries from Project `startDate`/`endDate`
 - No write gateway method is called when View Group opens/closes.
 - Summary is read-only for Open, Locked, and Closed Project.
 - Unconfirmed Task preview does not alter Group or Project Summary.
-- Confirmed Actual End updates summary.
+- Confirmed Actual Date updates summary.
 - Confirmed Reopen updates summary.
 - Confirmed structural change updates descendant scope.
 - Stale response cannot restore old summary.
@@ -786,7 +796,7 @@ At least one Project Structure workflow must prove recursively aggregated output
 
 The workflow must observe the exact aggregate ranges, both coverage values, completed/total known effort, percentage, and missing-effort disclosure.
 
-A second acceptance workflow must prove confirmed Actual End and Reopen Task transitions update the same open/reopened Group and owning Project Summary without hard refresh and that unconfirmed preview does not affect either.
+A second acceptance workflow must prove confirmed Actual Date and Reopen Task transitions update the same open/reopened Group and owning Project Summary without hard refresh and that unconfirmed preview does not affect either.
 
 A third acceptance workflow must open Edit Project for a realistic multi-root WBS, verify the exact Project Summary, wide desktop layout, narrow stacked layout, and empty Project state. It must also prove local summary loading/error/Retry does not block or clear the Project form and that an older response cannot restore stale values.
 
@@ -879,7 +889,7 @@ US-4.2 excludes persisted percentage complete and remaining effort. US-4.3 does 
 
 Compatibility rule:
 
-- Reopen changes Actual End only.
+- Reopen clears Actual Start and Actual End only.
 - Every ancestor Group and the owning Project Effort Completion recompute from confirmed Task data.
 - Original Effort remains unchanged.
 
@@ -963,7 +973,7 @@ The agent must not:
 - count nested Groups as Tasks;
 - calculate only direct children;
 - treat missing Effort as zero;
-- infer completion from dates other than Actual End;
+- infer completion from anything other than a complete Actual Date pair;
 - use Task count as the completion percentage;
 - mutate or sort the source WBS tree during aggregation;
 - reflect unconfirmed Task preview in Group or Project Summary;

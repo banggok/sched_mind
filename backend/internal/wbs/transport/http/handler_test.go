@@ -48,6 +48,7 @@ func reopenMux(service Service) http.Handler {
 }
 
 func completedHTTPNode() *domain.Node {
+	actualStart := time.Date(2026, 7, 26, 0, 0, 0, 0, time.UTC)
 	actualEnd := time.Date(2026, 7, 28, 0, 0, 0, 0, time.UTC)
 	executionStart := time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)
 	executionEnd := time.Date(2026, 7, 25, 0, 0, 0, 0, time.UTC)
@@ -56,6 +57,7 @@ func completedHTTPNode() *domain.Node {
 		Executable: domain.ExecutableFields{
 			ExecutionTimeline:  domain.Timeline{Start: &executionStart, End: &executionEnd},
 			CommitmentTimeline: domain.Timeline{Start: &executionStart, End: &executionEnd},
+			ActualStart:        &actualStart,
 			ActualEnd:          &actualEnd,
 		},
 		Children: []domain.Node{},
@@ -72,6 +74,7 @@ func TestReopenEndpointAcceptsNoBodyAndEmptyObjectAndReturnsConfirmedNull_AC4(t 
 					t.Fatalf("scope=%q/%q", projectID, id)
 				}
 				value := completedHTTPNode()
+				value.Executable.ActualStart = nil
 				value.Executable.ActualEnd = nil
 				return value, nil
 			}}
@@ -223,6 +226,7 @@ func TestExecutableUpdateAcceptsLagContractAndReturnsLag_US6_AC2(t *testing.T) {
 			}
 			captured = input.LagDays
 			value := completedHTTPNode()
+			value.Executable.ActualStart = nil
 			value.Executable.ActualEnd = nil
 			value.Executable.LagDays = input.LagDays
 			return value, nil
@@ -281,6 +285,7 @@ func TestExecutablePreviewReturnsGeneratedDraftWithoutCallingConfirmedUpdate(t *
 				t.Fatalf("input=%#v", input)
 			}
 			value := completedHTTPNode()
+			value.Executable.ActualStart = nil
 			value.Executable.ActualEnd = nil
 			value.Executable.RoleID = input.RoleID
 			value.Executable.AssigneeID = input.AssigneeID
@@ -329,6 +334,7 @@ func TestExecutablePreviewAllowsClearedAssigneeForDependencyReconciliation(t *te
 				t.Fatalf("input=%#v scope=%q/%q", input, projectID, id)
 			}
 			value := completedHTTPNode()
+			value.Executable.ActualStart = nil
 			value.Executable.ActualEnd = nil
 			value.Executable.AssigneeID = nil
 			value.Executable.ExecutionTimeline = domain.Timeline{}

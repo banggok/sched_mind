@@ -45,6 +45,7 @@ function projectGateway(projects: Project[] = [alpha]): ProjectsGateway {
     create: vi.fn().mockResolvedValue(alpha),
     update: vi.fn().mockResolvedValue(alpha),
     changeStatus: vi.fn().mockResolvedValue(alpha),
+    bulkReopen: vi.fn().mockResolvedValue([alpha]),
     movePriority: vi.fn().mockResolvedValue(alpha),
     updateSettings: vi.fn().mockResolvedValue(alpha),
     delete: vi.fn().mockResolvedValue(undefined),
@@ -77,6 +78,7 @@ function group(id: string, children: WBSNode[]): WBSNode {
     hasChildren: true,
     executable: {
       effortMinutes: 99_999,
+      actualStart: "2020-01-01",
       actualEnd: "2020-01-01",
       lagDays: 0,
       executionTimeline: { start: "2020-01-01", end: "2030-01-01" },
@@ -91,6 +93,7 @@ function multiRootTree(): WBSNode[] {
     group("delivery", [
       task("analysis", {
         effortMinutes: 960,
+        actualStart: "2026-08-01",
         actualEnd: "2026-08-03",
         executionTimeline: { start: "2026-08-01", end: "2026-08-03" },
         commitmentTimeline: { start: "2026-08-01", end: "2026-08-05" },
@@ -106,11 +109,15 @@ function multiRootTree(): WBSNode[] {
     group("release", [
       task("verify", {
         effortMinutes: 480,
+        actualStart: "2026-08-08",
         actualEnd: "2026-08-12",
         commitmentTimeline: { start: "2026-08-11", end: "2026-08-12" },
       }),
     ]),
-    task("handover", { actualEnd: "2026-08-13" }),
+    task("handover", {
+      actualStart: "2026-08-13",
+      actualEnd: "2026-08-13",
+    }),
   ];
 }
 
@@ -336,7 +343,11 @@ describe("US-4.3 Project Summary acceptance workflow", () => {
     await waitFor(() => expect(tree).toHaveBeenCalledTimes(2));
     await act(async () =>
       newer.resolve([
-        task("new", { effortMinutes: 960, actualEnd: "2026-08-01" }),
+        task("new", {
+          effortMinutes: 960,
+          actualStart: "2026-08-01",
+          actualEnd: "2026-08-01",
+        }),
       ]),
     );
     expect(

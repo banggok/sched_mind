@@ -8,6 +8,7 @@ import (
 
 	"github.com/banggok/sched_mind/backend/internal/shared/httpjson"
 	"github.com/banggok/sched_mind/backend/internal/shared/listing"
+	"github.com/banggok/sched_mind/backend/internal/shared/schedulingimpact"
 	"github.com/banggok/sched_mind/backend/internal/teammembers/application"
 	"github.com/banggok/sched_mind/backend/internal/teammembers/domain"
 )
@@ -195,6 +196,9 @@ func mapResponse(record application.TeamMemberRecord) teamMemberResponse {
 }
 
 func writeError(response http.ResponseWriter, err error) {
+	if schedulingimpact.WriteHTTPError(response, err) {
+		return
+	}
 	switch {
 	case errors.Is(err, domain.ErrNameRequired):
 		httpjson.Write(response, http.StatusBadRequest, errorResponse{

@@ -59,7 +59,7 @@ export function summarizeWBS(roots: readonly WBSNode[]): WBSSummary {
     }
 
     summary.totalKnownEffortMinutes += effortMinutes;
-    if (node.executable.actualEnd) {
+    if (node.executable.actualStart && node.executable.actualEnd) {
       summary.completedKnownEffortMinutes += effortMinutes;
     }
   }

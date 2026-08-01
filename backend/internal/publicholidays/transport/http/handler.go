@@ -13,6 +13,7 @@ import (
 	"github.com/banggok/sched_mind/backend/internal/publicholidays/domain"
 	"github.com/banggok/sched_mind/backend/internal/shared/httpjson"
 	"github.com/banggok/sched_mind/backend/internal/shared/listing"
+	"github.com/banggok/sched_mind/backend/internal/shared/schedulingimpact"
 )
 
 type Service interface {
@@ -220,6 +221,9 @@ func mapItem(value domain.PublicHoliday) item {
 	return item{value.ID, value.StartDate.Format("2006-01-02"), value.EndDate.Format("2006-01-02"), value.Description, value.CreatedAt.UTC().Format(time.RFC3339), value.UpdatedAt.UTC().Format(time.RFC3339)}
 }
 func writeError(w http.ResponseWriter, err error) {
+	if schedulingimpact.WriteHTTPError(w, err) {
+		return
+	}
 	status, code, message, field := 500, "INTERNAL_ERROR", "An internal error occurred", ""
 	switch {
 	case errors.Is(err, domain.ErrStartDateRequired):

@@ -163,7 +163,7 @@ describe("automatic dependency ownership contract", () => {
 
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/dependencies/automatic%2Flink/keep-manual",
-      { method: "POST" },
+      expect.objectContaining({ method: "POST" }),
     );
   });
 

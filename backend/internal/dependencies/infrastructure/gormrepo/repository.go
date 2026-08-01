@@ -10,6 +10,7 @@ import (
 
 	"github.com/banggok/sched_mind/backend/internal/dependencies/domain"
 	"github.com/banggok/sched_mind/backend/internal/shared/persistence"
+	"github.com/banggok/sched_mind/backend/internal/shared/schedulingimpact"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -33,7 +34,7 @@ type taskModel struct {
 	ID, ProjectID, ParentKey, Name, NameKey string
 	ParentID                                *string
 	Position                                int
-	ActualEnd, ExecutionStart               *time.Time
+	ActualStart, ActualEnd, ExecutionStart  *time.Time
 }
 
 type hierarchyNode struct {
@@ -57,13 +58,13 @@ func (r *Repository) List(ctx context.Context, taskID string) (*domain.Detail, e
 	}
 	var incoming, outgoing []dependencyRow
 	if err := r.db.WithContext(ctx).Table("task_dependencies d").
-		Select("d.id,d.blocking_task_id,d.blocked_task_id,d.manual_owned,d.automatic_owned,d.created_at,d.updated_at,t.id task_id,t.name task_name,t.project_id,p.name project_name,t.actual_end,t.execution_start expected_start").
+		Select("d.id,d.blocking_task_id,d.blocked_task_id,d.manual_owned,d.automatic_owned,d.created_at,d.updated_at,t.id task_id,t.name task_name,t.project_id,p.name project_name,t.actual_start,t.actual_end,t.execution_start expected_start").
 		Joins("JOIN wbs_nodes t ON t.id = d.blocking_task_id").Joins("JOIN projects p ON p.id = t.project_id").
 		Where("d.blocked_task_id = ?", taskID).Order("LOWER(p.name) ASC").Order("t.parent_key ASC").Order("t.position ASC").Order("t.id ASC").Scan(&incoming).Error; err != nil {
 		return nil, fmt.Errorf("load blocked by: %w", err)
 	}
 	if err := r.db.WithContext(ctx).Table("task_dependencies d").
-		Select("d.id,d.blocking_task_id,d.blocked_task_id,d.manual_owned,d.automatic_owned,d.created_at,d.updated_at,t.id task_id,t.name task_name,t.project_id,p.name project_name,t.actual_end,t.execution_start expected_start").
+		Select("d.id,d.blocking_task_id,d.blocked_task_id,d.manual_owned,d.automatic_owned,d.created_at,d.updated_at,t.id task_id,t.name task_name,t.project_id,p.name project_name,t.actual_start,t.actual_end,t.execution_start expected_start").
 		Joins("JOIN wbs_nodes t ON t.id = d.blocked_task_id").Joins("JOIN projects p ON p.id = t.project_id").
 		Where("d.blocking_task_id = ?", taskID).Order("LOWER(p.name) ASC").Order("t.parent_key ASC").Order("t.position ASC").Order("t.id ASC").Scan(&outgoing).Error; err != nil {
 		return nil, fmt.Errorf("load blocks: %w", err)
@@ -76,13 +77,13 @@ type dependencyRow struct {
 	ID, BlockingTaskID, BlockedTaskID, TaskID, TaskName, ProjectID, ProjectName string
 	ManualOwned, AutomaticOwned                                                 bool
 	CreatedAt, UpdatedAt                                                        time.Time
-	ActualEnd, ExpectedStart                                                    *time.Time
+	ActualStart, ActualEnd, ExpectedStart                                       *time.Time
 }
 
 func mapDependencyRows(rows []dependencyRow) []domain.Item {
 	out := make([]domain.Item, 0, len(rows))
 	for _, v := range rows {
-		out = append(out, domain.Item{Dependency: domain.Dependency{ID: v.ID, BlockingTaskID: v.BlockingTaskID, BlockedTaskID: v.BlockedTaskID, ManualOwned: v.ManualOwned, AutomaticOwned: v.AutomaticOwned, CreatedAt: v.CreatedAt, UpdatedAt: v.UpdatedAt}, Task: domain.Task{ID: v.TaskID, Name: v.TaskName, ProjectID: v.ProjectID, ProjectName: v.ProjectName, ActualEnd: v.ActualEnd, ExpectedStart: v.ExpectedStart}})
+		out = append(out, domain.Item{Dependency: domain.Dependency{ID: v.ID, BlockingTaskID: v.BlockingTaskID, BlockedTaskID: v.BlockedTaskID, ManualOwned: v.ManualOwned, AutomaticOwned: v.AutomaticOwned, CreatedAt: v.CreatedAt, UpdatedAt: v.UpdatedAt}, Task: domain.Task{ID: v.TaskID, Name: v.TaskName, ProjectID: v.ProjectID, ProjectName: v.ProjectName, ActualStart: v.ActualStart, ActualEnd: v.ActualEnd, ExpectedStart: v.ExpectedStart}})
 	}
 	return out
 }
@@ -96,7 +97,7 @@ func (r *Repository) Candidates(ctx context.Context, taskID string, direction do
 		Where("t.id <> ? AND p.status <> ?", taskID, "closed").
 		Where("NOT EXISTS (?)", r.db.Table("wbs_nodes c").Select("1").Where("c.project_id = t.project_id AND c.parent_id = t.id"))
 	if direction == domain.Blocks {
-		q = q.Where("t.actual_end IS NULL").Where("NOT EXISTS (?)", r.db.Table("task_dependencies d").Select("1").Where("d.blocking_task_id = ? AND d.blocked_task_id = t.id", taskID))
+		q = q.Where("t.actual_start IS NULL AND t.actual_end IS NULL").Where("NOT EXISTS (?)", r.db.Table("task_dependencies d").Select("1").Where("d.blocking_task_id = ? AND d.blocked_task_id = t.id", taskID))
 	} else {
 		q = q.Where("NOT EXISTS (?)", r.db.Table("task_dependencies d").Select("1").Where("d.blocking_task_id = t.id AND d.blocked_task_id = ?", taskID))
 	}
@@ -107,9 +108,9 @@ func (r *Repository) Candidates(ctx context.Context, taskID string, direction do
 	}
 	var rows []struct {
 		ID, Name, ProjectID, ProjectName, ParentKey string
-		ActualEnd, ExpectedStart                    *time.Time
+		ActualStart, ActualEnd, ExpectedStart       *time.Time
 	}
-	if err := q.Select("t.id,t.name,t.project_id,p.name project_name,t.parent_key,t.actual_end,t.execution_start expected_start").Order("p.name_key ASC").Order("t.parent_key ASC").Order("t.position ASC").Order("t.id ASC").Scan(&rows).Error; err != nil {
+	if err := q.Select("t.id,t.name,t.project_id,p.name project_name,t.parent_key,t.actual_start,t.actual_end,t.execution_start expected_start").Order("p.name_key ASC").Order("t.parent_key ASC").Order("t.position ASC").Order("t.id ASC").Scan(&rows).Error; err != nil {
 		return nil, err
 	}
 
@@ -182,6 +183,7 @@ func (r *Repository) Candidates(ctx context.Context, taskID string, direction do
 				v.ID,
 				nodesByProject[v.ProjectID],
 			),
+			ActualStart:   v.ActualStart,
 			ActualEnd:     v.ActualEnd,
 			ExpectedStart: v.ExpectedStart,
 		})
@@ -243,7 +245,7 @@ func (r *Repository) Create(ctx context.Context, value domain.Dependency, schedu
 				return err
 			}
 			if projects[blocking.ProjectID] || projects[blocked.ProjectID] {
-				if err := schedule(persistence.WithTransaction(ctx, tx), uniqueStrings(blocking.ProjectID, blocked.ProjectID)); err != nil {
+				if err := schedule(dependencyScheduleContext(ctx, tx, blocked.ProjectID), uniqueStrings(blocking.ProjectID, blocked.ProjectID)); err != nil {
 					return err
 				}
 			}
@@ -273,7 +275,7 @@ func (r *Repository) Create(ctx context.Context, value domain.Dependency, schedu
 			return mapConflict(err)
 		}
 		if projects[blocking.ProjectID] || projects[blocked.ProjectID] {
-			if err := schedule(persistence.WithTransaction(ctx, tx), uniqueStrings(blocking.ProjectID, blocked.ProjectID)); err != nil {
+			if err := schedule(dependencyScheduleContext(ctx, tx, blocked.ProjectID), uniqueStrings(blocking.ProjectID, blocked.ProjectID)); err != nil {
 				return err
 			}
 		}
@@ -303,7 +305,10 @@ func (r *Repository) Delete(ctx context.Context, id string, now time.Time, sched
 		if err != nil {
 			return err
 		}
-		if blocked.ActualEnd != nil {
+		if err := ensureEndpointProjectsOpen(tx, blocking, blocked); err != nil {
+			return err
+		}
+		if blocked.ActualStart != nil && blocked.ActualEnd != nil {
 			return domain.ErrCompletedHistory
 		}
 		deleteRelation, err := dependency.RemoveManual(now)
@@ -321,7 +326,7 @@ func (r *Repository) Delete(ctx context.Context, id string, now time.Time, sched
 			return err
 		}
 		if projects[blocking.ProjectID] || projects[blocked.ProjectID] {
-			return schedule(persistence.WithTransaction(ctx, tx), uniqueStrings(blocking.ProjectID, blocked.ProjectID))
+			return schedule(dependencyScheduleContext(ctx, tx, blocked.ProjectID), uniqueStrings(blocking.ProjectID, blocked.ProjectID))
 		}
 		return nil
 	})
@@ -345,6 +350,9 @@ func (r *Repository) KeepAsManual(ctx context.Context, id string, now time.Time,
 		if err != nil {
 			return err
 		}
+		if err := ensureEndpointProjectsOpen(tx, blocking, blocked); err != nil {
+			return err
+		}
 		dependency.KeepAsManual(now)
 		if err := tx.Model(&dependencyModel{}).Where("id = ?", id).Updates(map[string]any{
 			"manual_owned": true,
@@ -353,7 +361,7 @@ func (r *Repository) KeepAsManual(ctx context.Context, id string, now time.Time,
 			return err
 		}
 		if projects[blocking.ProjectID] || projects[blocked.ProjectID] {
-			if err := schedule(persistence.WithTransaction(ctx, tx), uniqueStrings(blocking.ProjectID, blocked.ProjectID)); err != nil {
+			if err := schedule(dependencyScheduleContext(ctx, tx, blocked.ProjectID), uniqueStrings(blocking.ProjectID, blocked.ProjectID)); err != nil {
 				return err
 			}
 		}
@@ -399,6 +407,9 @@ func validateEndpoint(tx *gorm.DB, id string, blocked bool) (taskModel, error) {
 	if p.Status == "closed" {
 		return t, domain.ErrClosedProject
 	}
+	if p.Status != "open" {
+		return t, domain.ErrLockedProject
+	}
 	var children int64
 	if err := tx.Model(&taskModel{}).Where("project_id = ? AND parent_key = ?", t.ProjectID, t.ID).Count(&children).Error; err != nil {
 		return t, err
@@ -406,10 +417,26 @@ func validateEndpoint(tx *gorm.DB, id string, blocked bool) (taskModel, error) {
 	if children > 0 {
 		return t, domain.ErrExecutableNeeded
 	}
-	if blocked && t.ActualEnd != nil {
+	if blocked && t.ActualStart != nil && t.ActualEnd != nil {
 		return t, domain.ErrCompletedBlocked
 	}
 	return t, nil
+}
+
+func ensureEndpointProjectsOpen(tx *gorm.DB, tasks ...taskModel) error {
+	for _, task := range tasks {
+		var project projectModel
+		if err := tx.First(&project, "id = ?", task.ProjectID).Error; err != nil {
+			return err
+		}
+		if project.Status == "closed" {
+			return domain.ErrClosedProject
+		}
+		if project.Status != "open" {
+			return domain.ErrLockedProject
+		}
+	}
+	return nil
 }
 
 func loadTask(db *gorm.DB, id string) (taskModel, error) {
@@ -500,6 +527,11 @@ func cycleSteps(tx *gorm.DB, ids []string) ([]domain.CycleStep, error) {
 		out = append(out, byID[id])
 	}
 	return out, nil
+}
+
+func dependencyScheduleContext(ctx context.Context, tx *gorm.DB, ownerProjectID string) context.Context {
+	ctx = persistence.WithTransaction(ctx, tx)
+	return schedulingimpact.WithOperation(ctx, ownerProjectID, schedulingimpact.ModeOrdinary)
 }
 
 func uniqueStrings(a, b string) []string {

@@ -31,26 +31,29 @@ func TestProjectLifecycleAndValidation(t *testing.T) {
 	if err := project.ChangeStatus(StatusLocked, true, false, nil, nil, now.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	if err := project.ChangeStatus(StatusOpen, false, false, nil, nil, now); !errors.Is(err, ErrStatusTransitionNotAllowed) {
+	if err := project.ChangeStatus(StatusOpen, false, false, nil, nil, now.Add(2*time.Hour)); err != nil {
 		t.Fatalf("locked reopen: %v", err)
 	}
-	if err := project.ChangeStatus(StatusClosed, false, false, nil, nil, now); !errors.Is(err, ErrCannotCloseWithoutTasks) {
+	if project.Status != StatusOpen || project.LockedExecutionSnapshot != nil || project.LockedCommitmentSnapshot != nil {
+		t.Fatalf("locked reopen state: %#v", project)
+	}
+	if err := project.ChangeStatus(StatusClosed, false, false, nil, nil, now.Add(3*time.Hour)); !errors.Is(err, ErrCannotCloseWithoutTasks) {
 		t.Fatalf("zero leaf close: %v", err)
 	}
-	if err := project.ChangeStatus(StatusClosed, true, true, nil, nil, now); !errors.Is(err, ErrCannotCloseWithActiveTasks) {
+	if err := project.ChangeStatus(StatusClosed, true, true, nil, nil, now.Add(4*time.Hour)); !errors.Is(err, ErrCannotCloseWithActiveTasks) {
 		t.Fatalf("active close: %v", err)
 	}
-	if err := project.ChangeStatus(StatusClosed, true, false, nil, nil, now.Add(2*time.Hour)); err != nil {
+	if err := project.ChangeStatus(StatusClosed, true, false, nil, nil, now.Add(5*time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	if err := project.Rename("Beta", now); !errors.Is(err, ErrClosedReadOnly) {
 		t.Fatalf("closed edit: %v", err)
 	}
-	if err := project.ChangeStatus(StatusOpen, false, false, nil, nil, now.Add(3*time.Hour)); err != nil {
+	if err := project.ChangeStatus(StatusOpen, false, false, nil, nil, now.Add(6*time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	if project.LockedExecutionSnapshot != nil || project.LockedCommitmentSnapshot != nil {
-		t.Fatal("reopen must retain nullable snapshots")
+		t.Fatal("reopen must clear locked snapshots")
 	}
 }
 

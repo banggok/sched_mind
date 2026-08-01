@@ -1,3 +1,5 @@
+import { schedulingImpactFetch } from "../../../shared/infrastructure/schedulingImpactFetch";
+import { advanceScheduleProjectionVersion } from "../../../shared/infrastructure/scheduleProjectionClock";
 import type { CapacityOverridesGateway } from "../application/capacityOverridesGateway";
 import type { CapacityOverride } from "../domain/capacityOverride";
 import { RequestCache } from "../../../shared/infrastructure/RequestCache";
@@ -64,7 +66,9 @@ export function createHTTPCapacityOverridesGateway(
       const cache = caches.get(key) ?? new RequestCache();
       caches.set(key, cache);
       return cache.run(async () => {
-        const response = await fetch(`${path(memberId)}?${parameters}`);
+        const response = await schedulingImpactFetch(
+          `${path(memberId)}?${parameters}`,
+        );
         const payload = await read<ListDTO>(response);
         return {
           items: payload.data.map(map),
@@ -78,7 +82,9 @@ export function createHTTPCapacityOverridesGateway(
       return map(
         (
           await read<ItemDTO>(
-            await fetch(`${path(memberId)}/${encodeURIComponent(id)}`),
+            await schedulingImpactFetch(
+              `${path(memberId)}/${encodeURIComponent(id)}`,
+            ),
           )
         ).data,
       );
@@ -87,7 +93,7 @@ export function createHTTPCapacityOverridesGateway(
       const value = map(
         (
           await read<ItemDTO>(
-            await fetch(path(memberId), {
+            await schedulingImpactFetch(path(memberId), {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify(input),
@@ -96,30 +102,36 @@ export function createHTTPCapacityOverridesGateway(
         ).data,
       );
       invalidate();
+      advanceScheduleProjectionVersion();
       return value;
     },
     async update(memberId, id, input) {
       const value = map(
         (
           await read<ItemDTO>(
-            await fetch(`${path(memberId)}/${encodeURIComponent(id)}`, {
-              method: "PUT",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(input),
-            }),
+            await schedulingImpactFetch(
+              `${path(memberId)}/${encodeURIComponent(id)}`,
+              {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(input),
+              },
+            ),
           )
         ).data,
       );
       invalidate();
+      advanceScheduleProjectionVersion();
       return value;
     },
     async delete(memberId, id) {
-      const response = await fetch(
+      const response = await schedulingImpactFetch(
         `${path(memberId)}/${encodeURIComponent(id)}`,
         { method: "DELETE" },
       );
       if (!response.ok) await fail(response);
       invalidate();
+      advanceScheduleProjectionVersion();
     },
   };
 }

@@ -4,11 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
+
 	"github.com/banggok/sched_mind/backend/internal/publicholidays/application"
 	"github.com/banggok/sched_mind/backend/internal/publicholidays/domain"
 	"github.com/banggok/sched_mind/backend/internal/shared/listing"
+	sharedpersistence "github.com/banggok/sched_mind/backend/internal/shared/persistence"
 	"gorm.io/gorm"
-	"time"
+	"gorm.io/gorm/clause"
 )
 
 type Repository struct{ database *gorm.DB }
@@ -91,58 +94,107 @@ func (r *Repository) Find(ctx context.Context, id string) (*domain.PublicHoliday
 	return toDomain(model)
 }
 func (r *Repository) Create(ctx context.Context, value domain.PublicHoliday) error {
-	err := r.database.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Create(fromDomain(value)).Error; err != nil {
+	return r.createInTransaction(r.database.WithContext(ctx), value)
+}
+
+func (r *Repository) CreateWithSchedule(ctx context.Context, value domain.PublicHoliday, schedule func(context.Context) error) error {
+	return r.withScheduleMutation(ctx, func(tx *gorm.DB) error {
+		if err := r.create(tx, value); err != nil {
 			return err
 		}
-		return tx.Create(dateModels(value)).Error
+		return schedule(sharedpersistence.WithTransaction(ctx, tx))
 	})
-	if errors.Is(err, gorm.ErrDuplicatedKey) {
-		return domain.ErrDateAlreadyExists
+}
+
+func (r *Repository) createInTransaction(database *gorm.DB, value domain.PublicHoliday) error {
+	err := database.Transaction(func(tx *gorm.DB) error { return r.create(tx, value) })
+	return mapWriteError("create", err)
+}
+
+func (r *Repository) create(tx *gorm.DB, value domain.PublicHoliday) error {
+	if err := tx.Create(fromDomain(value)).Error; err != nil {
+		return err
 	}
-	if err != nil {
-		return fmt.Errorf("create public holiday: %w", err)
-	}
-	return nil
+	return tx.Create(dateModels(value)).Error
 }
 func (r *Repository) Update(ctx context.Context, value domain.PublicHoliday) error {
-	err := r.database.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		result := tx.Model(&publicHolidayModel{}).Where("id = ?", value.ID).Updates(map[string]any{"start_date": value.StartDate, "end_date": value.EndDate, "description": value.Description, "updated_at": value.UpdatedAt})
-		if result.Error != nil {
-			return result.Error
-		}
-		if result.RowsAffected == 0 {
-			return domain.ErrNotFound
-		}
-		if err := tx.Where("public_holiday_id = ?", value.ID).Delete(&publicHolidayDateModel{}).Error; err != nil {
-			return err
-		}
-		return tx.Create(dateModels(value)).Error
-	})
-	if errors.Is(err, gorm.ErrDuplicatedKey) {
-		return domain.ErrDateAlreadyExists
-	}
-	if err != nil {
-		return fmt.Errorf("update public holiday: %w", err)
-	}
-	return nil
+	err := r.database.WithContext(ctx).Transaction(func(tx *gorm.DB) error { return r.update(tx, value) })
+	return mapWriteError("update", err)
 }
-func (r *Repository) Delete(ctx context.Context, id string) error {
-	err := r.database.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("public_holiday_id = ?", id).Delete(&publicHolidayDateModel{}).Error; err != nil {
+
+func (r *Repository) UpdateWithSchedule(ctx context.Context, value domain.PublicHoliday, dateRangeChanged bool, schedule func(context.Context) error) error {
+	return r.withScheduleMutation(ctx, func(tx *gorm.DB) error {
+		if err := r.update(tx, value); err != nil {
 			return err
 		}
-		result := tx.Where("id = ?", id).Delete(&publicHolidayModel{})
-		if result.Error != nil {
-			return result.Error
-		}
-		if result.RowsAffected == 0 {
-			return domain.ErrNotFound
+		if dateRangeChanged {
+			return schedule(sharedpersistence.WithTransaction(ctx, tx))
 		}
 		return nil
 	})
+}
+
+func (r *Repository) update(tx *gorm.DB, value domain.PublicHoliday) error {
+	var current publicHolidayModel
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&current, "id = ?", value.ID).Error; errors.Is(err, gorm.ErrRecordNotFound) {
+		return domain.ErrNotFound
+	} else if err != nil {
+		return err
+	}
+	result := tx.Model(&publicHolidayModel{}).Where("id = ?", value.ID).Updates(map[string]any{"start_date": value.StartDate, "end_date": value.EndDate, "description": value.Description, "updated_at": value.UpdatedAt})
+	if result.Error != nil {
+		return result.Error
+	}
+	if err := tx.Where("public_holiday_id = ?", value.ID).Delete(&publicHolidayDateModel{}).Error; err != nil {
+		return err
+	}
+	return tx.Create(dateModels(value)).Error
+}
+func (r *Repository) Delete(ctx context.Context, id string) error {
+	err := r.database.WithContext(ctx).Transaction(func(tx *gorm.DB) error { return r.delete(tx, id) })
+	return mapWriteError("delete", err)
+}
+
+func (r *Repository) DeleteWithSchedule(ctx context.Context, id string, schedule func(context.Context) error) error {
+	return r.withScheduleMutation(ctx, func(tx *gorm.DB) error {
+		if err := r.delete(tx, id); err != nil {
+			return err
+		}
+		return schedule(sharedpersistence.WithTransaction(ctx, tx))
+	})
+}
+
+func (r *Repository) delete(tx *gorm.DB, id string) error {
+	var current publicHolidayModel
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&current, "id = ?", id).Error; errors.Is(err, gorm.ErrRecordNotFound) {
+		return domain.ErrNotFound
+	} else if err != nil {
+		return err
+	}
+	if err := tx.Where("public_holiday_id = ?", id).Delete(&publicHolidayDateModel{}).Error; err != nil {
+		return err
+	}
+	return tx.Where("id = ?", id).Delete(&publicHolidayModel{}).Error
+}
+
+func (r *Repository) withScheduleMutation(ctx context.Context, mutation func(*gorm.DB) error) error {
+	ctx, release := sharedpersistence.SerializeScheduleMutation(ctx)
+	defer release()
+	err := sharedpersistence.Transaction(ctx, r.database).Transaction(func(tx *gorm.DB) error {
+		if err := sharedpersistence.LockScheduleMutation(tx); err != nil {
+			return fmt.Errorf("lock public holiday mutation: %w", err)
+		}
+		return mutation(tx)
+	})
+	return mapWriteError("schedule public holiday", err)
+}
+
+func mapWriteError(operation string, err error) error {
+	if errors.Is(err, gorm.ErrDuplicatedKey) {
+		return domain.ErrDateAlreadyExists
+	}
 	if err != nil {
-		return fmt.Errorf("delete public holiday: %w", err)
+		return fmt.Errorf("%s: %w", operation, err)
 	}
 	return nil
 }

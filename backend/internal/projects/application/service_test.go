@@ -11,10 +11,11 @@ import (
 )
 
 type storeStub struct {
-	items    map[string]domain.Project
-	move     func(context.Context, string, domain.PriorityDirection, time.Time, func(context.Context) error) (*domain.Project, error)
-	status   func(context.Context, string, domain.Status, time.Time, func(context.Context) error) (*domain.Project, error)
-	settings func(context.Context, string, bool, *time.Time, int, time.Time, func(context.Context, string) error, func(context.Context, string, string) error) (*domain.Project, error)
+	items      map[string]domain.Project
+	move       func(context.Context, string, domain.PriorityDirection, time.Time, func(context.Context) error) (*domain.Project, error)
+	status     func(context.Context, string, domain.Status, time.Time, func(context.Context) error) (*domain.Project, error)
+	bulkReopen func(context.Context, string, string, time.Time, func(context.Context) error) ([]domain.Project, error)
+	settings   func(context.Context, string, bool, *time.Time, int, time.Time, func(context.Context, string) error, func(context.Context, string, string) error) (*domain.Project, error)
 }
 
 func newStoreStub() *storeStub { return &storeStub{items: map[string]domain.Project{}} }
@@ -87,6 +88,12 @@ func (s *storeStub) ChangeStatus(ctx context.Context, id string, target domain.S
 	s.items[id] = value
 	return &value, nil
 }
+func (s *storeStub) BulkReopen(ctx context.Context, rootProjectID, token string, now time.Time, schedule func(context.Context) error) ([]domain.Project, error) {
+	if s.bulkReopen != nil {
+		return s.bulkReopen(ctx, rootProjectID, token, now, schedule)
+	}
+	return nil, domain.ErrBulkReopenStale
+}
 func (s *storeStub) MovePriority(ctx context.Context, id string, direction domain.PriorityDirection, now time.Time, schedule func(context.Context) error) (*domain.Project, error) {
 	return s.move(ctx, id, direction, now, schedule)
 }
@@ -131,11 +138,11 @@ func (s *schedulerStub) MarkProjectUnscheduled(_ context.Context, id, reason str
 	return s.err
 }
 
-func TestServiceStatusCoordinatesPortfolioScheduler(t *testing.T) {
+func TestServiceStatusCoordinatesPortfolioSchedulerForClosedTransition(t *testing.T) {
 	store := newStoreStub()
 	scheduler := &schedulerStub{}
 	store.status = func(ctx context.Context, id string, target domain.Status, now time.Time, schedule func(context.Context) error) (*domain.Project, error) {
-		if id != "p1" || target != domain.StatusLocked || now.IsZero() {
+		if id != "p1" || target != domain.StatusClosed || now.IsZero() {
 			t.Fatalf("status command = %s %s %v", id, target, now)
 		}
 		if err := schedule(ctx); err != nil {
@@ -146,8 +153,8 @@ func TestServiceStatusCoordinatesPortfolioScheduler(t *testing.T) {
 		return value, nil
 	}
 	service := NewServiceWithDependencies(store, scheduler, time.Now, func() (string, error) { return "unused", nil })
-	value, err := service.ChangeStatus(context.Background(), "p1", domain.StatusLocked)
-	if err != nil || value == nil || value.Status != domain.StatusLocked || scheduler.calls != 1 {
+	value, err := service.ChangeStatus(context.Background(), "p1", domain.StatusClosed)
+	if err != nil || value == nil || value.Status != domain.StatusClosed || scheduler.calls != 1 {
 		t.Fatalf("status: %#v %v scheduler=%#v", value, err, scheduler)
 	}
 }

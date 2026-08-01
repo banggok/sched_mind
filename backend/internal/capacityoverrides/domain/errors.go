@@ -12,7 +12,7 @@ var (
 	ErrCapacityInvalidIncrement = errors.New("capacity must use 0.5-hour increments")
 	ErrDescriptionRequired      = errors.New("description is required")
 	ErrDescriptionTooLong       = errors.New("description must not exceed 100 characters")
-	ErrOverlaps                 = errors.New("capacity override overlaps an existing period")
+	ErrDuplicate                = errors.New("capacity override duplicates an existing record")
 	ErrNotFound                 = errors.New("capacity override not found")
 	ErrTeamMemberNotFound       = errors.New("team member not found")
 )

@@ -9,6 +9,7 @@ import (
 
 	dependencydomain "github.com/banggok/sched_mind/backend/internal/dependencies/domain"
 	"github.com/banggok/sched_mind/backend/internal/shared/identity"
+	"github.com/banggok/sched_mind/backend/internal/shared/schedulingimpact"
 	"github.com/banggok/sched_mind/backend/internal/wbs/domain"
 )
 
@@ -31,6 +32,20 @@ type SchedulePreview struct {
 	Dependencies dependencydomain.Detail
 }
 
+type AllocationRow struct {
+	Date                time.Time
+	AllocatedMinutes    int
+	CapacityMinutes     int
+	RemainingMinutes    int
+	OvercapacityMinutes int
+}
+
+type AllocationGroups struct {
+	Execution  []AllocationRow
+	Commitment []AllocationRow
+	Actual     []AllocationRow
+}
+
 func (input PreviewExecutableInput) Validate() error {
 	if input.LagDays < 0 {
 		return domain.ErrLagInvalid
@@ -45,12 +60,13 @@ func (input PreviewExecutableInput) Validate() error {
 type Store interface {
 	Tree(context.Context, string) ([]domain.Node, error)
 	Find(context.Context, string, string) (*domain.Node, error)
+	Allocations(context.Context, string, string) (*AllocationGroups, error)
 	Create(context.Context, string, string, *string, string, bool, time.Time, func(context.Context, string) error, func(context.Context, []string) error) (*domain.Node, error)
 	Rename(context.Context, string, string, string, time.Time) (*domain.Node, error)
 	UpdateExecutable(context.Context, string, string, WriteExecutableInput, time.Time, func(context.Context, string) error) (*domain.Node, error)
 	PreviewExecutableSchedule(context.Context, string, string, PreviewExecutableInput, time.Time, func(context.Context, string) error) (*SchedulePreview, error)
-	Complete(context.Context, string, string, time.Time, time.Time, func(context.Context, string) error) (*domain.Node, error)
-	Reopen(context.Context, string, string, time.Time, func(context.Context, string) error) (*domain.Node, error)
+	Complete(context.Context, string, string, time.Time, time.Time, time.Time, func(context.Context, []string) error) (*domain.Node, error)
+	Reopen(context.Context, string, string, time.Time, func(context.Context, []string) error) (*domain.Node, error)
 	Reorder(context.Context, string, string, domain.Direction, time.Time, func(context.Context, string) error) error
 	Move(context.Context, string, string, string, *string, bool, time.Time, func(context.Context, string) error, func(context.Context, []string) error) error
 	Delete(context.Context, string, string, time.Time, func(context.Context, string) error, func(context.Context, []string) error) error
@@ -101,7 +117,18 @@ func (s *Service) Get(ctx context.Context, projectID, id string) (*domain.Node, 
 	}
 	return value, nil
 }
+func (s *Service) Allocations(ctx context.Context, projectID, id string) (*AllocationGroups, error) {
+	value, err := s.store.Allocations(ctx, projectID, id)
+	if err != nil {
+		return nil, fmt.Errorf("get WBS allocations: %w", err)
+	}
+	if value == nil {
+		return nil, errors.New("get WBS allocations: store returned nil")
+	}
+	return value, nil
+}
 func (s *Service) Create(ctx context.Context, projectID string, parentID *string, name string, confirm bool) (*domain.Node, error) {
+	ctx = schedulingimpact.WithOperation(ctx, projectID, schedulingimpact.ModeOrdinary)
 	if _, err := domain.NormalizeName(name); err != nil {
 		return nil, err
 	}
@@ -129,6 +156,7 @@ func (s *Service) Rename(ctx context.Context, p, id, name string) (*domain.Node,
 	return value, nil
 }
 func (s *Service) UpdateExecutable(ctx context.Context, p, id string, input WriteExecutableInput) (*domain.Node, error) {
+	ctx = schedulingimpact.WithOperation(ctx, p, schedulingimpact.ModeOrdinary)
 	value, err := s.store.UpdateExecutable(ctx, p, id, input, s.now(), s.scheduler.RecalculateProjectSchedule)
 	if err != nil {
 		return nil, fmt.Errorf("update executable WBS: %w", err)
@@ -152,8 +180,9 @@ func (s *Service) PreviewExecutableSchedule(ctx context.Context, p, id string, i
 	}
 	return value, nil
 }
-func (s *Service) Complete(ctx context.Context, p, id string, actual time.Time) (*domain.Node, error) {
-	value, err := s.store.Complete(ctx, p, id, actual, s.now(), s.scheduler.RecalculateProjectForecast)
+func (s *Service) Complete(ctx context.Context, p, id string, actualStart, actualEnd time.Time) (*domain.Node, error) {
+	ctx = schedulingimpact.WithOperation(ctx, p, schedulingimpact.ModeActualDate)
+	value, err := s.store.Complete(ctx, p, id, actualStart, actualEnd, s.now(), s.scheduler.InvalidatePortfolio)
 	if err != nil {
 		return nil, fmt.Errorf("complete WBS: %w", err)
 	}
@@ -163,7 +192,8 @@ func (s *Service) Complete(ctx context.Context, p, id string, actual time.Time) 
 	return value, nil
 }
 func (s *Service) Reopen(ctx context.Context, p, id string) (*domain.Node, error) {
-	value, err := s.store.Reopen(ctx, p, id, s.now(), s.scheduler.RecalculateProjectForecast)
+	ctx = schedulingimpact.WithOperation(ctx, p, schedulingimpact.ModeOrdinary)
+	value, err := s.store.Reopen(ctx, p, id, s.now(), s.scheduler.InvalidatePortfolio)
 	if err != nil {
 		return nil, fmt.Errorf("reopen WBS: %w", err)
 	}
@@ -173,6 +203,7 @@ func (s *Service) Reopen(ctx context.Context, p, id string) (*domain.Node, error
 	return value, nil
 }
 func (s *Service) Reorder(ctx context.Context, p, id string, d domain.Direction) error {
+	ctx = schedulingimpact.WithOperation(ctx, p, schedulingimpact.ModeOrdinary)
 	if d != domain.MoveUp && d != domain.MoveDown {
 		return domain.ErrMoveNotAllowed
 	}
@@ -182,6 +213,7 @@ func (s *Service) Reorder(ctx context.Context, p, id string, d domain.Direction)
 	return nil
 }
 func (s *Service) Move(ctx context.Context, p, id string, parent *string, confirm bool) error {
+	ctx = schedulingimpact.WithOperation(ctx, p, schedulingimpact.ModeOrdinary)
 	conversionID, err := s.newID()
 	if err != nil {
 		return fmt.Errorf("generate conversion WBS ID: %w", err)
@@ -192,6 +224,7 @@ func (s *Service) Move(ctx context.Context, p, id string, parent *string, confir
 	return nil
 }
 func (s *Service) Delete(ctx context.Context, p, id string) error {
+	ctx = schedulingimpact.WithOperation(ctx, p, schedulingimpact.ModeOrdinary)
 	if err := s.store.Delete(ctx, p, id, s.now(), s.scheduler.RecalculateProjectSchedule, s.scheduler.InvalidatePortfolio); err != nil {
 		return fmt.Errorf("delete WBS: %w", err)
 	}

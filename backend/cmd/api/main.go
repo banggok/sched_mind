@@ -16,6 +16,8 @@ import (
 	dependencyapplication "github.com/banggok/sched_mind/backend/internal/dependencies/application"
 	dependencygormrepo "github.com/banggok/sched_mind/backend/internal/dependencies/infrastructure/gormrepo"
 	"github.com/banggok/sched_mind/backend/internal/httpapi"
+	portfolioapplication "github.com/banggok/sched_mind/backend/internal/portfolio/application"
+	portfoliogormrepo "github.com/banggok/sched_mind/backend/internal/portfolio/infrastructure/gormrepo"
 	projectapplication "github.com/banggok/sched_mind/backend/internal/projects/application"
 	projectgormrepo "github.com/banggok/sched_mind/backend/internal/projects/infrastructure/gormrepo"
 	publicholidayapplication "github.com/banggok/sched_mind/backend/internal/publicholidays/application"
@@ -137,29 +139,32 @@ func run(config *configuration) (runError error) {
 	roleRepository := rolegormrepo.New(database)
 	roleService := roleapplication.NewService(roleRepository)
 	teamMemberRepository := teammembergormrepo.New(database)
-	teamMemberService := teammemberapplication.NewService(teamMemberRepository)
 	capacityOverrideRepository := capacityoverridegormrepo.New(database)
-	capacityOverrideService := capacityoverrideapplication.NewService(capacityOverrideRepository)
 	publicHolidayRepository := publicholidaygormrepo.New(database)
 	if config.location == nil {
 		return errors.New("application timezone is nil")
 	}
-	publicHolidayService := publicholidayapplication.NewServiceWithClock(
-		publicHolidayRepository,
-		func() time.Time { return time.Now().In(config.location) },
-	)
 	schedulingRepository := schedulinggormrepo.New(database)
 	schedulingService := schedulingapplication.NewService(schedulingRepository)
+	teamMemberService := teammemberapplication.NewServiceWithScheduler(teamMemberRepository, schedulingService)
+	publicHolidayService := publicholidayapplication.NewServiceWithScheduler(
+		publicHolidayRepository,
+		schedulingService,
+		func() time.Time { return time.Now().In(config.location) },
+	)
+	capacityOverrideService := capacityoverrideapplication.NewServiceWithScheduler(capacityOverrideRepository, schedulingService)
 	projectRepository := projectgormrepo.New(database)
 	projectService := projectapplication.NewService(projectRepository, schedulingService)
 	wbsRepository := wbsgormrepo.New(database)
 	wbsService := wbsapplication.NewService(wbsRepository, schedulingService)
 	dependencyRepository := dependencygormrepo.New(database)
 	dependencyService := dependencyapplication.NewService(dependencyRepository, schedulingService)
+	portfolioRepository := portfoliogormrepo.New(database)
+	portfolioService := portfolioapplication.NewService(portfolioRepository)
 
 	server := &http.Server{
 		Addr:    config.address,
-		Handler: httpapi.NewRouter(roleService, teamMemberService, capacityOverrideService, publicHolidayService, projectService, wbsService, dependencyService),
+		Handler: httpapi.NewRouter(roleService, teamMemberService, capacityOverrideService, publicHolidayService, projectService, wbsService, dependencyService, portfolioService),
 	}
 
 	signalContext, stopSignals := signal.NotifyContext(

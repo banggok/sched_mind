@@ -3,15 +3,16 @@ package gormrepo
 import "time"
 
 type nodeModel struct {
-	ID, ProjectID, ParentKey, Name, NameKey                                 string
-	ParentID                                                                *string
-	Position                                                                int
-	RoleID, AssigneeID                                                      *string
-	EffortMinutes                                                           *int
-	LagDays                                                                 int
-	ExecutionStart, ExecutionEnd, CommitmentStart, CommitmentEnd, ActualEnd *time.Time
-	ExecutionUnscheduledReason, CommitmentUnscheduledReason                 *string
-	CreatedAt, UpdatedAt                                                    time.Time
+	ID, ProjectID, ParentKey, Name, NameKey                      string
+	ParentID                                                     *string
+	Position                                                     int
+	RoleID, AssigneeID                                           *string
+	EffortMinutes                                                *int
+	LagDays                                                      int
+	ExecutionStart, ExecutionEnd, CommitmentStart, CommitmentEnd *time.Time
+	ActualStart, ActualEnd                                       *time.Time
+	ExecutionUnscheduledReason, CommitmentUnscheduledReason      *string
+	CreatedAt, UpdatedAt                                         time.Time
 }
 
 func (nodeModel) TableName() string { return "wbs_nodes" }
@@ -19,6 +20,7 @@ func (nodeModel) TableName() string { return "wbs_nodes" }
 type projectModel struct {
 	ID, Status          string
 	AutomaticScheduling bool
+	ProjectBuffer       int
 }
 
 func (projectModel) TableName() string { return "projects" }

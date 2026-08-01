@@ -29,6 +29,21 @@ function gateway(items: CapacityOverride[] = []): CapacityOverridesGateway {
     delete: vi.fn().mockResolvedValue(undefined),
   };
 }
+async function navigateCalendarToDate(
+  user: ReturnType<typeof userEvent.setup>,
+  targetDate: string,
+) {
+  const target = new Date(`${targetDate}T00:00:00Z`);
+  const current = new Date();
+  const monthDifference =
+    (target.getUTCFullYear() - current.getUTCFullYear()) * 12 +
+    target.getUTCMonth() -
+    current.getUTCMonth();
+  const navigationLabel = monthDifference < 0 ? "Previous month" : "Next month";
+  for (let index = 0; index < Math.abs(monthDifference); index += 1)
+    await user.click(screen.getByRole("button", { name: navigationLabel }));
+}
+
 describe("CapacityOverridesPanel", () => {
   it("selects a date range with two calendar clicks and resets an earlier second date", async () => {
     const user = userEvent.setup();
@@ -54,6 +69,7 @@ describe("CapacityOverridesPanel", () => {
         name: "Date range: Select start and end date",
       }),
     );
+    await navigateCalendarToDate(user, "2026-07-04");
     await user.click(screen.getByRole("button", { name: "2026-07-04" }));
     expect(screen.getByText(/Select an end date/)).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "2026-07-03" }));
@@ -239,6 +255,7 @@ describe("Capacity input normalization", () => {
         name: "Date range: Select start and end date",
       }),
     );
+    await navigateCalendarToDate(user, "2026-07-03");
     await user.click(screen.getByRole("button", { name: "2026-07-03" }));
     await user.click(screen.getByRole("button", { name: "2026-07-03" }));
     const capacity = screen.getByLabelText(
@@ -296,6 +313,7 @@ describe("Effective Date filtering", () => {
     await user.click(
       screen.getByRole("button", { name: "Effective Date: Select date" }),
     );
+    await navigateCalendarToDate(user, "2026-07-27");
     await user.click(screen.getByRole("button", { name: "2026-07-27" }));
     expect(
       await screen.findByText("No capacity override applies on Jul 27, 2026."),
@@ -347,6 +365,7 @@ describe("Effective Date filtering", () => {
     await user.click(
       screen.getByRole("button", { name: "Effective Date: Select date" }),
     );
+    await navigateCalendarToDate(user, "2026-07-27");
     await user.click(screen.getByRole("button", { name: "2026-07-27" }));
     await waitFor(() =>
       expect(api.list).toHaveBeenLastCalledWith(

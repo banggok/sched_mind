@@ -9,6 +9,7 @@ import (
 
 	"github.com/banggok/sched_mind/backend/internal/shared/identity"
 	"github.com/banggok/sched_mind/backend/internal/shared/listing"
+	"github.com/banggok/sched_mind/backend/internal/shared/schedulingimpact"
 	"github.com/banggok/sched_mind/backend/internal/teammembers/domain"
 )
 
@@ -19,14 +20,29 @@ type WriteInput struct {
 	BufferPercentage *float64
 }
 
+type Scheduler interface {
+	RecalculateMemberSchedule(context.Context, string) error
+}
+
+type scheduleAwareRepository interface {
+	UpdateWithSchedule(context.Context, domain.TeamMember, bool, func(context.Context) error) error
+}
+
 type Service struct {
 	repository Repository
+	scheduler  Scheduler
 	now        func() time.Time
 	newID      func() (string, error)
 }
 
 func NewService(repository Repository) *Service {
 	return NewServiceWithDependencies(repository, time.Now, identity.NewUUID)
+}
+
+func NewServiceWithScheduler(repository Repository, scheduler Scheduler) *Service {
+	service := NewService(repository)
+	service.scheduler = scheduler
+	return service
 }
 
 func NewServiceWithDependencies(
@@ -45,10 +61,7 @@ func (service *Service) List(ctx context.Context, query listing.Query) (listing.
 	return records, nil
 }
 
-func (service *Service) Get(
-	ctx context.Context,
-	id string,
-) (*TeamMemberRecord, error) {
+func (service *Service) Get(ctx context.Context, id string) (*TeamMemberRecord, error) {
 	record, err := service.repository.FindByID(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("get team member: %w", err)
@@ -59,10 +72,7 @@ func (service *Service) Get(
 	return record, nil
 }
 
-func (service *Service) Create(
-	ctx context.Context,
-	input WriteInput,
-) (*TeamMemberRecord, error) {
+func (service *Service) Create(ctx context.Context, input WriteInput) (*TeamMemberRecord, error) {
 	dailyCapacity, buffer, err := capacities(input)
 	if err != nil {
 		return nil, err
@@ -74,14 +84,7 @@ func (service *Service) Create(
 	if err != nil {
 		return nil, fmt.Errorf("create team member ID: %w", err)
 	}
-	member, err := domain.NewTeamMember(
-		id,
-		input.Name,
-		input.RoleID,
-		dailyCapacity,
-		buffer,
-		service.now(),
-	)
+	member, err := domain.NewTeamMember(id, input.Name, input.RoleID, dailyCapacity, buffer, service.now())
 	if err != nil {
 		return nil, err
 	}
@@ -94,11 +97,7 @@ func (service *Service) Create(
 	return service.Get(ctx, member.ID)
 }
 
-func (service *Service) Update(
-	ctx context.Context,
-	id string,
-	input WriteInput,
-) (*TeamMemberRecord, error) {
+func (service *Service) Update(ctx context.Context, id string, input WriteInput) (*TeamMemberRecord, error) {
 	dailyCapacity, buffer, err := capacities(input)
 	if err != nil {
 		return nil, err
@@ -113,16 +112,21 @@ func (service *Service) Update(
 	if record == nil {
 		return nil, errors.New("update team member: repository returned nil without error")
 	}
-	if err := record.Member.Update(
-		input.Name,
-		input.RoleID,
-		dailyCapacity,
-		buffer,
-		service.now(),
-	); err != nil {
+	capacityChanged := record.Member.DailyCapacity.Decimal() != dailyCapacity.Decimal() ||
+		record.Member.BufferPercentage.Decimal() != buffer.Decimal()
+	if err := record.Member.Update(input.Name, input.RoleID, dailyCapacity, buffer, service.now()); err != nil {
 		return nil, err
 	}
-	if err := service.repository.Update(ctx, record.Member); err != nil {
+
+	ctx = schedulingimpact.WithOperation(ctx, "", schedulingimpact.ModeOrdinary)
+	if repository, ok := service.repository.(scheduleAwareRepository); ok && service.scheduler != nil {
+		err = repository.UpdateWithSchedule(ctx, record.Member, capacityChanged, func(txContext context.Context) error {
+			return service.scheduler.RecalculateMemberSchedule(txContext, id)
+		})
+	} else {
+		err = service.repository.Update(ctx, record.Member)
+	}
+	if err != nil {
 		return nil, fmt.Errorf("update team member: %w", err)
 	}
 	return service.Get(ctx, id)
@@ -157,12 +161,9 @@ func (service *Service) ensureRole(ctx context.Context, roleID string) error {
 	return nil
 }
 
-func capacities(
-	input WriteInput,
-) (domain.DailyCapacity, domain.BufferPercentage, error) {
+func capacities(input WriteInput) (domain.DailyCapacity, domain.BufferPercentage, error) {
 	if input.DailyCapacity == nil {
-		return domain.DailyCapacity{}, domain.BufferPercentage{},
-			domain.ErrDailyCapacityRequired
+		return domain.DailyCapacity{}, domain.BufferPercentage{}, domain.ErrDailyCapacityRequired
 	}
 	dailyCapacity, err := domain.NewDailyCapacity(*input.DailyCapacity)
 	if err != nil {

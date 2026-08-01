@@ -13,6 +13,7 @@ import (
 	"github.com/banggok/sched_mind/backend/internal/capacityoverrides/domain"
 	"github.com/banggok/sched_mind/backend/internal/shared/httpjson"
 	"github.com/banggok/sched_mind/backend/internal/shared/listing"
+	"github.com/banggok/sched_mind/backend/internal/shared/schedulingimpact"
 )
 
 type Service interface {
@@ -209,6 +210,9 @@ func mapItem(value domain.CapacityOverride) item {
 	return item{value.ID, value.TeamMemberID, value.Description, value.StartDate.Format("2006-01-02"), value.EndDate.Format("2006-01-02"), value.Capacity.Hours(), value.CreatedAt.UTC().Format(time.RFC3339), value.UpdatedAt.UTC().Format(time.RFC3339)}
 }
 func writeError(w http.ResponseWriter, err error) {
+	if schedulingimpact.WriteHTTPError(w, err) {
+		return
+	}
 	status, code, message, field := 500, "INTERNAL_ERROR", "An internal error occurred", ""
 	switch {
 	case errors.Is(err, domain.ErrStartDateRequired):
@@ -229,8 +233,8 @@ func writeError(w http.ResponseWriter, err error) {
 		status, code, message, field = 400, "CAPACITY_OVERRIDE_DESCRIPTION_REQUIRED", err.Error(), "description"
 	case errors.Is(err, domain.ErrDescriptionTooLong):
 		status, code, message, field = 400, "CAPACITY_OVERRIDE_DESCRIPTION_TOO_LONG", err.Error(), "description"
-	case errors.Is(err, domain.ErrOverlaps):
-		status, code, message = 409, "CAPACITY_OVERRIDE_OVERLAPS", err.Error()
+	case errors.Is(err, domain.ErrDuplicate):
+		status, code, message = 409, "CAPACITY_OVERRIDE_DUPLICATE", err.Error()
 	case errors.Is(err, domain.ErrNotFound):
 		status, code, message = 404, "CAPACITY_OVERRIDE_NOT_FOUND", err.Error()
 	case errors.Is(err, domain.ErrTeamMemberNotFound):

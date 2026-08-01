@@ -24,6 +24,21 @@ function gateway(items: PublicHoliday[] = []): PublicHolidaysGateway {
     calendar: vi.fn().mockResolvedValue([]),
   };
 }
+
+async function navigateCalendarToDate(
+  user: ReturnType<typeof userEvent.setup>,
+  targetDate: string,
+) {
+  const target = new Date(`${targetDate}T00:00:00Z`);
+  const current = new Date();
+  const monthDifference =
+    (target.getUTCFullYear() - current.getUTCFullYear()) * 12 +
+    target.getUTCMonth() -
+    current.getUTCMonth();
+  const navigationLabel = monthDifference < 0 ? "Previous month" : "Next month";
+  for (let index = 0; index < Math.abs(monthDifference); index += 1)
+    await user.click(screen.getByRole("button", { name: navigationLabel }));
+}
 describe("PublicHolidaysPage", () => {
   it("renders loading and empty states then validates and creates", async () => {
     const user = userEvent.setup();
@@ -44,7 +59,7 @@ describe("PublicHolidaysPage", () => {
         name: "Date range: Select start and end date",
       }),
     );
-    await user.click(screen.getByRole("button", { name: "Next month" }));
+    await navigateCalendarToDate(user, "2026-08-17");
     await user.click(screen.getByRole("button", { name: "2026-08-17" }));
     await user.click(screen.getByRole("button", { name: "2026-08-17" }));
     expect(screen.queryByText("Start date is required")).toBeNull();
@@ -73,7 +88,7 @@ describe("PublicHolidaysPage", () => {
     await user.click(
       screen.getByRole("button", { name: "Holiday Date: Select date" }),
     );
-    await user.click(screen.getByRole("button", { name: "Next month" }));
+    await navigateCalendarToDate(user, "2026-08-17");
     await user.click(screen.getByRole("button", { name: "2026-08-17" }));
     await waitFor(() =>
       expect(api.list).toHaveBeenLastCalledWith(
@@ -108,7 +123,7 @@ describe("PublicHolidaysPage", () => {
     await user.click(
       screen.getByRole("button", { name: "Holiday Date: Select date" }),
     );
-    await user.click(screen.getByRole("button", { name: "Next month" }));
+    await navigateCalendarToDate(user, "2026-08-17");
     await user.click(screen.getByRole("button", { name: "2026-08-17" }));
     expect(
       await screen.findByText(

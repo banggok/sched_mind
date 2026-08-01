@@ -110,3 +110,77 @@ func TestServicePreservesDependencyFailure(t *testing.T) {
 		t.Fatalf("cause=%v", err)
 	}
 }
+
+type scheduleRepository struct {
+	fakeRepository
+	scheduleCalls int
+}
+
+func (repository *scheduleRepository) CreateWithSchedule(ctx context.Context, value domain.PublicHoliday, schedule func(context.Context) error) error {
+	if err := repository.Create(ctx, value); err != nil {
+		return err
+	}
+	repository.scheduleCalls++
+	return schedule(ctx)
+}
+func (repository *scheduleRepository) UpdateWithSchedule(ctx context.Context, value domain.PublicHoliday, dateRangeChanged bool, schedule func(context.Context) error) error {
+	if err := repository.Update(ctx, value); err != nil {
+		return err
+	}
+	if !dateRangeChanged {
+		return nil
+	}
+	repository.scheduleCalls++
+	return schedule(ctx)
+}
+func (repository *scheduleRepository) DeleteWithSchedule(ctx context.Context, id string, schedule func(context.Context) error) error {
+	if err := repository.Delete(ctx, id); err != nil {
+		return err
+	}
+	repository.scheduleCalls++
+	return schedule(ctx)
+}
+
+type holidayScheduler struct{ calls int }
+
+func (scheduler *holidayScheduler) RecalculateActiveProjects(context.Context) error {
+	scheduler.calls++
+	return nil
+}
+
+func TestScheduleAwareWritesSkipDescriptionOnlyUpdate(t *testing.T) {
+	now := time.Date(2026, 8, 3, 0, 0, 0, 0, time.UTC)
+	repository := &scheduleRepository{fakeRepository: fakeRepository{values: map[string]domain.PublicHoliday{}}}
+	scheduler := &holidayScheduler{}
+	service := NewServiceWithScheduler(repository, scheduler, func() time.Time { return now })
+	service.newID = func() (string, error) { return "holiday", nil }
+
+	if _, err := service.Create(context.Background(), WriteInput{StartDate: now, EndDate: now, Description: "Holiday"}); err != nil {
+		t.Fatal(err)
+	}
+	if scheduler.calls != 1 || repository.scheduleCalls != 1 {
+		t.Fatalf("create calls: scheduler=%d repository=%d", scheduler.calls, repository.scheduleCalls)
+	}
+
+	if _, err := service.Update(context.Background(), "holiday", WriteInput{StartDate: now, EndDate: now, Description: "Renamed"}); err != nil {
+		t.Fatal(err)
+	}
+	if scheduler.calls != 1 || repository.scheduleCalls != 1 {
+		t.Fatalf("description-only update scheduled: scheduler=%d repository=%d", scheduler.calls, repository.scheduleCalls)
+	}
+
+	next := now.AddDate(0, 0, 1)
+	if _, err := service.Update(context.Background(), "holiday", WriteInput{StartDate: next, EndDate: next, Description: "Moved"}); err != nil {
+		t.Fatal(err)
+	}
+	if scheduler.calls != 2 || repository.scheduleCalls != 2 {
+		t.Fatalf("date update calls: scheduler=%d repository=%d", scheduler.calls, repository.scheduleCalls)
+	}
+
+	if err := service.Delete(context.Background(), "holiday"); err != nil {
+		t.Fatal(err)
+	}
+	if scheduler.calls != 3 || repository.scheduleCalls != 3 {
+		t.Fatalf("delete calls: scheduler=%d repository=%d", scheduler.calls, repository.scheduleCalls)
+	}
+}

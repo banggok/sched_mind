@@ -99,20 +99,48 @@ func (repository *Repository) Create(
 	return nil
 }
 
-func (repository *Repository) Update(
+func (repository *Repository) Update(ctx context.Context, member domain.TeamMember) error {
+	return repository.update(repository.database.WithContext(ctx), member)
+}
+
+func (repository *Repository) UpdateWithSchedule(
 	ctx context.Context,
 	member domain.TeamMember,
+	capacityChanged bool,
+	schedule func(context.Context) error,
 ) error {
-	result := repository.database.WithContext(ctx).
-		Model(&teamMemberModel{}).
-		Where("id = ?", member.ID).
-		Updates(map[string]any{
-			"name":              member.Name,
-			"role_id":           member.RoleID,
-			"daily_capacity":    member.DailyCapacity.Decimal(),
-			"buffer_percentage": member.BufferPercentage.Decimal(),
-			"updated_at":        member.UpdatedAt,
-		})
+	ctx, release := sharedpersistence.SerializeScheduleMutation(ctx)
+	defer release()
+	return sharedpersistence.Transaction(ctx, repository.database).Transaction(func(tx *gorm.DB) error {
+		if err := sharedpersistence.LockScheduleMutation(tx); err != nil {
+			return fmt.Errorf("lock team member capacity mutation: %w", err)
+		}
+		var current teamMemberModel
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&current, "id = ?", member.ID).Error; errors.Is(err, gorm.ErrRecordNotFound) {
+			return domain.ErrNotFound
+		} else if err != nil {
+			return fmt.Errorf("lock team member for update: %w", err)
+		}
+		if err := repository.update(tx, member); err != nil {
+			return err
+		}
+		if capacityChanged && schedule != nil {
+			if err := schedule(sharedpersistence.WithTransaction(ctx, tx)); err != nil {
+				return fmt.Errorf("recalculate member schedule: %w", err)
+			}
+		}
+		return nil
+	})
+}
+
+func (repository *Repository) update(database *gorm.DB, member domain.TeamMember) error {
+	result := database.Model(&teamMemberModel{}).Where("id = ?", member.ID).Updates(map[string]any{
+		"name":              member.Name,
+		"role_id":           member.RoleID,
+		"daily_capacity":    member.DailyCapacity.Decimal(),
+		"buffer_percentage": member.BufferPercentage.Decimal(),
+		"updated_at":        member.UpdatedAt,
+	})
 	if result.Error != nil {
 		return mapConstraintError(result.Error)
 	}

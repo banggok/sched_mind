@@ -1,5 +1,12 @@
 export const navigationItems = [
   {
+    id: "home",
+    label: "Home",
+    href: "#home",
+    group: "home",
+    groupLabel: "Home",
+  },
+  {
     id: "roles",
     label: "Roles",
     href: "#roles",

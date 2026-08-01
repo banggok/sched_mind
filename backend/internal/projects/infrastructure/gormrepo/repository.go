@@ -2,10 +2,13 @@ package gormrepo
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -152,6 +155,9 @@ func (r *Repository) UpdateDetails(ctx context.Context, id, name string, automat
 		if value == nil {
 			return errors.New("update project: find returned nil")
 		}
+		if value.Status == domain.StatusLocked {
+			return domain.ErrLockedReadOnly
+		}
 		wasAutomatic := value.AutomaticScheduling
 		previousAnchor := value.SchedulingStartDate
 		previousBuffer := value.ProjectBuffer
@@ -205,16 +211,40 @@ func (r *Repository) ChangeStatus(ctx context.Context, id string, target domain.
 		if value == nil {
 			return errors.New("change status: find returned nil")
 		}
+		if value.Status == domain.StatusLocked && target == domain.StatusOpen {
+			plan, err := requiredReopenPlan(tx, id)
+			if err != nil {
+				return err
+			}
+			if len(plan.Locked) > 1 {
+				return domain.BulkReopenRequiredError{
+					RootProjectID: id,
+					Locked:        plan.Locked,
+					Open:          plan.Open,
+					Token:         plan.Token,
+				}
+			}
+		}
 		leaves, err := loadLifecycleLeaves(tx, id)
 		if err != nil {
 			return err
 		}
 		hasUnfinishedLeaves := false
+		hasUnscheduledUnfinishedLeaf := false
 		for _, leaf := range leaves {
-			if leaf.ActualEnd == nil {
-				hasUnfinishedLeaves = true
-				break
+			completed := leaf.ActualStart != nil && leaf.ActualEnd != nil
+			if completed {
+				continue
 			}
+			hasUnfinishedLeaves = true
+			if leaf.ExecutionStart == nil || leaf.ExecutionEnd == nil ||
+				leaf.CommitmentStart == nil || leaf.CommitmentEnd == nil ||
+				leaf.ExecutionUnscheduledReason != nil || leaf.CommitmentUnscheduledReason != nil {
+				hasUnscheduledUnfinishedLeaf = true
+			}
+		}
+		if target == domain.StatusLocked && hasUnscheduledUnfinishedLeaf {
+			return domain.ErrCannotLockUnscheduled
 		}
 		var executionSnapshot, commitmentSnapshot *string
 		if target == domain.StatusLocked {
@@ -233,8 +263,10 @@ func (r *Repository) ChangeStatus(ctx context.Context, id string, target domain.
 		if err := tx.Model(&projectModel{}).Where("id = ?", value.ID).Updates(statusUpdates(*value)).Error; err != nil {
 			return err
 		}
-		if err := schedule(sharedpersistence.WithTransaction(ctx, tx)); err != nil {
-			return fmt.Errorf("schedule active projects after status change: %w", err)
+		if target != domain.StatusLocked {
+			if err := schedule(sharedpersistence.WithTransaction(ctx, tx)); err != nil {
+				return fmt.Errorf("schedule active projects after status change: %w", err)
+			}
 		}
 		changed = value
 		return nil
@@ -246,12 +278,15 @@ func (r *Repository) ChangeStatus(ctx context.Context, id string, target domain.
 }
 
 type lifecycleLeaf struct {
-	ID              string
-	ExecutionStart  *time.Time
-	ExecutionEnd    *time.Time
-	CommitmentStart *time.Time
-	CommitmentEnd   *time.Time
-	ActualEnd       *time.Time
+	ID                          string
+	ExecutionStart              *time.Time
+	ExecutionEnd                *time.Time
+	CommitmentStart             *time.Time
+	CommitmentEnd               *time.Time
+	ExecutionUnscheduledReason  *string
+	CommitmentUnscheduledReason *string
+	ActualStart                 *time.Time
+	ActualEnd                   *time.Time
 }
 
 type timelineSnapshotEntry struct {
@@ -266,7 +301,7 @@ func loadLifecycleLeaves(database *gorm.DB, projectID string) ([]lifecycleLeaf, 
 		Where("child.project_id = task.project_id AND child.parent_id = task.id")
 	err := database.Table("wbs_nodes AS task").
 		Clauses(clause.Locking{Strength: "UPDATE"}).
-		Select("task.id, task.execution_start, task.execution_end, task.commitment_start, task.commitment_end, task.actual_end").
+		Select("task.id, task.execution_start, task.execution_end, task.commitment_start, task.commitment_end, task.execution_unscheduled_reason, task.commitment_unscheduled_reason, task.actual_start, task.actual_end").
 		Where("task.project_id = ?", projectID).
 		Where("NOT EXISTS (?)", childQuery).
 		Order("task.id ASC").
@@ -456,6 +491,210 @@ func datesEqual(left, right *time.Time) bool {
 	}
 	return left.Year() == right.Year() && left.YearDay() == right.YearDay()
 }
+
+type reopenPlan struct {
+	Locked []domain.ReopenProject
+	Open   []domain.ReopenProject
+	Token  string
+}
+
+type reopenTaskRow struct {
+	ID         string
+	ProjectID  string
+	AssigneeID *string
+}
+
+func (r *Repository) BulkReopen(ctx context.Context, rootProjectID, token string, now time.Time, schedule func(context.Context) error) ([]domain.Project, error) {
+	ctx, release := sharedpersistence.SerializeScheduleMutation(ctx)
+	defer release()
+	var changed []domain.Project
+	err := sharedpersistence.Transaction(ctx, r.database).Transaction(func(tx *gorm.DB) error {
+		if err := sharedpersistence.LockScheduleMutation(tx); err != nil {
+			return fmt.Errorf("lock bulk reopen mutation: %w", err)
+		}
+		plan, err := requiredReopenPlan(tx, rootProjectID)
+		if err != nil {
+			return err
+		}
+		if plan.Token != token {
+			return domain.ErrBulkReopenStale
+		}
+		if len(plan.Locked) == 0 {
+			return domain.ErrBulkReopenStale
+		}
+		changed = make([]domain.Project, 0, len(plan.Locked))
+		for _, candidate := range plan.Locked {
+			value, err := find(tx, candidate.ID, true)
+			if err != nil {
+				return err
+			}
+			if value == nil || value.Status != domain.StatusLocked || value.ScheduleVersion != candidate.Version {
+				return domain.ErrBulkReopenStale
+			}
+			leaves, err := loadLifecycleLeaves(tx, candidate.ID)
+			if err != nil {
+				return err
+			}
+			hasUnfinished := false
+			for _, leaf := range leaves {
+				if leaf.ActualStart == nil || leaf.ActualEnd == nil {
+					hasUnfinished = true
+					break
+				}
+			}
+			if err := value.ChangeStatus(domain.StatusOpen, len(leaves) > 0, hasUnfinished, nil, nil, now); err != nil {
+				return err
+			}
+			result := tx.Model(&projectModel{}).Where("id = ? AND schedule_version = ?", candidate.ID, candidate.Version).Updates(statusUpdates(*value))
+			if result.Error != nil {
+				return result.Error
+			}
+			if result.RowsAffected != 1 {
+				return domain.ErrBulkReopenStale
+			}
+			changed = append(changed, *value)
+		}
+		if err := schedule(sharedpersistence.WithTransaction(ctx, tx)); err != nil {
+			return fmt.Errorf("recalculate projects after bulk reopen: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return changed, nil
+}
+
+func requiredReopenPlan(tx *gorm.DB, rootProjectID string) (reopenPlan, error) {
+	var projects []projectModel
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("status IN ?", activeStatuses()).Order("priority ASC").Order("id ASC").Find(&projects).Error; err != nil {
+		return reopenPlan{}, fmt.Errorf("load active projects for reopen plan: %w", err)
+	}
+	projectByID := make(map[string]projectModel, len(projects))
+	for _, project := range projects {
+		projectByID[project.ID] = project
+	}
+	root, exists := projectByID[rootProjectID]
+	if !exists {
+		return reopenPlan{}, domain.ErrNotFound
+	}
+	if root.Status != string(domain.StatusLocked) {
+		return reopenPlan{}, domain.ErrStatusTransitionNotAllowed
+	}
+
+	var tasks []reopenTaskRow
+	if err := tx.Table("wbs_nodes").Select("id, project_id, assignee_id").Where("project_id IN ?", projectIDs(projects)).Scan(&tasks).Error; err != nil {
+		return reopenPlan{}, fmt.Errorf("load tasks for reopen plan: %w", err)
+	}
+	projectByTask := make(map[string]string, len(tasks))
+	projectsByAssignee := make(map[string][]string)
+	for _, task := range tasks {
+		projectByTask[task.ID] = task.ProjectID
+		if task.AssigneeID != nil {
+			projectsByAssignee[*task.AssigneeID] = append(projectsByAssignee[*task.AssigneeID], task.ProjectID)
+		}
+	}
+	adjacency := make(map[string]map[string]struct{}, len(projects))
+	connect := func(left, right string) {
+		if left == right || projectByID[left].ID == "" || projectByID[right].ID == "" {
+			return
+		}
+		if adjacency[left] == nil {
+			adjacency[left] = make(map[string]struct{})
+		}
+		if adjacency[right] == nil {
+			adjacency[right] = make(map[string]struct{})
+		}
+		adjacency[left][right] = struct{}{}
+		adjacency[right][left] = struct{}{}
+	}
+	for _, ids := range projectsByAssignee {
+		unique := uniqueStrings(ids)
+		for left := 0; left < len(unique); left++ {
+			for right := left + 1; right < len(unique); right++ {
+				connect(unique[left], unique[right])
+			}
+		}
+	}
+	var dependencyPairs []struct {
+		BlockingTaskID string
+		BlockedTaskID  string
+	}
+	if err := tx.Table("task_dependencies").Select("blocking_task_id, blocked_task_id").Scan(&dependencyPairs).Error; err != nil {
+		return reopenPlan{}, fmt.Errorf("load dependencies for reopen plan: %w", err)
+	}
+	for _, dependency := range dependencyPairs {
+		connect(projectByTask[dependency.BlockingTaskID], projectByTask[dependency.BlockedTaskID])
+	}
+
+	visited := map[string]struct{}{rootProjectID: {}}
+	queue := []string{rootProjectID}
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+		neighbors := make([]string, 0, len(adjacency[current]))
+		for neighbor := range adjacency[current] {
+			neighbors = append(neighbors, neighbor)
+		}
+		sort.Strings(neighbors)
+		for _, neighbor := range neighbors {
+			if _, seen := visited[neighbor]; seen {
+				continue
+			}
+			visited[neighbor] = struct{}{}
+			queue = append(queue, neighbor)
+		}
+	}
+	plan := reopenPlan{}
+	for _, project := range projects {
+		if _, included := visited[project.ID]; !included {
+			continue
+		}
+		ref := domain.ReopenProject{ID: project.ID, Name: project.Name, Version: project.ScheduleVersion}
+		if project.Status == string(domain.StatusLocked) {
+			plan.Locked = append(plan.Locked, ref)
+		} else {
+			plan.Open = append(plan.Open, ref)
+		}
+	}
+	plan.Token = reopenToken(rootProjectID, plan.Locked, plan.Open)
+	return plan, nil
+}
+
+func projectIDs(projects []projectModel) []string {
+	ids := make([]string, 0, len(projects))
+	for _, project := range projects {
+		ids = append(ids, project.ID)
+	}
+	return ids
+}
+
+func uniqueStrings(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func reopenToken(root string, locked, open []domain.ReopenProject) string {
+	parts := []string{root}
+	for _, project := range locked {
+		parts = append(parts, fmt.Sprintf("locked:%s:%d", project.ID, project.Version))
+	}
+	for _, project := range open {
+		parts = append(parts, fmt.Sprintf("open:%s:%d", project.ID, project.Version))
+	}
+	digest := sha256.Sum256([]byte(strings.Join(parts, "|")))
+	return hex.EncodeToString(digest[:])
+}
+
 func statusUpdates(value domain.Project) map[string]interface{} {
 	return map[string]interface{}{"status": value.Status, "closed_at": value.ClosedAt, "locked_execution_snapshot": value.LockedExecutionSnapshot, "locked_commitment_snapshot": value.LockedCommitmentSnapshot, "updated_at": value.UpdatedAt}
 }

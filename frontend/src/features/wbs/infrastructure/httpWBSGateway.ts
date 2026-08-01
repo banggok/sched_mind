@@ -1,9 +1,12 @@
+import { schedulingImpactFetch } from "../../../shared/infrastructure/schedulingImpactFetch";
 import type {
   DependencyDetail,
   DependencyRelation,
 } from "../../dependencies/domain/dependency";
 import {
   WBSOperationError,
+  type AllocationGroups,
+  type AllocationRow,
   type SchedulePreview,
   type WBSGateway,
 } from "../application/wbsGateway";
@@ -24,7 +27,7 @@ export function createHTTPWBSGateway(baseURL: string): WBSGateway {
     path: string,
     init?: RequestInit,
   ): Promise<unknown> => {
-    const response = await fetch(`${baseURL}${path}`, init);
+    const response = await schedulingImpactFetch(`${baseURL}${path}`, init);
     if (!response.ok) {
       const body: unknown = await response.json().catch(() => undefined);
       throw operationError(body);
@@ -69,6 +72,18 @@ export function createHTTPWBSGateway(baseURL: string): WBSGateway {
         if (!Array.isArray(data)) throw new Error(invalidResponseMessage);
         return data.map(mapNode);
       }, signal);
+    },
+    allocations: async (projectId, id, signal) => {
+      syncProjectionVersion();
+      const requestVersion = currentScheduleProjectionVersion();
+      const data = await request(
+        `${path(projectId)}/${encodeURIComponent(id)}/allocations`,
+        { signal },
+      );
+      if (currentScheduleProjectionVersion() !== requestVersion) {
+        throw staleResponseError();
+      }
+      return mapAllocationGroups(data);
     },
     create: async (projectId, parentId, name, confirmConversion) => {
       await request(
@@ -124,16 +139,16 @@ export function createHTTPWBSGateway(baseURL: string): WBSGateway {
       }
       return mapSchedulePreview(data, projectId, id);
     },
-    complete: async (projectId, id, actualEnd) => {
+    complete: async (projectId, id, actualStart, actualEnd) => {
       await request(
-        `${path(projectId)}/${id}/actual-end`,
-        json("POST", { actualEnd }),
+        `${path(projectId)}/${id}/actual-date`,
+        json("POST", { actualStart, actualEnd }),
       );
       invalidateAll(true);
     },
     reopen: async (projectId, id) => {
       try {
-        const response = await fetch(
+        const response = await schedulingImpactFetch(
           `${baseURL}${path(projectId)}/${encodeURIComponent(id)}/reopen`,
           { method: "POST" },
         );
@@ -160,6 +175,46 @@ export function createHTTPWBSGateway(baseURL: string): WBSGateway {
       }
     },
   };
+}
+
+function mapAllocationGroups(value: unknown): AllocationGroups {
+  if (
+    !isRecord(value) ||
+    !Array.isArray(value.execution) ||
+    !Array.isArray(value.commitment) ||
+    !Array.isArray(value.actual)
+  ) {
+    throw new Error(invalidResponseMessage);
+  }
+  return {
+    execution: value.execution.map(mapAllocationRow),
+    commitment: value.commitment.map(mapAllocationRow),
+    actual: value.actual.map(mapAllocationRow),
+  };
+}
+
+function mapAllocationRow(value: unknown): AllocationRow {
+  if (
+    !isRecord(value) ||
+    typeof value.date !== "string" ||
+    !isNonNegativeInteger(value.allocatedMinutes) ||
+    !isNonNegativeInteger(value.capacityMinutes) ||
+    !isNonNegativeInteger(value.remainingMinutes) ||
+    !isNonNegativeInteger(value.overcapacityMinutes)
+  ) {
+    throw new Error(invalidResponseMessage);
+  }
+  return {
+    date: value.date,
+    allocatedMinutes: value.allocatedMinutes,
+    capacityMinutes: value.capacityMinutes,
+    remainingMinutes: value.remainingMinutes,
+    overcapacityMinutes: value.overcapacityMinutes,
+  };
+}
+
+function isNonNegativeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0;
 }
 
 function mapSchedulePreview(
@@ -249,7 +304,9 @@ function mapReopenedNode(
   if (
     !isRecord(value) ||
     !isRecord(value.executable) ||
+    !("actualStart" in value.executable) ||
     !("actualEnd" in value.executable) ||
+    value.executable.actualStart !== null ||
     value.executable.actualEnd !== null
   ) {
     throw new Error(invalidResponseMessage);
@@ -311,6 +368,7 @@ function mapExecutable(value: Record<string, unknown>): WBSNode["executable"] {
     commitmentUnscheduledReason: optionalString(
       value.commitmentUnscheduledReason,
     ),
+    actualStart: optionalString(value.actualStart),
     actualEnd: optionalString(value.actualEnd),
   };
 }

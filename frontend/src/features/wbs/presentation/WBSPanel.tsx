@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Project } from "../../projects/domain/project";
 import { WBSOperationError, type WBSGateway } from "../application/wbsGateway";
 import type { WBSNode } from "../domain/wbs";
@@ -26,6 +26,9 @@ export function WBSPanel({
   rolesGateway,
   membersGateway,
   loadPublicHolidayDates,
+  initialNodeId,
+  initialCreateParentId,
+  returnToCallerOnComplete = false,
   onClose,
 }: {
   project: Project;
@@ -37,6 +40,9 @@ export function WBSPanel({
     startDate: string,
     endDate: string,
   ): Promise<string[]>;
+  initialNodeId?: string;
+  initialCreateParentId?: string | null;
+  returnToCallerOnComplete?: boolean;
   onClose(): void;
 }) {
   const [tree, setTree] = useState<WBSNode[]>([]);
@@ -51,6 +57,7 @@ export function WBSPanel({
   const [toast, setToast] = useState("");
   const [detail, setDetail] = useState<WBSNode>();
   const [conversion, setConversion] = useState(false);
+  const initialActionApplied = useRef(false);
   useEffect(() => {
     return gateway.subscribeToConfirmedChanges?.(() =>
       setReload((value) => value + 1),
@@ -67,6 +74,17 @@ export function WBSPanel({
         setDetail((current) =>
           current ? findNode(confirmedTree, current.id) : undefined,
         );
+        if (!initialActionApplied.current) {
+          if (initialNodeId) setDetail(findNode(confirmedTree, initialNodeId));
+          if (initialCreateParentId !== undefined) {
+            setDraft({
+              mode: "create",
+              parentId: initialCreateParentId ?? undefined,
+            });
+            setName("");
+          }
+          initialActionApplied.current = true;
+        }
       })
       .catch((reason: unknown) => {
         if (!(reason instanceof DOMException && reason.name === "AbortError"))
@@ -76,7 +94,7 @@ export function WBSPanel({
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [gateway, project.id, reload]);
+  }, [gateway, initialCreateParentId, initialNodeId, project.id, reload]);
   const all = flatten(tree);
   const refresh = (message: string) => {
     dependenciesGateway?.invalidateAll();
@@ -85,13 +103,18 @@ export function WBSPanel({
     setConversion(false);
     setReload((v) => v + 1);
   };
-  const mutate = async (action: () => Promise<void>, message: string) => {
+  const mutate = async (
+    action: () => Promise<void>,
+    message: string,
+    closeAfter = false,
+  ) => {
     if (busy) return;
     setBusy(true);
     setOperationError("");
     try {
       await action();
       refresh(message);
+      if (closeAfter) onClose();
     } catch (reason: unknown) {
       if (
         reason instanceof WBSOperationError &&
@@ -115,6 +138,7 @@ export function WBSPanel({
       void mutate(
         () => gateway.create(project.id, draft.parentId, name, false),
         "Task added.",
+        returnToCallerOnComplete && initialCreateParentId !== undefined,
       );
     else if (draft.mode === "rename" && selected)
       void mutate(
@@ -146,7 +170,7 @@ export function WBSPanel({
       <div className="mt-6 flex justify-end">
         <Button
           variant="primary"
-          disabled={project.status === "closed"}
+          disabled={project.status !== "open"}
           onClick={() => {
             setDraft({ mode: "create" });
             setName("");
@@ -189,7 +213,7 @@ export function WBSPanel({
                 node={node}
                 first={index === 0}
                 last={index === tree.length - 1}
-                disabled={busy || project.status === "closed"}
+                disabled={busy || project.status !== "open"}
                 onCreate={(selected) => {
                   setDraft({ mode: "create", parentId: selected.id });
                   setName("");
@@ -321,6 +345,8 @@ export function WBSPanel({
                                 true,
                               ),
                             "Child added and task converted to a group.",
+                            returnToCallerOnComplete &&
+                              initialCreateParentId !== undefined,
                           );
                         else if (draft.node) {
                           const selected = draft.node;
@@ -347,7 +373,7 @@ export function WBSPanel({
       ) : null}
       {detail ? (
         <WBSDetailDialog
-          key={`${detail.id}:${detail.executable.actualEnd ?? "unfinished"}`}
+          key={`${detail.id}:${detail.executable.actualStart ?? "unfinished"}:${detail.executable.actualEnd ?? "unfinished"}`}
           project={project}
           node={detail}
           gateway={gateway}
@@ -355,16 +381,21 @@ export function WBSPanel({
           rolesGateway={rolesGateway}
           membersGateway={membersGateway}
           loadPublicHolidayDates={loadPublicHolidayDates}
-          onClose={() => setDetail(undefined)}
+          onClose={() => {
+            if (returnToCallerOnComplete && initialNodeId) onClose();
+            else setDetail(undefined);
+          }}
           onChanged={(message) => {
             setDetail(undefined);
             refresh(message);
+            if (returnToCallerOnComplete && initialNodeId) onClose();
           }}
           onReopened={(confirmed, message) => {
             dependenciesGateway?.invalidateAll();
             setTree((current) => replaceNode(current, confirmed));
-            setDetail(confirmed);
             setToast(message);
+            if (returnToCallerOnComplete && initialNodeId) onClose();
+            else setDetail(confirmed);
           }}
         />
       ) : null}
@@ -450,7 +481,10 @@ function TreeNode({
         {node.hasChildren ? (
           <Button
             compact
-            disabled={disabled || Boolean(node.executable.actualEnd)}
+            disabled={
+              disabled ||
+              Boolean(node.executable.actualStart && node.executable.actualEnd)
+            }
             onClick={() => onRename(node)}
           >
             Edit Group
@@ -463,7 +497,10 @@ function TreeNode({
           <Button
             compact
             variant="danger"
-            disabled={disabled || Boolean(node.executable.actualEnd)}
+            disabled={
+              disabled ||
+              Boolean(node.executable.actualStart && node.executable.actualEnd)
+            }
             onClick={() => onDelete(node)}
           >
             Delete Task

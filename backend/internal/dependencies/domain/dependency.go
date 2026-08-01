@@ -13,6 +13,7 @@ var (
 	ErrExecutableNeeded      = errors.New("executable task required")
 	ErrCycle                 = errors.New("dependency cycle detected")
 	ErrClosedProject         = errors.New("closed project task not allowed")
+	ErrLockedProject         = errors.New("locked project dependency is read-only")
 	ErrCompletedBlocked      = errors.New("completed task cannot be blocked")
 	ErrCompletedHistory      = errors.New("completed dependency history read only")
 	ErrAutomaticOnlyReadOnly = errors.New("automatic-only dependency is read-only")
@@ -122,6 +123,7 @@ func (dependency *Dependency) KeepAsManual(now time.Time) {
 type Task struct {
 	ID, Name, ProjectID, ProjectName string
 	HierarchyPath                    string
+	ActualStart                      *time.Time
 	ActualEnd                        *time.Time
 	ExpectedStart                    *time.Time
 }

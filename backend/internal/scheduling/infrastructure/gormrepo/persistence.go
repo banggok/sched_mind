@@ -5,34 +5,69 @@ import (
 	"fmt"
 	"math/big"
 	"sort"
+	"strings"
 	"time"
 
 	schedulingdomain "github.com/banggok/sched_mind/backend/internal/scheduling/domain"
-	"github.com/banggok/sched_mind/backend/internal/shared/persistence"
+	"github.com/banggok/sched_mind/backend/internal/shared/schedulingimpact"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
+type taskPersistenceChange struct {
+	TaskID  string
+	Updates map[string]any
+}
+
+type projectPersistenceChange struct {
+	ProjectID string
+	Version   int64
+	StartDate *time.Time
+	EndDate   *time.Time
+}
+
 func (repository *Repository) persist(
+	ctx context.Context,
 	database *gorm.DB,
 	state *portfolioState,
 	execution *timelineResult,
 	commitment *timelineResult,
-	requestedProjectIDs []string,
+	dependencyDirtyProjects map[string]struct{},
 ) error {
 	now := repository.now()
-	recalculatedTaskIDs := make([]string, 0)
-	dirtyProjects := projectIDsFromRequest(requestedProjectIDs)
+	executionRows, err := buildTimelineAllocationRows(state, execution)
+	if err != nil {
+		return err
+	}
+	commitmentRows, err := buildTimelineAllocationRows(state, commitment)
+	if err != nil {
+		return err
+	}
+	generatedRows := map[schedulingdomain.Timeline]map[string][]allocationModel{
+		schedulingdomain.Execution:  groupAllocationRows(executionRows),
+		schedulingdomain.Commitment: groupAllocationRows(commitmentRows),
+	}
 
+	dirtyTasks := make(map[string]struct{})
+	dirtyProjects := make(map[string]struct{}, len(dependencyDirtyProjects))
+	for projectID := range dependencyDirtyProjects {
+		dirtyProjects[projectID] = struct{}{}
+	}
+	taskChanges := make([]taskPersistenceChange, 0)
 	for taskID, task := range state.tasks {
 		project := state.projects[task.ProjectID]
-		if _, leaf := state.leafOrder[taskID]; !leaf || task.ActualEnd != nil || project.Status != "open" || !project.AutomaticScheduling {
+		if _, leaf := state.leafOrder[taskID]; !leaf || task.ActualStart != nil || task.ActualEnd != nil || project.Status != "open" || !project.AutomaticScheduling {
 			continue
 		}
 		executionSchedule, executionExists := execution.schedules[taskID]
 		commitmentSchedule, commitmentExists := commitment.schedules[taskID]
 		if !executionExists || !commitmentExists {
 			return fmt.Errorf("%w: missing generated schedule for task %s", schedulingdomain.ErrDataIntegrity, taskID)
+		}
+		changed := !scheduleMatchesTask(task, executionSchedule, commitmentSchedule) ||
+			!allocationRowsEquivalent(state.existingAllocations[schedulingdomain.Execution][taskID], generatedRows[schedulingdomain.Execution][taskID]) ||
+			!allocationRowsEquivalent(state.existingAllocations[schedulingdomain.Commitment][taskID], generatedRows[schedulingdomain.Commitment][taskID])
+		if !changed {
+			continue
 		}
 
 		updates := map[string]any{
@@ -44,14 +79,7 @@ func (repository *Repository) persist(
 			"commitment_unscheduled_reason": commitmentSchedule.Reason,
 			"updated_at":                    now,
 		}
-		result := database.Model(&taskModel{}).Where("id = ? AND actual_end IS NULL", taskID).Updates(updates)
-		if result.Error != nil {
-			return fmt.Errorf("persist generated task schedule: %w", result.Error)
-		}
-		if result.RowsAffected != 1 {
-			return fmt.Errorf("%w: task %s changed while scheduling", schedulingdomain.ErrConcurrentConflict, taskID)
-		}
-
+		taskChanges = append(taskChanges, taskPersistenceChange{TaskID: taskID, Updates: updates})
 		task.ExecutionStart = executionSchedule.Start
 		task.ExecutionEnd = executionSchedule.End
 		task.ExecutionUnscheduledReason = executionSchedule.Reason
@@ -60,51 +88,175 @@ func (repository *Repository) persist(
 		task.CommitmentUnscheduledReason = commitmentSchedule.Reason
 		task.UpdatedAt = now
 		state.tasks[taskID] = task
-		recalculatedTaskIDs = append(recalculatedTaskIDs, taskID)
+		dirtyTasks[taskID] = struct{}{}
 		dirtyProjects[task.ProjectID] = struct{}{}
 	}
 
-	if len(recalculatedTaskIDs) > 0 {
-		if err := database.Where("task_id IN ?", recalculatedTaskIDs).Delete(&allocationModel{}).Error; err != nil {
-			return fmt.Errorf("replace schedule allocations: %w", err)
-		}
-		if err := persistTimelineAllocations(database, state, execution); err != nil {
-			return err
-		}
-		if err := persistTimelineAllocations(database, state, commitment); err != nil {
-			return err
-		}
-	}
-
+	projectChanges := make([]projectPersistenceChange, 0, len(dirtyProjects))
 	for projectID := range dirtyProjects {
 		project, exists := state.projects[projectID]
 		if !exists || project.Status != "open" || !project.AutomaticScheduling {
 			continue
 		}
 		start, end := derivedProjectDates(state, projectID)
+		projectChanges = append(projectChanges, projectPersistenceChange{
+			ProjectID: projectID,
+			Version:   project.ScheduleVersion,
+			StartDate: start,
+			EndDate:   end,
+		})
+	}
+	sort.Slice(projectChanges, func(left, right int) bool { return projectChanges[left].ProjectID < projectChanges[right].ProjectID })
+
+	lockedImpactIDs, err := state.potentialLockedImpacts()
+	if err != nil {
+		return err
+	}
+	lockedProjects := impactProjects(state, lockedImpactIDs, "locked")
+	openProjects := impactProjects(state, mapKeys(dirtyProjects), "open")
+	signature := persistenceSignature(taskChanges, projectChanges, generatedRows, dirtyTasks, dependencyDirtyProjects)
+	if err := schedulingimpact.Guard(ctx, signature, lockedProjects, openProjects); err != nil {
+		return err
+	}
+
+	for _, change := range taskChanges {
+		result := database.Model(&taskModel{}).
+			Where("id = ? AND actual_start IS NULL AND actual_end IS NULL", change.TaskID).
+			Updates(change.Updates)
+		if result.Error != nil {
+			return fmt.Errorf("persist generated task schedule: %w", result.Error)
+		}
+		if result.RowsAffected != 1 {
+			return fmt.Errorf("%w: task %s changed while scheduling", schedulingdomain.ErrConcurrentConflict, change.TaskID)
+		}
+	}
+
+	if len(dirtyTasks) > 0 {
+		taskIDs := mapKeys(dirtyTasks)
+		if err := database.Where("task_id IN ? AND timeline IN ?", taskIDs, []string{string(schedulingdomain.Execution), string(schedulingdomain.Commitment)}).Delete(&allocationModel{}).Error; err != nil {
+			return fmt.Errorf("replace schedule allocations: %w", err)
+		}
+		if err := persistSelectedAllocationRows(database, executionRows, dirtyTasks); err != nil {
+			return err
+		}
+		if err := persistSelectedAllocationRows(database, commitmentRows, dirtyTasks); err != nil {
+			return err
+		}
+	}
+
+	for _, change := range projectChanges {
 		result := database.Model(&projectModel{}).
-			Where("id = ? AND schedule_version = ?", projectID, project.ScheduleVersion).
+			Where("id = ? AND schedule_version = ?", change.ProjectID, change.Version).
 			Updates(map[string]any{
-				"start_date":       start,
-				"end_date":         end,
-				"schedule_version": project.ScheduleVersion + 1,
+				"start_date":       change.StartDate,
+				"end_date":         change.EndDate,
+				"schedule_version": change.Version + 1,
 				"updated_at":       now,
 			})
 		if result.Error != nil {
 			return fmt.Errorf("persist project schedule version: %w", result.Error)
 		}
 		if result.RowsAffected != 1 {
-			return fmt.Errorf("%w: project %s schedule version changed", schedulingdomain.ErrConcurrentConflict, projectID)
+			return fmt.Errorf("%w: project %s schedule version changed", schedulingdomain.ErrConcurrentConflict, change.ProjectID)
 		}
-		project.StartDate = start
-		project.EndDate = end
-		project.ScheduleVersion++
-		state.projects[projectID] = project
 	}
 	return nil
 }
 
-func persistTimelineAllocations(database *gorm.DB, state *portfolioState, result *timelineResult) error {
+func impactProjects(state *portfolioState, projectIDs []string, requiredStatus string) []schedulingimpact.Project {
+	values := make([]schedulingimpact.Project, 0, len(projectIDs))
+	for _, projectID := range projectIDs {
+		project, exists := state.projects[projectID]
+		if !exists || project.Status != requiredStatus {
+			continue
+		}
+		values = append(values, schedulingimpact.Project{
+			ID:      project.ID,
+			Name:    project.Name,
+			Status:  project.Status,
+			Version: project.ScheduleVersion,
+		})
+	}
+	return values
+}
+
+func persistenceSignature(
+	taskChanges []taskPersistenceChange,
+	projectChanges []projectPersistenceChange,
+	generatedRows map[schedulingdomain.Timeline]map[string][]allocationModel,
+	dirtyTasks map[string]struct{},
+	dependencyDirtyProjects map[string]struct{},
+) string {
+	parts := make([]string, 0)
+	for _, change := range taskChanges {
+		parts = append(parts, "task:"+change.TaskID+":"+updateSignature(change.Updates))
+	}
+	for _, change := range projectChanges {
+		parts = append(parts, "project:"+change.ProjectID+":"+dateSignature(change.StartDate)+":"+dateSignature(change.EndDate))
+	}
+	for _, timeline := range []schedulingdomain.Timeline{schedulingdomain.Execution, schedulingdomain.Commitment} {
+		for _, taskID := range mapKeys(dirtyTasks) {
+			for _, row := range generatedRows[timeline][taskID] {
+				parts = append(parts, strings.Join([]string{
+					"allocation", string(timeline), taskID,
+					schedulingdomain.DateKey(row.AllocationDate),
+					row.AllocatedMinutes, row.RemainingCapacityMinutes,
+				}, ":"))
+			}
+		}
+	}
+	for _, projectID := range mapKeys(dependencyDirtyProjects) {
+		parts = append(parts, "dependency:"+projectID)
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, "|")
+}
+
+func updateSignature(updates map[string]any) string {
+	keys := make([]string, 0, len(updates))
+	for key := range updates {
+		if key != "updated_at" {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, key := range keys {
+		parts = append(parts, key+"="+valueSignature(updates[key]))
+	}
+	return strings.Join(parts, ",")
+}
+
+func valueSignature(value any) string {
+	switch typed := value.(type) {
+	case nil:
+		return "null"
+	case *time.Time:
+		return dateSignature(typed)
+	case *string:
+		if typed == nil {
+			return "null"
+		}
+		return *typed
+	case string:
+		return typed
+	default:
+		return fmt.Sprint(typed)
+	}
+}
+
+func dateSignature(value *time.Time) string {
+	if value == nil {
+		return "null"
+	}
+	return schedulingdomain.DateKey(*value)
+}
+
+func buildTimelineAllocationRows(state *portfolioState, result *timelineResult) ([]allocationModel, error) {
+	return buildTimelineAllocationRowsWithOvercapacity(state, result, false)
+}
+
+func buildTimelineAllocationRowsWithOvercapacity(state *portfolioState, result *timelineResult, allowOvercapacity bool) ([]allocationModel, error) {
 	allocations := make([]dailyAllocation, 0)
 	for _, schedule := range result.schedules {
 		allocations = append(allocations, schedule.Allocations...)
@@ -116,11 +268,11 @@ func persistTimelineAllocations(database *gorm.DB, state *portfolioState, result
 	for _, allocation := range allocations {
 		task, exists := state.tasks[allocation.TaskID]
 		if !exists {
-			return fmt.Errorf("%w: allocation task %s missing", schedulingdomain.ErrDataIntegrity, allocation.TaskID)
+			return nil, fmt.Errorf("%w: allocation task %s missing", schedulingdomain.ErrDataIntegrity, allocation.TaskID)
 		}
 		capacity, err := result.calendar.capacity(allocation.MemberID, task.ProjectID, allocation.Date)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		key := allocation.MemberID + "|" + schedulingdomain.DateKey(allocation.Date)
 		consumed := schedulingdomain.CloneRat(used[key])
@@ -128,18 +280,15 @@ func persistTimelineAllocations(database *gorm.DB, state *portfolioState, result
 		remaining.Sub(remaining, consumed)
 		remaining.Sub(remaining, allocation.Minutes)
 		if remaining.Sign() < 0 {
-			if !allocation.Fixed {
-				return fmt.Errorf("%w: negative remaining capacity for %s", schedulingdomain.ErrDataIntegrity, key)
+			if !allocation.Fixed && !allowOvercapacity {
+				return nil, fmt.Errorf("%w: negative remaining capacity for %s", schedulingdomain.ErrDataIntegrity, key)
 			}
-			// A fixed historical reservation may exceed capacity after a later
-			// capacity edit. It still consumes the whole day for new work, while
-			// its immutable projection remains reconstructable from existing rows.
 			remaining = new(big.Rat)
 		}
 		consumed.Add(consumed, allocation.Minutes)
 		used[key] = consumed
 		project := state.projects[task.ProjectID]
-		if allocation.Fixed || task.ActualEnd != nil || project.Status != "open" || !project.AutomaticScheduling {
+		if allocation.Fixed || task.ActualStart != nil || task.ActualEnd != nil || project.Status != "open" || !project.AutomaticScheduling {
 			continue
 		}
 		rows = append(rows, allocationModel{
@@ -148,13 +297,92 @@ func persistTimelineAllocations(database *gorm.DB, state *portfolioState, result
 			RemainingCapacityMinutes: ratString(remaining), Sequence: allocation.Sequence,
 		})
 	}
-	if len(rows) == 0 {
+	return rows, nil
+}
+
+func persistSelectedAllocationRows(database *gorm.DB, rows []allocationModel, selected map[string]struct{}) error {
+	values := make([]allocationModel, 0, len(rows))
+	for _, row := range rows {
+		if _, include := selected[row.TaskID]; include {
+			values = append(values, row)
+		}
+	}
+	if len(values) == 0 {
 		return nil
 	}
-	if err := database.Create(&rows).Error; err != nil {
-		return fmt.Errorf("persist %s allocations: %w", result.timeline, err)
+	if err := database.Create(&values).Error; err != nil {
+		return fmt.Errorf("persist schedule allocations: %w", err)
 	}
 	return nil
+}
+
+func groupAllocationRows(rows []allocationModel) map[string][]allocationModel {
+	grouped := make(map[string][]allocationModel)
+	for _, row := range rows {
+		grouped[row.TaskID] = append(grouped[row.TaskID], row)
+	}
+	return grouped
+}
+
+func scheduleMatchesTask(task taskModel, execution, commitment taskSchedule) bool {
+	return datesMatch(task.ExecutionStart, execution.Start) &&
+		datesMatch(task.ExecutionEnd, execution.End) &&
+		stringsMatch(task.ExecutionUnscheduledReason, execution.Reason) &&
+		datesMatch(task.CommitmentStart, commitment.Start) &&
+		datesMatch(task.CommitmentEnd, commitment.End) &&
+		stringsMatch(task.CommitmentUnscheduledReason, commitment.Reason)
+}
+
+func allocationRowsEquivalent(existing, generated []allocationModel) bool {
+	if len(existing) != len(generated) {
+		return false
+	}
+	left := append([]allocationModel{}, existing...)
+	right := append([]allocationModel{}, generated...)
+	sort.Slice(left, func(i, j int) bool { return allocationRowLess(left[i], left[j]) })
+	sort.Slice(right, func(i, j int) bool { return allocationRowLess(right[i], right[j]) })
+	for index := range left {
+		if left[index].AssigneeID != right[index].AssigneeID ||
+			!schedulingdomain.DateOnly(left[index].AllocationDate).Equal(schedulingdomain.DateOnly(right[index].AllocationDate)) ||
+			left[index].AllocatedMinutes != right[index].AllocatedMinutes ||
+			left[index].RemainingCapacityMinutes != right[index].RemainingCapacityMinutes {
+			return false
+		}
+	}
+	return true
+}
+
+func allocationRowLess(left, right allocationModel) bool {
+	if !left.AllocationDate.Equal(right.AllocationDate) {
+		return left.AllocationDate.Before(right.AllocationDate)
+	}
+	if left.AllocatedMinutes != right.AllocatedMinutes {
+		return left.AllocatedMinutes < right.AllocatedMinutes
+	}
+	return left.RemainingCapacityMinutes < right.RemainingCapacityMinutes
+}
+
+func datesMatch(left, right *time.Time) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return schedulingdomain.DateOnly(*left).Equal(schedulingdomain.DateOnly(*right))
+}
+
+func stringsMatch(left, right *string) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
+}
+
+func mapKeys(values map[string]struct{}) []string {
+	keys := make([]string, 0, len(values))
+	for value := range values {
+		keys = append(keys, value)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func derivedProjectDates(state *portfolioState, projectID string) (*time.Time, *time.Time) {
@@ -186,74 +414,6 @@ func derivedProjectDates(state *portfolioState, projectID string) (*time.Time, *
 }
 
 func (repository *Repository) MarkProjectUnscheduled(ctx context.Context, projectID, reason string) error {
-	ctx, release := persistence.SerializeScheduleMutation(ctx)
-	defer release()
-	database := persistence.Transaction(ctx, repository.database)
-	return database.Transaction(func(transaction *gorm.DB) error {
-		if err := persistence.LockScheduleMutation(transaction); err != nil {
-			return fmt.Errorf("lock schedule mutation: %w", err)
-		}
-		var project projectModel
-		if err := transaction.Clauses(clause.Locking{Strength: "UPDATE"}).First(&project, "id = ?", projectID).Error; err != nil {
-			return fmt.Errorf("load project for unscheduled transition: %w", err)
-		}
-		if project.Status != "open" || !project.AutomaticScheduling || project.SchedulingStartDate != nil {
-			return nil
-		}
-		var taskIDs []string
-		if err := transaction.Raw(`
-			SELECT n.id
-			FROM wbs_nodes n
-			WHERE n.project_id = ?
-			  AND n.actual_end IS NULL
-			  AND NOT EXISTS (
-				SELECT 1 FROM wbs_nodes child
-				WHERE child.project_id = n.project_id AND child.parent_id = n.id
-			  )`, projectID).Scan(&taskIDs).Error; err != nil {
-			return fmt.Errorf("load project tasks for unscheduled transition: %w", err)
-		}
-		now := repository.now()
-		if len(taskIDs) > 0 {
-			if err := transaction.Model(&taskModel{}).Where("id IN ?", taskIDs).Updates(map[string]any{
-				"execution_start": nil, "execution_end": nil,
-				"commitment_start": nil, "commitment_end": nil,
-				"execution_unscheduled_reason":  reason,
-				"commitment_unscheduled_reason": reason,
-				"updated_at":                    now,
-			}).Error; err != nil {
-				return fmt.Errorf("clear generated task dates: %w", err)
-			}
-			if err := transaction.Where("task_id IN ?", taskIDs).Delete(&allocationModel{}).Error; err != nil {
-				return fmt.Errorf("clear generated task allocations: %w", err)
-			}
-		}
-		var aggregate struct {
-			StartDate *time.Time
-			EndDate   *time.Time
-		}
-		if err := transaction.Raw(`
-			SELECT MIN(COALESCE(execution_start, commitment_start)) AS start_date,
-			       MAX(COALESCE(commitment_end, execution_end)) AS end_date
-			FROM wbs_nodes n
-			WHERE n.project_id = ?
-			  AND NOT EXISTS (
-				SELECT 1 FROM wbs_nodes child
-				WHERE child.project_id = n.project_id AND child.parent_id = n.id
-			  )`, projectID).Scan(&aggregate).Error; err != nil {
-			return fmt.Errorf("derive project dates after unscheduled transition: %w", err)
-		}
-		result := transaction.Model(&projectModel{}).
-			Where("id = ? AND schedule_version = ?", projectID, project.ScheduleVersion).
-			Updates(map[string]any{
-				"start_date": aggregate.StartDate, "end_date": aggregate.EndDate,
-				"schedule_version": project.ScheduleVersion + 1, "updated_at": now,
-			})
-		if result.Error != nil {
-			return fmt.Errorf("persist unscheduled project version: %w", result.Error)
-		}
-		if result.RowsAffected != 1 {
-			return fmt.Errorf("%w: project %s schedule version changed", schedulingdomain.ErrConcurrentConflict, projectID)
-		}
-		return nil
-	})
+	_ = reason
+	return repository.RecalculatePortfolio(ctx, []string{projectID})
 }

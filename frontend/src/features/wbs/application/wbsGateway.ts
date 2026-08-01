@@ -10,6 +10,11 @@ export class WBSOperationError extends Error {
 }
 export interface WBSGateway {
   tree(projectId: string, signal?: AbortSignal): Promise<WBSNode[]>;
+  allocations(
+    projectId: string,
+    id: string,
+    signal?: AbortSignal,
+  ): Promise<AllocationGroups>;
   subscribeToConfirmedChanges?(listener: () => void): () => void;
   create(
     projectId: string,
@@ -41,7 +46,12 @@ export interface WBSGateway {
     input: SchedulePreviewInput,
     signal?: AbortSignal,
   ): Promise<SchedulePreview>;
-  complete(projectId: string, id: string, actualEnd: string): Promise<void>;
+  complete(
+    projectId: string,
+    id: string,
+    actualStart: string,
+    actualEnd: string,
+  ): Promise<void>;
   reopen(projectId: string, id: string): Promise<WBSNode>;
 }
 export interface ExecutableInput {
@@ -66,4 +76,18 @@ export interface SchedulePreviewInput {
   assigneeId?: string;
   effortHours: number;
   lagDays: number;
+}
+
+export interface AllocationRow {
+  date: string;
+  allocatedMinutes: number;
+  capacityMinutes: number;
+  remainingMinutes: number;
+  overcapacityMinutes: number;
+}
+
+export interface AllocationGroups {
+  execution: AllocationRow[];
+  commitment: AllocationRow[];
+  actual: AllocationRow[];
 }

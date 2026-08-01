@@ -11,12 +11,17 @@ describe("application navigation", () => {
     expect(navigationItems.some((item) => item.id === "public-holidays")).toBe(
       true,
     );
+    expect(getNavigationItem("home")).toMatchObject({
+      label: "Home",
+      href: "#home",
+      groupLabel: "Home",
+    });
     expect(getNavigationItem("projects")).toMatchObject({
       label: "Projects",
       groupLabel: "Project",
     });
     expect(new Set(navigationItems.map((item) => item.groupLabel))).toEqual(
-      new Set(["Team Configuration", "Project"]),
+      new Set(["Home", "Team Configuration", "Project"]),
     );
   });
 });

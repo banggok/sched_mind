@@ -8,6 +8,7 @@ import (
 
 	"github.com/banggok/sched_mind/backend/internal/dependencies/domain"
 	"github.com/banggok/sched_mind/backend/internal/shared/identity"
+	"github.com/banggok/sched_mind/backend/internal/shared/schedulingimpact"
 )
 
 type Store interface {
@@ -75,6 +76,7 @@ func (s *Service) Candidates(ctx context.Context, taskID string, direction domai
 }
 
 func (s *Service) Create(ctx context.Context, blockingTaskID, blockedTaskID string) (*domain.Dependency, error) {
+	ctx = schedulingimpact.WithOperation(ctx, "", schedulingimpact.ModeOrdinary)
 	id, err := s.newID()
 	if err != nil {
 		return nil, fmt.Errorf("generate dependency ID: %w", err)
@@ -94,6 +96,7 @@ func (s *Service) Create(ctx context.Context, blockingTaskID, blockedTaskID stri
 }
 
 func (s *Service) Delete(ctx context.Context, id string) error {
+	ctx = schedulingimpact.WithOperation(ctx, "", schedulingimpact.ModeOrdinary)
 	if err := s.store.Delete(ctx, id, s.now(), s.scheduler.InvalidatePortfolio); err != nil {
 		return fmt.Errorf("delete dependency: %w", err)
 	}
@@ -101,6 +104,7 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 }
 
 func (s *Service) KeepAsManual(ctx context.Context, id string) (*domain.Dependency, error) {
+	ctx = schedulingimpact.WithOperation(ctx, "", schedulingimpact.ModeOrdinary)
 	value, err := s.store.KeepAsManual(ctx, id, s.now(), s.scheduler.InvalidatePortfolio)
 	if err != nil {
 		return nil, fmt.Errorf("keep dependency as manual: %w", err)

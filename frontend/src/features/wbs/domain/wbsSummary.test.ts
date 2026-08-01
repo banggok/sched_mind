@@ -42,6 +42,7 @@ function group(
 
 const direct = task("direct", {
   effortMinutes: 960,
+  actualStart: "2026-08-03",
   actualEnd: "2026-08-03",
   executionTimeline: { start: "2026-08-01", end: "2026-08-03" },
   commitmentTimeline: { start: "2026-08-01", end: "2026-08-05" },
@@ -52,11 +53,13 @@ const nestedKnown = task("nested-known", {
   commitmentTimeline: { start: "2026-08-04", end: "2026-08-08" },
 });
 const nestedMissingCompleted = task("nested-missing-completed", {
+  actualStart: "2026-08-10",
   actualEnd: "2026-08-10",
   commitmentTimeline: { start: "2026-08-09", end: "2026-08-12" },
 });
 const deepKnownCompleted = task("deep-known-completed", {
   effortMinutes: 480,
+  actualStart: "2026-08-12",
   actualEnd: "2026-08-12",
   executionTimeline: { start: "2026-08-08", end: "2026-08-12" },
 });
@@ -75,6 +78,7 @@ const realisticRoots = [
     ],
     {
       effortMinutes: 9999,
+      actualStart: "2026-01-01",
       actualEnd: "2026-01-01",
       executionTimeline: { start: "2020-01-01", end: "2030-01-01" },
       commitmentTimeline: { start: "2020-01-01", end: "2030-01-01" },
@@ -153,7 +157,7 @@ describe("US-4.3 WBS summary aggregation", () => {
   it("AC-6 AC-9 AC-16 AC-27 handles no schedules, all missing Effort, and a defensive empty Group", () => {
     const noKnownEffort = summarizeWBS([
       task("one"),
-      task("two", { actualEnd: "2026-08-01" }),
+      task("two", { actualStart: "2026-08-01", actualEnd: "2026-08-01" }),
       task("three"),
     ]);
     expect(noKnownEffort).toEqual({
@@ -171,7 +175,11 @@ describe("US-4.3 WBS summary aggregation", () => {
   it("AC-13 preserves integer-minute precision for 0%, one decimal, half hours, and 100%", () => {
     expect(
       summarizeWBS([
-        task("done", { effortMinutes: 60, actualEnd: "2026-08-01" }),
+        task("done", {
+          effortMinutes: 60,
+          actualStart: "2026-08-01",
+          actualEnd: "2026-08-01",
+        }),
         task("todo", { effortMinutes: 120 }),
       ]).completionPercentage,
     ).toBe(33.3);
@@ -184,6 +192,7 @@ describe("US-4.3 WBS summary aggregation", () => {
       summarizeWBS([
         task("complete-half", {
           effortMinutes: 750,
+          actualStart: "2026-08-01",
           actualEnd: "2026-08-01",
         }),
       ]).completionPercentage,
@@ -193,6 +202,7 @@ describe("US-4.3 WBS summary aggregation", () => {
   it("AC-18 removes reopened Effort only from the numerator", () => {
     const completed = task("reopened", {
       effortMinutes: 960,
+      actualStart: "2026-08-01",
       actualEnd: "2026-08-01",
     });
     const other = task("other", { effortMinutes: 480 });
@@ -204,7 +214,11 @@ describe("US-4.3 WBS summary aggregation", () => {
 
     const reopened = {
       ...completed,
-      executable: { ...completed.executable, actualEnd: undefined },
+      executable: {
+        ...completed.executable,
+        actualStart: undefined,
+        actualEnd: undefined,
+      },
     };
     expect(summarizeWBS([reopened, other])).toMatchObject({
       completedKnownEffortMinutes: 0,

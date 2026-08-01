@@ -28,6 +28,7 @@ function gateway(items: Project[] = [alpha]): ProjectsGateway {
     create: vi.fn().mockResolvedValue(alpha),
     update: vi.fn().mockResolvedValue(alpha),
     changeStatus: vi.fn().mockResolvedValue({ ...alpha, status: "locked" }),
+    bulkReopen: vi.fn().mockResolvedValue([alpha]),
     movePriority: vi.fn().mockResolvedValue(alpha),
     updateSettings: vi.fn().mockResolvedValue(alpha),
     delete: vi.fn().mockResolvedValue(undefined),

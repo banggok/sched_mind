@@ -53,10 +53,15 @@ func (repository *Repository) RecalculatePortfolio(ctx context.Context, requeste
 		if err := persistence.LockScheduleMutation(transaction); err != nil {
 			return fmt.Errorf("lock schedule mutation: %w", err)
 		}
+		closureRoots, err := expandRequestedClosureRoots(transaction, requestedProjectIDs)
+		if err != nil {
+			return err
+		}
 		state, err := repository.loadState(transaction)
 		if err != nil {
 			return err
 		}
+		state.restrictToRequestedClosure(closureRoots)
 		if len(state.projects) == 0 {
 			return nil
 		}
@@ -68,6 +73,7 @@ func (repository *Repository) RecalculatePortfolio(ctx context.Context, requeste
 		}
 
 		var execution *timelineResult
+		dependencyDirtyProjects := make(map[string]struct{})
 		converged := false
 		maximumIterations := len(state.tasks) + 1
 		for iteration := 0; iteration < maximumIterations; iteration++ {
@@ -75,9 +81,12 @@ func (repository *Repository) RecalculatePortfolio(ctx context.Context, requeste
 			if err != nil {
 				return err
 			}
-			changed, err := repository.reconcileAutomaticOwnership(transaction, state, execution)
+			changed, dirtyProjects, err := repository.reconcileAutomaticOwnership(transaction, state, execution)
 			if err != nil {
 				return err
+			}
+			for projectID := range dirtyProjects {
+				dependencyDirtyProjects[projectID] = struct{}{}
 			}
 			state.refreshDependenciesFromExecution(execution)
 			if err := state.validateEffectiveGraph(); err != nil {
@@ -96,11 +105,27 @@ func (repository *Repository) RecalculatePortfolio(ctx context.Context, requeste
 		if err != nil {
 			return err
 		}
-		if err := repository.persist(transaction, state, execution, commitment, requestedProjectIDs); err != nil {
+		if err := repository.persist(ctx, transaction, state, execution, commitment, dependencyDirtyProjects); err != nil {
 			return err
 		}
 		return nil
 	})
+}
+
+func (repository *Repository) RecalculateMemberSchedule(ctx context.Context, memberID string) error {
+	database := persistence.Transaction(ctx, repository.database)
+	var projectIDs []string
+	if err := database.Table("wbs_nodes AS node").
+		Joins("JOIN projects AS project ON project.id = node.project_id").
+		Where("node.assignee_id = ? AND project.status <> ?", memberID, "closed").
+		Distinct().Order("node.project_id ASC").
+		Pluck("node.project_id", &projectIDs).Error; err != nil {
+		return fmt.Errorf("find projects affected by member capacity: %w", err)
+	}
+	if len(projectIDs) == 0 {
+		return nil
+	}
+	return repository.RecalculatePortfolio(ctx, projectIDs)
 }
 
 type portfolioState struct {
@@ -198,10 +223,11 @@ func (repository *Repository) loadState(database *gorm.DB) (*portfolioState, err
 	existingAllocations := map[schedulingdomain.Timeline]map[string][]allocationModel{
 		schedulingdomain.Execution:  {},
 		schedulingdomain.Commitment: {},
+		schedulingdomain.Actual:     {},
 	}
 	for _, allocation := range allocationRows {
 		timeline := schedulingdomain.Timeline(allocation.Timeline)
-		if timeline != schedulingdomain.Execution && timeline != schedulingdomain.Commitment {
+		if timeline != schedulingdomain.Execution && timeline != schedulingdomain.Commitment && timeline != schedulingdomain.Actual {
 			return nil, fmt.Errorf("%w: unknown allocation timeline %q", schedulingdomain.ErrDataIntegrity, allocation.Timeline)
 		}
 		existingAllocations[timeline][allocation.TaskID] = append(existingAllocations[timeline][allocation.TaskID], allocation)
@@ -251,7 +277,7 @@ func (state *portfolioState) classifyDependencies() {
 		if blockingProject.Status == "closed" || blockedProject.Status == "closed" {
 			continue
 		}
-		blockedIsRecalculated := blockedProject.Status == "open" && blockedProject.AutomaticScheduling && blocked.ActualEnd == nil
+		blockedIsRecalculated := blockedProject.Status == "open" && blockedProject.AutomaticScheduling && (blocked.ActualStart == nil || blocked.ActualEnd == nil)
 		if dependency.ManualOwned {
 			state.manualBlockers[dependency.BlockedTaskID] = appendUnique(state.manualBlockers[dependency.BlockedTaskID], dependency.BlockingTaskID)
 		}
@@ -274,7 +300,7 @@ func (state *portfolioState) refreshDependenciesFromExecution(result *timelineRe
 func (state *portfolioState) classifyFixedTasks() {
 	for _, task := range state.tasks {
 		project := state.projects[task.ProjectID]
-		if task.ActualEnd != nil || project.Status == "locked" || !project.AutomaticScheduling {
+		if task.ActualStart != nil && task.ActualEnd != nil || project.Status == "locked" || !project.AutomaticScheduling {
 			state.fixed[schedulingdomain.Execution] = append(state.fixed[schedulingdomain.Execution], task)
 			state.fixed[schedulingdomain.Commitment] = append(state.fixed[schedulingdomain.Commitment], task)
 		}

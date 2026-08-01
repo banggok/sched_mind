@@ -25,15 +25,15 @@ type createAcceptanceProjectRecord struct {
 func (createAcceptanceProjectRecord) TableName() string { return "projects" }
 
 type createAcceptanceWBSRecord struct {
-	ID, ProjectID, ParentKey, Name, NameKey                                 string
-	ParentID                                                                *string
-	Position                                                                int
-	RoleID, AssigneeID                                                      *string
-	EffortMinutes                                                           *int
-	LagDays                                                                 int
-	ExecutionStart, ExecutionEnd, CommitmentStart, CommitmentEnd, ActualEnd *time.Time
-	ExecutionUnscheduledReason, CommitmentUnscheduledReason                 *string
-	CreatedAt, UpdatedAt                                                    time.Time
+	ID, ProjectID, ParentKey, Name, NameKey                                              string
+	ParentID                                                                             *string
+	Position                                                                             int
+	RoleID, AssigneeID                                                                   *string
+	EffortMinutes                                                                        *int
+	LagDays                                                                              int
+	ExecutionStart, ExecutionEnd, CommitmentStart, CommitmentEnd, ActualStart, ActualEnd *time.Time
+	ExecutionUnscheduledReason, CommitmentUnscheduledReason                              *string
+	CreatedAt, UpdatedAt                                                                 time.Time
 }
 
 func (createAcceptanceWBSRecord) TableName() string { return "wbs_nodes" }
@@ -92,6 +92,7 @@ func TestCreateTaskAcceptanceSkipsSchedulerWhenProjectAlreadyHasCompletedTask_US
 		ExecutionEnd:    &actualEnd,
 		CommitmentStart: &actualEnd,
 		CommitmentEnd:   &actualEnd,
+		ActualStart:     &actualEnd,
 		ActualEnd:       &actualEnd,
 		CreatedAt:       now,
 		UpdatedAt:       now,

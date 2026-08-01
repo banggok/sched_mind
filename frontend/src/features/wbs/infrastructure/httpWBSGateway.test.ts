@@ -299,6 +299,7 @@ function taskResponse(
       commitmentTimeline: { start: "2026-08-01", end: "2026-08-05" },
       executionUnscheduledReason: null,
       commitmentUnscheduledReason: null,
+      actualStart: actualEnd,
       actualEnd,
     },
     children: [],
@@ -323,7 +324,7 @@ describe("HTTP WBS gateway reopen command", () => {
 
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/projects/project/wbs/task%2Fwith%20slash/reopen",
-      { method: "POST" },
+      expect.objectContaining({ method: "POST" }),
     );
     const init = fetchMock.mock.calls[0]?.[1] as RequestInit | undefined;
     expect(init?.body).toBeUndefined();
@@ -339,6 +340,7 @@ describe("HTTP WBS gateway reopen command", () => {
         commitmentTimeline: { start: "2026-08-01", end: "2026-08-05" },
         executionUnscheduledReason: undefined,
         commitmentUnscheduledReason: undefined,
+        actualStart: undefined,
         actualEnd: undefined,
       },
     });
@@ -404,16 +406,27 @@ describe("HTTP WBS gateway reopen command", () => {
   });
 
   it("AC-4 AC-5 AC-14 requires explicit null and preserved Task identity", async () => {
-    const missingActualEnd = taskResponse(null);
-    const executableWithoutActualEnd: Partial<
-      typeof missingActualEnd.executable
-    > = { ...missingActualEnd.executable };
+    const reopened = taskResponse(null);
+    const executableWithoutActualStart: Partial<typeof reopened.executable> = {
+      ...reopened.executable,
+    };
+    delete executableWithoutActualStart.actualStart;
+    const executableWithoutActualEnd: Partial<typeof reopened.executable> = {
+      ...reopened.executable,
+    };
     delete executableWithoutActualEnd.actualEnd;
     const cases: Array<{ name: string; data: unknown }> = [
       {
+        name: "missing actualStart",
+        data: {
+          ...reopened,
+          executable: executableWithoutActualStart,
+        },
+      },
+      {
         name: "missing actualEnd",
         data: {
-          ...missingActualEnd,
+          ...reopened,
           executable: executableWithoutActualEnd,
         },
       },
@@ -485,6 +498,7 @@ describe("HTTP WBS gateway reopen command", () => {
     });
     const refreshed = await gateway.tree("project");
 
+    expect(refreshed[0]?.executable.actualStart).toBeUndefined();
     expect(refreshed[0]?.executable.actualEnd).toBeUndefined();
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
@@ -519,6 +533,7 @@ describe("HTTP WBS gateway reopen command", () => {
     });
     const refreshed = await gateway.tree("project");
 
+    expect(refreshed[0]?.executable.actualStart).toBeUndefined();
     expect(refreshed[0]?.executable.actualEnd).toBeUndefined();
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });

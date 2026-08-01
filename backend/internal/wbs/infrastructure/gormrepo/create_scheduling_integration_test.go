@@ -34,6 +34,7 @@ func TestCreateEmptyTaskSkipsSchedulerEvenWhenProjectHasCompletedTask_US6_AC29_U
 		ExecutionEnd:    &actualEnd,
 		CommitmentStart: &actualEnd,
 		CommitmentEnd:   &actualEnd,
+		ActualStart:     &actualEnd,
 		ActualEnd:       &actualEnd,
 		CreatedAt:       now,
 		UpdatedAt:       now,

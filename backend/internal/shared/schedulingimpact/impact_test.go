@@ -1,0 +1,90 @@
+package schedulingimpact
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+)
+
+func TestGuardRequiresVersionBoundConfirmationForOtherOpenProjects(t *testing.T) {
+	ctx := requestContext(t, "")
+	ctx = WithOperation(ctx, "owner", ModeOrdinary)
+	projects := []Project{
+		{ID: "owner", Name: "Owner", Version: 3},
+		{ID: "beta", Name: "Beta", Version: 7},
+		{ID: "alpha", Name: "Alpha", Version: 5},
+	}
+
+	err := Guard(ctx, "schedule-signature", nil, projects)
+	var impact Error
+	if !errors.As(err, &impact) {
+		t.Fatalf("expected impact error, got %v", err)
+	}
+	if impact.Kind != ConfirmationRequired || impact.Token == "" {
+		t.Fatalf("impact = %#v", impact)
+	}
+	if len(impact.OpenProjects) != 2 || impact.OpenProjects[0].ID != "alpha" || impact.OpenProjects[1].ID != "beta" {
+		t.Fatalf("open projects = %#v", impact.OpenProjects)
+	}
+
+	confirmed := WithOperation(requestContext(t, impact.Token), "owner", ModeOrdinary)
+	if err := Guard(confirmed, "schedule-signature", nil, projects); err != nil {
+		t.Fatalf("confirmed guard = %v", err)
+	}
+
+	stale := WithOperation(requestContext(t, impact.Token), "owner", ModeOrdinary)
+	err = Guard(stale, "changed-signature", nil, projects)
+	if !errors.As(err, &impact) || impact.Kind != StaleImpact {
+		t.Fatalf("stale guard = %#v, %v", impact, err)
+	}
+}
+
+func TestGuardBlocksOrdinaryLockedImpactButAllowsActualDateConfirmation(t *testing.T) {
+	locked := []Project{{ID: "locked", Name: "Locked", Status: "locked", Version: 11}}
+
+	ordinary := WithOperation(requestContext(t, ""), "owner", ModeOrdinary)
+	err := Guard(ordinary, "signature", locked, nil)
+	var impact Error
+	if !errors.As(err, &impact) || impact.Kind != LockedProjectImpact {
+		t.Fatalf("ordinary guard = %#v, %v", impact, err)
+	}
+
+	actual := WithOperation(requestContext(t, ""), "owner", ModeActualDate)
+	err = Guard(actual, "signature", locked, nil)
+	if !errors.As(err, &impact) || impact.Kind != ConfirmationRequired {
+		t.Fatalf("actual-date preview = %#v, %v", impact, err)
+	}
+	confirmed := WithOperation(requestContext(t, impact.Token), "owner", ModeActualDate)
+	if err := Guard(confirmed, "signature", locked, nil); err != nil {
+		t.Fatalf("actual-date confirmation = %v", err)
+	}
+}
+
+func TestGuardSkipsBulkReopenAndOwnerOnlyImpact(t *testing.T) {
+	owner := []Project{{ID: "owner", Name: "Owner", Version: 1}}
+	if err := Guard(WithOperation(context.Background(), "owner", ModeBulkReopen), "signature", owner, owner); err != nil {
+		t.Fatalf("bulk reopen guard = %v", err)
+	}
+	if err := Guard(WithOperation(context.Background(), "owner", ModeOrdinary), "signature", nil, owner); err != nil {
+		t.Fatalf("owner-only guard = %v", err)
+	}
+}
+
+func requestContext(t *testing.T, token string) context.Context {
+	t.Helper()
+	var captured context.Context
+	handler := CaptureToken(http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
+		captured = request.Context()
+	}))
+	request := httptest.NewRequest(http.MethodPost, "/", nil)
+	if token != "" {
+		request.Header.Set(ConfirmationTokenHeader, token)
+	}
+	handler.ServeHTTP(httptest.NewRecorder(), request)
+	if captured == nil {
+		t.Fatal("request context was not captured")
+	}
+	return captured
+}

@@ -216,7 +216,9 @@ describe("WBSDetailDialog option loading", () => {
       }),
     ).toBeTruthy();
     expect(
-      screen.getByRole("button", { name: "Actual End: Select date" }),
+      screen.getByRole("button", {
+        name: "Actual Date: Select start and end date",
+      }),
     ).toBeTruthy();
     fireEvent.submit(screen.getByLabelText("Name").closest("form")!);
     await waitFor(() =>

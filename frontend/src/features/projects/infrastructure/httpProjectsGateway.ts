@@ -1,3 +1,4 @@
+import { schedulingImpactFetch } from "../../../shared/infrastructure/schedulingImpactFetch";
 import { RequestCache } from "../../../shared/infrastructure/RequestCache";
 import {
   advanceScheduleProjectionVersion,
@@ -35,10 +36,19 @@ interface ListDTO {
   pageSize: number;
   total: number;
 }
+interface ReopenImpactProjectDTO {
+  id: string;
+  name: string;
+  version: number;
+}
 interface ErrorDTO {
   code: string;
   message: string;
   field?: string;
+  rootProjectId?: string;
+  lockedProjects?: ReopenImpactProjectDTO[];
+  openProjects?: ReopenImpactProjectDTO[];
+  token?: string;
 }
 
 export function createHTTPProjectsGateway(apiBaseURL: string): ProjectsGateway {
@@ -60,7 +70,7 @@ export function createHTTPProjectsGateway(apiBaseURL: string): ProjectsGateway {
     method: string,
     body?: object,
   ): Promise<Project> => {
-    const response = await fetch(`${apiBaseURL}${path}`, {
+    const response = await schedulingImpactFetch(`${apiBaseURL}${path}`, {
       method,
       headers: body ? { "Content-Type": "application/json" } : undefined,
       body: body ? JSON.stringify(body) : undefined,
@@ -83,7 +93,7 @@ export function createHTTPProjectsGateway(apiBaseURL: string): ProjectsGateway {
       lists.set(key, cache);
       return cache.run(async () => {
         const payload = await read<ListDTO>(
-          await fetch(`${apiBaseURL}/projects?${parameters}`),
+          await schedulingImpactFetch(`${apiBaseURL}/projects?${parameters}`),
         );
         rejectStaleProjection(requestVersion);
         return {
@@ -98,7 +108,9 @@ export function createHTTPProjectsGateway(apiBaseURL: string): ProjectsGateway {
       syncProjectionVersion();
       const requestVersion = currentScheduleProjectionVersion();
       const payload = await read<ItemDTO>(
-        await fetch(`${apiBaseURL}/projects/${encodeURIComponent(id)}`),
+        await schedulingImpactFetch(
+          `${apiBaseURL}/projects/${encodeURIComponent(id)}`,
+        ),
       );
       rejectStaleProjection(requestVersion);
       return mapProject(payload.data);
@@ -124,6 +136,19 @@ export function createHTTPProjectsGateway(apiBaseURL: string): ProjectsGateway {
         status,
       });
     },
+    async bulkReopen(rootProjectId, token) {
+      const response = await schedulingImpactFetch(
+        `${apiBaseURL}/projects/bulk-reopen`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ rootProjectId, token }),
+        },
+      );
+      const payload = await read<{ data: ProjectDTO[] }>(response);
+      invalidate(true);
+      return payload.data.map(mapProject);
+    },
     movePriority(id, direction) {
       return mutation(`/projects/${encodeURIComponent(id)}/priority`, "POST", {
         direction,
@@ -142,7 +167,7 @@ export function createHTTPProjectsGateway(apiBaseURL: string): ProjectsGateway {
       });
     },
     async delete(id) {
-      const response = await fetch(
+      const response = await schedulingImpactFetch(
         `${apiBaseURL}/projects/${encodeURIComponent(id)}`,
         { method: "DELETE" },
       );
@@ -164,10 +189,20 @@ async function read<T>(response: Response): Promise<T> {
 async function throwError(response: Response): Promise<never> {
   try {
     const payload = (await response.json()) as ErrorDTO;
+    const bulkReopenPlan =
+      payload.rootProjectId && payload.token
+        ? {
+            rootProjectId: payload.rootProjectId,
+            lockedProjects: payload.lockedProjects ?? [],
+            openProjects: payload.openProjects ?? [],
+            token: payload.token,
+          }
+        : undefined;
     throw new ProjectOperationError(
       payload.code,
       payload.message,
       payload.field,
+      bulkReopenPlan,
     );
   } catch (error: unknown) {
     if (error instanceof ProjectOperationError) throw error;

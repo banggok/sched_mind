@@ -1,3 +1,5 @@
+import { schedulingImpactFetch } from "../../../shared/infrastructure/schedulingImpactFetch";
+import { advanceScheduleProjectionVersion } from "../../../shared/infrastructure/scheduleProjectionClock";
 import type { TeamMembersGateway } from "../application/teamMembersGateway";
 import type { TeamMember } from "../domain/teamMember";
 import { RequestCache } from "../../../shared/infrastructure/RequestCache";
@@ -71,7 +73,7 @@ export function createHTTPTeamMembersGateway(
       const listRequest = listRequests.get(key) ?? new RequestCache();
       listRequests.set(key, listRequest);
       return listRequest.run(async () => {
-        const response = await fetch(
+        const response = await schedulingImpactFetch(
           `${apiBaseURL}/team-members?${parameters}`,
           {},
         );
@@ -85,11 +87,14 @@ export function createHTTPTeamMembersGateway(
       }, signal);
     },
     async create(input) {
-      const response = await fetch(`${apiBaseURL}/team-members`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(input),
-      });
+      const response = await schedulingImpactFetch(
+        `${apiBaseURL}/team-members`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(input),
+        },
+      );
       const member = mapTeamMember(
         (await readResponse<ItemDTO>(response)).data,
       );
@@ -97,7 +102,7 @@ export function createHTTPTeamMembersGateway(
       return member;
     },
     async update(id, input) {
-      const response = await fetch(
+      const response = await schedulingImpactFetch(
         `${apiBaseURL}/team-members/${encodeURIComponent(id)}`,
         {
           method: "PUT",
@@ -109,10 +114,11 @@ export function createHTTPTeamMembersGateway(
         (await readResponse<ItemDTO>(response)).data,
       );
       invalidateLists();
+      advanceScheduleProjectionVersion();
       return member;
     },
     async delete(id) {
-      const response = await fetch(
+      const response = await schedulingImpactFetch(
         `${apiBaseURL}/team-members/${encodeURIComponent(id)}`,
         { method: "DELETE" },
       );

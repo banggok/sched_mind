@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	schedulingdomain "github.com/banggok/sched_mind/backend/internal/scheduling/domain"
 	sharedpersistence "github.com/banggok/sched_mind/backend/internal/shared/persistence"
 	"github.com/banggok/sched_mind/backend/internal/wbs/application"
 	"github.com/banggok/sched_mind/backend/internal/wbs/domain"
@@ -55,7 +56,7 @@ func (r *Repository) Create(ctx context.Context, id, p string, parent *string, n
 				return domain.ErrParentNotFound
 			}
 			parentModel = &value
-			if value.ActualEnd != nil {
+			if value.ActualStart != nil && value.ActualEnd != nil {
 				return domain.ErrCompletedReadOnly
 			}
 			hasChildren, err := childCount(tx, p, value.ID)
@@ -150,7 +151,7 @@ func (r *Repository) UpdateExecutable(ctx context.Context, p, id string, input a
 			return err
 		}
 		n := toDomain(m, count > 0)
-		fields := domain.ExecutableFields{RoleID: input.RoleID, AssigneeID: input.AssigneeID, EffortMinutes: input.EffortMinutes, LagDays: input.LagDays, ExecutionTimeline: input.Execution, CommitmentTimeline: input.Commitment, ActualEnd: n.Executable.ActualEnd}
+		fields := domain.ExecutableFields{RoleID: input.RoleID, AssigneeID: input.AssigneeID, EffortMinutes: input.EffortMinutes, LagDays: input.LagDays, ExecutionTimeline: input.Execution, CommitmentTimeline: input.Commitment, ActualStart: n.Executable.ActualStart, ActualEnd: n.Executable.ActualEnd}
 		if input.Name != nil {
 			if err := n.Rename(*input.Name, now); err != nil {
 				return err
@@ -203,7 +204,7 @@ func (r *Repository) PreviewExecutableSchedule(ctx context.Context, p, id string
 		if err != nil {
 			return err
 		}
-		if m.ActualEnd != nil {
+		if m.ActualStart != nil && m.ActualEnd != nil {
 			return domain.ErrSchedulePreviewUnavailable
 		}
 		count, err := childCount(tx, p, id)
@@ -248,23 +249,65 @@ func (r *Repository) PreviewExecutableSchedule(ctx context.Context, p, id string
 	return nil, err
 }
 
-func (r *Repository) Complete(ctx context.Context, p, id string, actual, now time.Time, forecast func(context.Context, string) error) (*domain.Node, error) {
+func (r *Repository) Complete(ctx context.Context, p, id string, actualStart, actualEnd, now time.Time, invalidate func(context.Context, []string) error) (*domain.Node, error) {
+	ctx, release := sharedpersistence.SerializeScheduleMutation(ctx)
+	defer release()
 	var out *domain.Node
-	err := r.tx(ctx, p, func(txContext context.Context, tx *gorm.DB, _ projectModel) error {
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := sharedpersistence.LockScheduleMutation(tx); err != nil {
+			return fmt.Errorf("lock schedule mutation: %w", err)
+		}
+		project, err := loadProject(tx, p, true)
+		if err != nil {
+			return err
+		}
+		if project.Status == "closed" {
+			return domain.ErrProjectClosedReadOnly
+		}
 		m, err := findNode(tx, p, id, true)
 		if err != nil {
 			return err
 		}
-		count, _ := childCount(tx, p, id)
+		count, err := childCount(tx, p, id)
+		if err != nil {
+			return err
+		}
 		n := toDomain(m, count > 0)
-		if err := n.Complete(actual, now); err != nil {
+		if err := ensureCompletedPredecessors(tx, id); err != nil {
 			return err
 		}
+		baselineExecutionStart := m.ExecutionStart
+		if err := n.Complete(actualStart, actualEnd, now); err != nil {
+			return err
+		}
+		m.ActualStart = n.Executable.ActualStart
 		m.ActualEnd = n.Executable.ActualEnd
-		if err := tx.Model(&nodeModel{}).Where("id = ?", id).Updates(map[string]any{"actual_end": m.ActualEnd, "updated_at": now}).Error; err != nil {
+		if project.Status == "open" {
+			m.ExecutionStart = earlierDate(m.ExecutionStart, n.Executable.ActualStart)
+			m.ExecutionEnd = n.Executable.ActualEnd
+			m.CommitmentStart = earlierDate(m.CommitmentStart, n.Executable.ActualStart)
+			m.CommitmentEnd = n.Executable.ActualEnd
+			m.ExecutionUnscheduledReason = nil
+			m.CommitmentUnscheduledReason = nil
+			n.Executable.ExecutionTimeline = domain.Timeline{Start: m.ExecutionStart, End: m.ExecutionEnd}
+			n.Executable.CommitmentTimeline = domain.Timeline{Start: m.CommitmentStart, End: m.CommitmentEnd}
+			n.Executable.ExecutionUnscheduledReason = nil
+			n.Executable.CommitmentUnscheduledReason = nil
+		}
+		updates := executableUpdates(m, now)
+		result := tx.Model(&nodeModel{}).
+			Where("id = ? AND project_id = ? AND actual_start IS NULL AND actual_end IS NULL", id, p).
+			Updates(updates)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return domain.ErrCompletedReadOnly
+		}
+		if _, err := replaceActualAllocations(tx, m, baselineExecutionStart, actualStart, actualEnd); err != nil {
 			return err
 		}
-		if err := forecast(txContext, p); err != nil {
+		if err := invalidate(sharedpersistence.WithTransaction(ctx, tx), []string{p}); err != nil {
 			return err
 		}
 		out = &n
@@ -273,7 +316,7 @@ func (r *Repository) Complete(ctx context.Context, p, id string, actual, now tim
 	return out, err
 }
 
-func (r *Repository) Reopen(ctx context.Context, p, id string, now time.Time, forecast func(context.Context, string) error) (*domain.Node, error) {
+func (r *Repository) Reopen(ctx context.Context, p, id string, now time.Time, invalidate func(context.Context, []string) error) (*domain.Node, error) {
 	observed, err := findNode(r.db.WithContext(ctx), p, id, false)
 	if err != nil {
 		return nil, err
@@ -312,6 +355,9 @@ func (r *Repository) Reopen(ctx context.Context, p, id string, now time.Time, fo
 		if project.Status == "closed" {
 			return domain.ErrProjectClosedReadOnly
 		}
+		if project.Status == "locked" {
+			return domain.ErrProjectLockedReadOnly
+		}
 		n := toDomain(m, count > 0)
 		if err := n.Reopen(now); err != nil {
 			if errors.Is(err, domain.ErrTaskNotCompleted) {
@@ -320,8 +366,8 @@ func (r *Repository) Reopen(ctx context.Context, p, id string, now time.Time, fo
 			return err
 		}
 		result := tx.Model(&nodeModel{}).
-			Where("id = ? AND project_id = ? AND actual_end IS NOT NULL", id, p).
-			Updates(map[string]any{"actual_end": nil, "updated_at": now})
+			Where("id = ? AND project_id = ? AND actual_start IS NOT NULL AND actual_end IS NOT NULL", id, p).
+			Updates(map[string]any{"actual_start": nil, "actual_end": nil, "updated_at": now})
 		if result.Error != nil {
 			if isReopenConcurrencyError(tx, result.Error) {
 				return fmt.Errorf("%w: %v", domain.ErrTaskReopenConflict, result.Error)
@@ -331,7 +377,10 @@ func (r *Repository) Reopen(ctx context.Context, p, id string, now time.Time, fo
 		if result.RowsAffected != 1 {
 			return domain.ErrTaskReopenConflict
 		}
-		if err := forecast(sharedpersistence.WithTransaction(ctx, tx), p); err != nil {
+		if err := tx.Where("task_id = ? AND timeline = ?", id, "actual").Delete(&actualAllocationModel{}).Error; err != nil {
+			return err
+		}
+		if err := invalidate(sharedpersistence.WithTransaction(ctx, tx), []string{p}); err != nil {
 			return err
 		}
 		out = &n
@@ -447,7 +496,7 @@ func (r *Repository) Delete(ctx context.Context, p, id string, now time.Time, sc
 		if err != nil {
 			return err
 		}
-		if m.ActualEnd != nil {
+		if m.ActualStart != nil && m.ActualEnd != nil {
 			return domain.ErrCompletedReadOnly
 		}
 		count, err := childCount(tx, p, id)
@@ -494,6 +543,9 @@ func (r *Repository) tx(ctx context.Context, p string, fn func(context.Context, 
 		if project.Status == "closed" {
 			return domain.ErrProjectClosedReadOnly
 		}
+		if project.Status == "locked" {
+			return domain.ErrProjectLockedReadOnly
+		}
 		return fn(sharedpersistence.WithTransaction(ctx, tx), tx, project)
 	})
 }
@@ -531,6 +583,34 @@ func dependencyCount(db *gorm.DB, taskID string) (int64, error) {
 	err := db.Model(&dependencyLinkModel{}).Where("blocking_task_id = ? OR blocked_task_id = ?", taskID, taskID).Count(&count).Error
 	return count, err
 }
+
+func ensureCompletedPredecessors(db *gorm.DB, taskID string) error {
+	var count int64
+	err := db.Table("task_dependencies AS dependency").
+		Joins("JOIN wbs_nodes AS predecessor ON predecessor.id = dependency.blocking_task_id").
+		Where("dependency.blocked_task_id = ?", taskID).
+		Where("predecessor.actual_start IS NULL OR predecessor.actual_end IS NULL").
+		Count(&count).Error
+	if err != nil {
+		return fmt.Errorf("validate completed predecessors: %w", err)
+	}
+	if count > 0 {
+		return domain.ErrIncompletePredecessor
+	}
+	return nil
+}
+
+func earlierDate(existing, actual *time.Time) *time.Time {
+	if actual == nil {
+		return existing
+	}
+	if existing == nil || actual.Before(*existing) {
+		value := schedulingdomain.DateOnly(*actual)
+		return &value
+	}
+	value := schedulingdomain.DateOnly(*existing)
+	return &value
+}
 func nextPosition(db *gorm.DB, p, key string) (int, error) {
 	var max int
 	if err := db.Model(&nodeModel{}).Where("project_id = ? AND parent_key = ?", p, key).Select("COALESCE(MAX(position),0)").Scan(&max).Error; err != nil {
@@ -545,7 +625,7 @@ func parentKey(p *string) string {
 	return *p
 }
 func hasData(m nodeModel) bool {
-	return m.RoleID != nil || m.AssigneeID != nil || m.EffortMinutes != nil || m.ExecutionStart != nil || m.ExecutionEnd != nil || m.CommitmentStart != nil || m.CommitmentEnd != nil || m.ExecutionUnscheduledReason != nil || m.CommitmentUnscheduledReason != nil || m.ActualEnd != nil
+	return m.RoleID != nil || m.AssigneeID != nil || m.EffortMinutes != nil || m.ExecutionStart != nil || m.ExecutionEnd != nil || m.CommitmentStart != nil || m.CommitmentEnd != nil || m.ExecutionUnscheduledReason != nil || m.CommitmentUnscheduledReason != nil || m.ActualStart != nil || m.ActualEnd != nil
 }
 func clearExecutable(m *nodeModel) {
 	m.RoleID = nil
@@ -558,6 +638,7 @@ func clearExecutable(m *nodeModel) {
 	m.CommitmentEnd = nil
 	m.ExecutionUnscheduledReason = nil
 	m.CommitmentUnscheduledReason = nil
+	m.ActualStart = nil
 	m.ActualEnd = nil
 }
 func copyExecutable(dst *nodeModel, src nodeModel) {
@@ -571,10 +652,11 @@ func copyExecutable(dst *nodeModel, src nodeModel) {
 	dst.CommitmentEnd = src.CommitmentEnd
 	dst.ExecutionUnscheduledReason = src.ExecutionUnscheduledReason
 	dst.CommitmentUnscheduledReason = src.CommitmentUnscheduledReason
+	dst.ActualStart = src.ActualStart
 	dst.ActualEnd = src.ActualEnd
 }
 func executableUpdates(m nodeModel, now time.Time) map[string]any {
-	return map[string]any{"role_id": m.RoleID, "assignee_id": m.AssigneeID, "effort_minutes": m.EffortMinutes, "lag_days": m.LagDays, "execution_start": m.ExecutionStart, "execution_end": m.ExecutionEnd, "commitment_start": m.CommitmentStart, "commitment_end": m.CommitmentEnd, "execution_unscheduled_reason": m.ExecutionUnscheduledReason, "commitment_unscheduled_reason": m.CommitmentUnscheduledReason, "actual_end": m.ActualEnd, "updated_at": now}
+	return map[string]any{"role_id": m.RoleID, "assignee_id": m.AssigneeID, "effort_minutes": m.EffortMinutes, "lag_days": m.LagDays, "execution_start": m.ExecutionStart, "execution_end": m.ExecutionEnd, "commitment_start": m.CommitmentStart, "commitment_end": m.CommitmentEnd, "execution_unscheduled_reason": m.ExecutionUnscheduledReason, "commitment_unscheduled_reason": m.CommitmentUnscheduledReason, "actual_start": m.ActualStart, "actual_end": m.ActualEnd, "updated_at": now}
 }
 func (r *Repository) convertDestination(tx *gorm.DB, p, conversionID string, dest *nodeModel, now time.Time) error {
 	name := dest.Name
@@ -758,10 +840,11 @@ func applyFields(m *nodeModel, f domain.ExecutableFields) {
 	m.CommitmentEnd = f.CommitmentTimeline.End
 	m.ExecutionUnscheduledReason = f.ExecutionUnscheduledReason
 	m.CommitmentUnscheduledReason = f.CommitmentUnscheduledReason
+	m.ActualStart = f.ActualStart
 	m.ActualEnd = f.ActualEnd
 }
 func toDomain(m nodeModel, children bool) domain.Node {
-	return domain.Node{ID: m.ID, ProjectID: m.ProjectID, ParentID: m.ParentID, Name: m.Name, Position: m.Position, HasChildren: children, Executable: domain.ExecutableFields{RoleID: m.RoleID, AssigneeID: m.AssigneeID, EffortMinutes: m.EffortMinutes, LagDays: m.LagDays, ExecutionTimeline: domain.Timeline{Start: m.ExecutionStart, End: m.ExecutionEnd}, CommitmentTimeline: domain.Timeline{Start: m.CommitmentStart, End: m.CommitmentEnd}, ExecutionUnscheduledReason: m.ExecutionUnscheduledReason, CommitmentUnscheduledReason: m.CommitmentUnscheduledReason, ActualEnd: m.ActualEnd}, Children: []domain.Node{}, CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt}
+	return domain.Node{ID: m.ID, ProjectID: m.ProjectID, ParentID: m.ParentID, Name: m.Name, Position: m.Position, HasChildren: children, Executable: domain.ExecutableFields{RoleID: m.RoleID, AssigneeID: m.AssigneeID, EffortMinutes: m.EffortMinutes, LagDays: m.LagDays, ExecutionTimeline: domain.Timeline{Start: m.ExecutionStart, End: m.ExecutionEnd}, CommitmentTimeline: domain.Timeline{Start: m.CommitmentStart, End: m.CommitmentEnd}, ExecutionUnscheduledReason: m.ExecutionUnscheduledReason, CommitmentUnscheduledReason: m.CommitmentUnscheduledReason, ActualStart: m.ActualStart, ActualEnd: m.ActualEnd}, Children: []domain.Node{}, CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt}
 }
 func buildTree(models []nodeModel) []domain.Node {
 	children := map[string][]nodeModel{}

@@ -3,12 +3,14 @@ package httpapi
 import (
 	capacityoverridehttp "github.com/banggok/sched_mind/backend/internal/capacityoverrides/transport/http"
 	dependencyhttp "github.com/banggok/sched_mind/backend/internal/dependencies/transport/http"
+	portfoliohttp "github.com/banggok/sched_mind/backend/internal/portfolio/transport/http"
 	projecthttp "github.com/banggok/sched_mind/backend/internal/projects/transport/http"
 	publicholidayhttp "github.com/banggok/sched_mind/backend/internal/publicholidays/transport/http"
 	wbshttp "github.com/banggok/sched_mind/backend/internal/wbs/transport/http"
 	"net/http"
 
 	rolehttp "github.com/banggok/sched_mind/backend/internal/roles/transport/http"
+	"github.com/banggok/sched_mind/backend/internal/shared/schedulingimpact"
 	systemhealthhttp "github.com/banggok/sched_mind/backend/internal/systemhealth/transport/http"
 	teammemberhttp "github.com/banggok/sched_mind/backend/internal/teammembers/transport/http"
 )
@@ -21,6 +23,7 @@ func NewRouter(
 	projectService projecthttp.Service,
 	wbsService wbshttp.Service,
 	dependencyService dependencyhttp.Service,
+	portfolioService portfoliohttp.Service,
 ) http.Handler {
 	mux := http.NewServeMux()
 	systemhealthhttp.Register(mux)
@@ -31,6 +34,7 @@ func NewRouter(
 	projecthttp.New(projectService).Register(mux)
 	wbshttp.New(wbsService).Register(mux)
 	dependencyhttp.New(dependencyService).Register(mux)
+	portfoliohttp.New(portfolioService).Register(mux)
 
-	return mux
+	return schedulingimpact.CaptureToken(mux)
 }

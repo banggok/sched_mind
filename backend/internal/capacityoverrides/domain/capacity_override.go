@@ -100,12 +100,25 @@ func IsEffectiveOn(startDate, endDate, effectiveDate time.Time) bool {
 	return !startDate.After(effectiveDate) && !endDate.Before(effectiveDate)
 }
 
-func ResolveDailyCapacity(publicHoliday bool, override *Capacity, baseHours float64) float64 {
+func MinimumCapacity(overrides []Capacity) *Capacity {
+	if len(overrides) == 0 {
+		return nil
+	}
+	minimum := overrides[0]
+	for _, candidate := range overrides[1:] {
+		if candidate.halfHours < minimum.halfHours {
+			minimum = candidate
+		}
+	}
+	return &minimum
+}
+
+func ResolveDailyCapacity(publicHoliday bool, overrides []Capacity, baseHours float64) float64 {
 	if publicHoliday {
 		return 0
 	}
-	if override != nil {
-		return override.Hours()
+	if minimum := MinimumCapacity(overrides); minimum != nil {
+		return minimum.Hours()
 	}
 	return baseHours
 }

@@ -55,7 +55,7 @@ func reopenTestDB(t *testing.T) (*Repository, *gorm.DB) {
 		t.Fatal(err)
 	}
 	sqlDB.SetMaxOpenConns(10)
-	if err := db.AutoMigrate(&reopenProjectRecord{}, &nodeModel{}, &reopenDependencyRecord{}); err != nil {
+	if err := db.AutoMigrate(&reopenProjectRecord{}, &nodeModel{}, &reopenDependencyRecord{}, &actualAllocationModel{}); err != nil {
 		t.Fatal(err)
 	}
 	return New(db), db
@@ -73,13 +73,14 @@ func seedReopenGraph(t *testing.T, db *gorm.DB, status string) nodeModel {
 	executionEnd := time.Date(2026, 8, 3, 0, 0, 0, 0, time.UTC)
 	commitmentStart := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
 	commitmentEnd := time.Date(2026, 8, 5, 0, 0, 0, 0, time.UTC)
+	actualStart := time.Date(2026, 8, 2, 0, 0, 0, 0, time.UTC)
 	actualEnd := time.Date(2026, 8, 4, 0, 0, 0, 0, time.UTC)
 	created := time.Date(2026, 7, 1, 8, 0, 0, 0, time.UTC)
 	updated := time.Date(2026, 7, 2, 8, 0, 0, 0, time.UTC)
 	nodes := []nodeModel{
 		{ID: "group", ProjectID: "project", ParentKey: "", Name: "Group", NameKey: "group", Position: 1, CreatedAt: created, UpdatedAt: updated},
 		{ID: "incoming", ProjectID: "project", ParentKey: "group", ParentID: &parent, Name: "Incoming", NameKey: "incoming", Position: 1, CreatedAt: created, UpdatedAt: updated},
-		{ID: "task", ProjectID: "project", ParentKey: "group", ParentID: &parent, Name: "Build API", NameKey: "build api", Position: 2, RoleID: &role, AssigneeID: &assignee, EffortMinutes: &effort, ExecutionStart: &executionStart, ExecutionEnd: &executionEnd, CommitmentStart: &commitmentStart, CommitmentEnd: &commitmentEnd, ActualEnd: &actualEnd, CreatedAt: created, UpdatedAt: updated},
+		{ID: "task", ProjectID: "project", ParentKey: "group", ParentID: &parent, Name: "Build API", NameKey: "build api", Position: 2, RoleID: &role, AssigneeID: &assignee, EffortMinutes: &effort, ExecutionStart: &executionStart, ExecutionEnd: &executionEnd, CommitmentStart: &commitmentStart, CommitmentEnd: &commitmentEnd, ActualStart: &actualStart, ActualEnd: &actualEnd, CreatedAt: created, UpdatedAt: updated},
 		{ID: "outgoing", ProjectID: "project", ParentKey: "group", ParentID: &parent, Name: "Outgoing", NameKey: "outgoing", Position: 3, CreatedAt: created, UpdatedAt: updated},
 		{ID: "candidate-source", ProjectID: "project", ParentKey: "group", ParentID: &parent, Name: "Candidate Source", NameKey: "candidate source", Position: 4, CreatedAt: created, UpdatedAt: updated},
 	}
@@ -116,6 +117,7 @@ func loadLinks(t *testing.T, db *gorm.DB) []dependencyLinkModel {
 }
 
 func withoutReopenManagedFields(value nodeModel) nodeModel {
+	value.ActualStart = nil
 	value.ActualEnd = nil
 	value.UpdatedAt = time.Time{}
 	return value
@@ -131,10 +133,10 @@ func TestRepositoryReopenOpenProjectIsAtomicAndPreservesTaskAndDependencies_AC1_
 	beforeLinks := loadLinks(t, db)
 	now := time.Date(2026, 7, 29, 8, 0, 0, 0, time.UTC)
 	forecastCalls := 0
-	confirmed, err := repo.Reopen(context.Background(), "project", "task", now, func(_ context.Context, projectID string) error {
+	confirmed, err := repo.Reopen(context.Background(), "project", "task", now, func(_ context.Context, projectIDs []string) error {
 		forecastCalls++
-		if projectID != "project" {
-			t.Fatalf("forecast project=%q", projectID)
+		if len(projectIDs) != 1 || projectIDs[0] != "project" {
+			t.Fatalf("invalidation projects=%#v", projectIDs)
 		}
 		return nil
 	})
@@ -142,8 +144,8 @@ func TestRepositoryReopenOpenProjectIsAtomicAndPreservesTaskAndDependencies_AC1_
 		t.Fatal(err)
 	}
 	after := loadNodeModel(t, db, "task")
-	if after.ActualEnd != nil || confirmed == nil || confirmed.Executable.ActualEnd != nil {
-		t.Fatalf("actual end persisted=%v confirmed=%#v", after.ActualEnd, confirmed)
+	if after.ActualStart != nil || after.ActualEnd != nil || confirmed == nil || confirmed.Executable.ActualStart != nil || confirmed.Executable.ActualEnd != nil {
+		t.Fatalf("actual dates persisted=(%v,%v) confirmed=%#v", after.ActualStart, after.ActualEnd, confirmed)
 	}
 	if forecastCalls != 1 {
 		t.Fatalf("forecast calls=%d", forecastCalls)
@@ -174,7 +176,7 @@ func TestRepositoryReopenAutomaticSchedulingOffPreservesManualTimelinesAndCallsF
 		t.Fatal(err)
 	}
 	forecastCalls := 0
-	if _, err := repo.Reopen(context.Background(), "project", "task", time.Now().UTC(), func(context.Context, string) error {
+	if _, err := repo.Reopen(context.Background(), "project", "task", time.Now().UTC(), func(context.Context, []string) error {
 		forecastCalls++
 		return nil
 	}); err != nil {
@@ -189,22 +191,28 @@ func TestRepositoryReopenAutomaticSchedulingOffPreservesManualTimelinesAndCallsF
 	}
 }
 
-func TestRepositoryReopenLockedPreservesStatusAndBaselines_AC8(t *testing.T) {
+func TestRepositoryReopenLockedIsRejectedAndPreservesStatusBaselinesAndActualDates_US62_AC16(t *testing.T) {
 	repo, db := reopenTestDB(t)
-	seedReopenGraph(t, db, "locked")
-	var before reopenProjectRecord
-	if err := db.First(&before, "id = ?", "project").Error; err != nil {
+	beforeTask := seedReopenGraph(t, db, "locked")
+	var beforeProject reopenProjectRecord
+	if err := db.First(&beforeProject, "id = ?", "project").Error; err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.Reopen(context.Background(), "project", "task", time.Now().UTC(), func(context.Context, string) error { return nil }); err != nil {
+	calls := 0
+	_, err := repo.Reopen(context.Background(), "project", "task", time.Now().UTC(), func(context.Context, []string) error {
+		calls++
+		return nil
+	})
+	if !errors.Is(err, domain.ErrProjectLockedReadOnly) || calls != 0 {
+		t.Fatalf("err=%v invalidation calls=%d", err, calls)
+	}
+	var afterProject reopenProjectRecord
+	if err := db.First(&afterProject, "id = ?", "project").Error; err != nil {
 		t.Fatal(err)
 	}
-	var after reopenProjectRecord
-	if err := db.First(&after, "id = ?", "project").Error; err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(before, after) || after.Status != "locked" {
-		t.Fatalf("locked project changed\nbefore=%#v\nafter=%#v", before, after)
+	afterTask := loadNodeModel(t, db, "task")
+	if !reflect.DeepEqual(beforeProject, afterProject) || !reflect.DeepEqual(beforeTask, afterTask) {
+		t.Fatalf("locked rejection changed state\nproject before=%#v after=%#v\ntask before=%#v after=%#v", beforeProject, afterProject, beforeTask, afterTask)
 	}
 }
 
@@ -234,7 +242,7 @@ func TestRepositoryReopenRejectsClosedGroupingAndUnfinishedWithoutForecast_AC2_A
 			beforeTarget := loadNodeModel(t, db, tc.id)
 			beforeLinks := loadLinks(t, db)
 			calls := 0
-			_, err := repo.Reopen(context.Background(), "project", tc.id, time.Now().UTC(), func(context.Context, string) error { calls++; return nil })
+			_, err := repo.Reopen(context.Background(), "project", tc.id, time.Now().UTC(), func(context.Context, []string) error { calls++; return nil })
 			if !errors.Is(err, tc.want) || calls != 0 {
 				t.Fatalf("err=%v calls=%d", err, calls)
 			}
@@ -275,7 +283,7 @@ func TestRepositoryReopenRefreshesDependencyProjectionAndCurrentCompletionRules_
 		t.Fatalf("completed dependency history error=%v", err)
 	}
 
-	if _, err := repo.Reopen(ctx, "project", "task", time.Now().UTC(), func(context.Context, string) error { return nil }); err != nil {
+	if _, err := repo.Reopen(ctx, "project", "task", time.Now().UTC(), func(context.Context, []string) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
 
@@ -311,7 +319,7 @@ func TestRepositoryReopenForecastFailureRollsBackPersistedState_AC11(t *testing.
 	repo, db := reopenTestDB(t)
 	before := seedReopenGraph(t, db, "open")
 	forecastFailure := errors.New("forecast coordination failed")
-	_, err := repo.Reopen(context.Background(), "project", "task", time.Now().UTC(), func(context.Context, string) error { return forecastFailure })
+	_, err := repo.Reopen(context.Background(), "project", "task", time.Now().UTC(), func(context.Context, []string) error { return forecastFailure })
 	if !errors.Is(err, forecastFailure) {
 		t.Fatalf("err=%v", err)
 	}
@@ -334,7 +342,7 @@ func TestRepositoryReopenPersistenceFailureHasNoPartialMutation_AC11(t *testing.
 		t.Fatal(err)
 	}
 	forecastCalls := 0
-	_, err := repo.Reopen(context.Background(), "project", "task", time.Now().UTC(), func(context.Context, string) error { forecastCalls++; return nil })
+	_, err := repo.Reopen(context.Background(), "project", "task", time.Now().UTC(), func(context.Context, []string) error { forecastCalls++; return nil })
 	if !errors.Is(err, failure) || forecastCalls != 0 {
 		t.Fatalf("err=%v forecast=%d", err, forecastCalls)
 	}
@@ -377,7 +385,7 @@ func TestRepositoryReopenConcurrentCommandsProduceOneSuccessOneConflict_AC12(t *
 		}
 	})
 	var forecastCalls atomic.Int32
-	forecast := func(context.Context, string) error {
+	forecast := func(context.Context, []string) error {
 		if forecastCalls.Add(1) == 1 {
 			close(enteredForecast)
 			<-releaseForecast
@@ -431,8 +439,8 @@ func TestRepositoryReopenConcurrentCommandsProduceOneSuccessOneConflict_AC12(t *
 	if successes != 1 || conflicts != 1 || forecastCalls.Load() != 1 {
 		t.Fatalf("success=%d conflict=%d forecast=%d errors=%v/%v", successes, conflicts, forecastCalls.Load(), err1, err2)
 	}
-	if value := loadNodeModel(t, db, "task"); value.ActualEnd != nil {
-		t.Fatalf("actual end remained: %v", value.ActualEnd)
+	if value := loadNodeModel(t, db, "task"); value.ActualStart != nil || value.ActualEnd != nil {
+		t.Fatalf("actual dates remained: start=%v end=%v", value.ActualStart, value.ActualEnd)
 	}
 }
 
@@ -440,7 +448,7 @@ func TestRepositoryRepeatedReopenAfterConfirmedUnfinishedReturnsNotCompleted_AC2
 	repo, db := reopenTestDB(t)
 	seedReopenGraph(t, db, "open")
 	var calls atomic.Int32
-	forecast := func(context.Context, string) error { calls.Add(1); return nil }
+	forecast := func(context.Context, []string) error { calls.Add(1); return nil }
 	if _, err := repo.Reopen(context.Background(), "project", "task", time.Now().UTC(), forecast); err != nil {
 		t.Fatal(err)
 	}
@@ -456,7 +464,7 @@ func TestRepositoryReopenIdentityPredicateIncludesProjectID_AC5(t *testing.T) {
 	if err := db.Create(&reopenProjectRecord{ID: "other", Status: "open"}).Error; err != nil {
 		t.Fatal(err)
 	}
-	_, err := repo.Reopen(context.Background(), "other", "task", time.Now().UTC(), func(context.Context, string) error { return nil })
+	_, err := repo.Reopen(context.Background(), "other", "task", time.Now().UTC(), func(context.Context, []string) error { return nil })
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("err=%v", err)
 	}

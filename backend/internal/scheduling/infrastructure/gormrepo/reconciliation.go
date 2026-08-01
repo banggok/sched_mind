@@ -11,10 +11,11 @@ func (repository *Repository) reconcileAutomaticOwnership(
 	database *gorm.DB,
 	state *portfolioState,
 	execution *timelineResult,
-) (bool, error) {
+) (bool, map[string]struct{}, error) {
 	desired := execution.automaticBlocker
 	now := repository.now()
 	changed := false
+	dirtyProjects := make(map[string]struct{})
 
 	byBlocked := make(map[string][]int)
 	for index, dependency := range state.dependencies {
@@ -26,7 +27,7 @@ func (repository *Repository) reconcileAutomaticOwnership(
 			continue
 		}
 		project := state.projects[task.ProjectID]
-		if project.Status != "open" || !project.AutomaticScheduling || task.ActualEnd != nil {
+		if project.Status != "open" || !project.AutomaticScheduling || task.ActualStart != nil && task.ActualEnd != nil {
 			continue
 		}
 
@@ -43,18 +44,19 @@ func (repository *Repository) reconcileAutomaticOwnership(
 			}
 
 			changed = true
+			dirtyProjects[task.ProjectID] = struct{}{}
 			if dependency.ManualOwned {
 				if err := database.Model(&dependencyModel{}).
 					Where("id = ? AND automatic_owned = ?", dependency.ID, true).
 					Updates(map[string]any{"automatic_owned": false, "updated_at": now}).Error; err != nil {
-					return false, fmt.Errorf("remove stale automatic dependency ownership: %w", err)
+					return false, nil, fmt.Errorf("remove stale automatic dependency ownership: %w", err)
 				}
 				dependency.AutomaticOwned = false
 				dependency.UpdatedAt = now
 				continue
 			}
 			if err := database.Delete(&dependencyModel{}, "id = ?", dependency.ID).Error; err != nil {
-				return false, fmt.Errorf("delete stale automatic dependency: %w", err)
+				return false, nil, fmt.Errorf("delete stale automatic dependency: %w", err)
 			}
 			dependency.ID = ""
 		}
@@ -63,7 +65,7 @@ func (repository *Repository) reconcileAutomaticOwnership(
 			continue
 		}
 		if _, exists := state.tasks[desiredBlocker]; !exists {
-			return false, fmt.Errorf("%w: automatic blocker %s does not exist", schedulingdomain.ErrDataIntegrity, desiredBlocker)
+			return false, nil, fmt.Errorf("%w: automatic blocker %s does not exist", schedulingdomain.ErrDataIntegrity, desiredBlocker)
 		}
 
 		var existing dependencyModel
@@ -71,16 +73,17 @@ func (repository *Repository) reconcileAutomaticOwnership(
 			Limit(1).
 			Find(&existing)
 		if result.Error != nil {
-			return false, fmt.Errorf("load automatic dependency endpoint pair: %w", result.Error)
+			return false, nil, fmt.Errorf("load automatic dependency endpoint pair: %w", result.Error)
 		}
 		if result.RowsAffected > 0 {
 			if !existing.AutomaticOwned {
 				if updateErr := database.Model(&dependencyModel{}).
 					Where("id = ? AND automatic_owned = ?", existing.ID, false).
 					Updates(map[string]any{"automatic_owned": true, "updated_at": now}).Error; updateErr != nil {
-					return false, fmt.Errorf("add automatic dependency ownership: %w", updateErr)
+					return false, nil, fmt.Errorf("add automatic dependency ownership: %w", updateErr)
 				}
 				changed = true
+				dirtyProjects[task.ProjectID] = struct{}{}
 			}
 			updated := false
 			for index := range state.dependencies {
@@ -101,17 +104,18 @@ func (repository *Repository) reconcileAutomaticOwnership(
 
 		id, idErr := repository.newID()
 		if idErr != nil {
-			return false, fmt.Errorf("generate automatic dependency ID: %w", idErr)
+			return false, nil, fmt.Errorf("generate automatic dependency ID: %w", idErr)
 		}
 		created := dependencyModel{
 			ID: id, BlockingTaskID: desiredBlocker, BlockedTaskID: taskID,
 			ManualOwned: false, AutomaticOwned: true, CreatedAt: now, UpdatedAt: now,
 		}
 		if createErr := database.Create(&created).Error; createErr != nil {
-			return false, fmt.Errorf("create automatic dependency: %w", createErr)
+			return false, nil, fmt.Errorf("create automatic dependency: %w", createErr)
 		}
 		state.dependencies = append(state.dependencies, created)
 		changed = true
+		dirtyProjects[task.ProjectID] = struct{}{}
 	}
 
 	compacted := state.dependencies[:0]
@@ -121,5 +125,5 @@ func (repository *Repository) reconcileAutomaticOwnership(
 		}
 	}
 	state.dependencies = compacted
-	return changed, nil
+	return changed, dirtyProjects, nil
 }

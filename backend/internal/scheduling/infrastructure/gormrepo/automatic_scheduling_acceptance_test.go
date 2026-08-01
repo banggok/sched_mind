@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
@@ -15,6 +17,7 @@ import (
 	projectrepo "github.com/banggok/sched_mind/backend/internal/projects/infrastructure/gormrepo"
 	schedulingapplication "github.com/banggok/sched_mind/backend/internal/scheduling/application"
 	schedulingdomain "github.com/banggok/sched_mind/backend/internal/scheduling/domain"
+	"github.com/banggok/sched_mind/backend/internal/shared/schedulingimpact"
 	wbsapplication "github.com/banggok/sched_mind/backend/internal/wbs/application"
 	wbsgormrepo "github.com/banggok/sched_mind/backend/internal/wbs/infrastructure/gormrepo"
 	"gorm.io/driver/sqlite"
@@ -167,8 +170,10 @@ func TestAutomaticSchedulingLifecycleAndPriorityAcceptance_AC29_AC30_AC31_AC32_A
 	assertDate(t, "second before priority move", loadAcceptanceTask(t, database, "second-task").ExecutionStart, "2026-08-04")
 
 	projectService := projectapplication.NewServiceWithDependencies(projectrepo.New(database), scheduler, func() time.Time { return now.Add(time.Hour) }, func() (string, error) { return "unused", nil })
-	if _, err := projectService.MovePriority(context.Background(), "second", projectdomain.PriorityUp); err != nil {
-		t.Fatal(err)
+	_, err := projectService.MovePriority(context.Background(), "second", projectdomain.PriorityUp)
+	priorityImpact := requireOpenProjectImpact(t, err, "first")
+	if _, err := projectService.MovePriority(acceptanceImpactContext(t, priorityImpact.Token), "second", projectdomain.PriorityUp); err != nil {
+		t.Fatalf("confirm priority impact: %v", err)
 	}
 	assertDate(t, "second after priority move", loadAcceptanceTask(t, database, "second-task").ExecutionStart, "2026-08-03")
 	assertDate(t, "first after priority move", loadAcceptanceTask(t, database, "first-task").ExecutionStart, "2026-08-04")
@@ -190,12 +195,14 @@ func TestAutomaticSchedulingLifecycleAndPriorityAcceptance_AC29_AC30_AC31_AC32_A
 	}
 
 	actualEnd := mustDate("2026-08-03")
-	if err := database.Model(&acceptanceTaskRecord{}).Where("id = ?", "second-task").Update("actual_end", actualEnd).Error; err != nil {
+	if err := database.Model(&acceptanceTaskRecord{}).Where("id = ?", "second-task").Updates(map[string]any{"actual_start": actualEnd, "actual_end": actualEnd}).Error; err != nil {
 		t.Fatal(err)
 	}
-	closed, err := projectService.ChangeStatus(context.Background(), "second", projectdomain.StatusClosed)
+	_, err = projectService.ChangeStatus(context.Background(), "second", projectdomain.StatusClosed)
+	closeImpact := requireOpenProjectImpact(t, err, "first")
+	closed, err := projectService.ChangeStatus(acceptanceImpactContext(t, closeImpact.Token), "second", projectdomain.StatusClosed)
 	if err != nil || closed == nil || closed.Status != projectdomain.StatusClosed {
-		t.Fatalf("close: %#v %v", closed, err)
+		t.Fatalf("confirm close impact: %#v %v", closed, err)
 	}
 	firstAfterClose := loadAcceptanceTask(t, database, "first-task")
 	assertDate(t, "open project uses capacity after Closed exclusion", firstAfterClose.ExecutionStart, "2026-08-03")
@@ -471,8 +478,8 @@ func TestAutomaticSchedulingConcurrentApplicationAcceptance_AC36(t *testing.T) {
 	if err := database.First(&storedProject, "id = ?", "project").Error; err != nil {
 		t.Fatal(err)
 	}
-	if storedProject.ScheduleVersion != 2 {
-		t.Fatalf("schedule version=%d, want two serialized commits", storedProject.ScheduleVersion)
+	if storedProject.ScheduleVersion != 1 {
+		t.Fatalf("schedule version=%d, want one confirmed dirty projection and one serialized no-op", storedProject.ScheduleVersion)
 	}
 	var rows []acceptanceAllocationRecord
 	if err := database.Find(&rows).Error; err != nil {
@@ -518,6 +525,7 @@ type acceptanceTaskRecord struct {
 	ExecutionEnd                *time.Time
 	CommitmentStart             *time.Time
 	CommitmentEnd               *time.Time
+	ActualStart                 *time.Time
 	ActualEnd                   *time.Time
 	ExecutionUnscheduledReason  *string
 	CommitmentUnscheduledReason *string
@@ -640,7 +648,7 @@ func TestCreateWBSAcceptanceSkipsSchedulerForNameOnlyTaskWhenProjectHasCompleted
 		ID: "completed", ProjectID: "project", ParentKey: "", Name: "Completed", NameKey: "completed",
 		Position: 1, RoleID: &roleID, AssigneeID: &memberID, EffortMinutes: &historicalEffort,
 		ExecutionStart: &anchor, ExecutionEnd: &anchor, CommitmentStart: &anchor, CommitmentEnd: &anchor,
-		ActualEnd: &anchor, CreatedAt: now, UpdatedAt: now,
+		ActualStart: &anchor, ActualEnd: &anchor, CreatedAt: now, UpdatedAt: now,
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -791,9 +799,42 @@ func TestAutomaticSchedulingWorkflowGeneratesDatesOwnershipAndLag_AC2_AC9_AC11_A
 	if err := database.First(&lowProject, "id = ?", "low").Error; err != nil {
 		t.Fatal(err)
 	}
-	if lowProject.ScheduleVersion < 3 {
-		t.Fatalf("schedule version=%d, want monotonic increments across workflow", lowProject.ScheduleVersion)
+	if lowProject.ScheduleVersion != 2 {
+		t.Fatalf(
+			"schedule version=%d, want 2 confirmed projection changes; manual ownership-only mutation is version-neutral",
+			lowProject.ScheduleVersion,
+		)
 	}
+}
+
+func requireOpenProjectImpact(t *testing.T, err error, expectedProjectID string) schedulingimpact.Error {
+	t.Helper()
+	var impact schedulingimpact.Error
+	if !errors.As(err, &impact) {
+		t.Fatalf("expected scheduling impact confirmation, got %v", err)
+	}
+	if impact.Kind != schedulingimpact.ConfirmationRequired || impact.Token == "" {
+		t.Fatalf("scheduling impact = %#v", impact)
+	}
+	if len(impact.LockedProjects) != 0 || len(impact.OpenProjects) != 1 || impact.OpenProjects[0].ID != expectedProjectID {
+		t.Fatalf("impacted projects = locked %#v, open %#v; want open %q", impact.LockedProjects, impact.OpenProjects, expectedProjectID)
+	}
+	return impact
+}
+
+func acceptanceImpactContext(t *testing.T, token string) context.Context {
+	t.Helper()
+	var captured context.Context
+	handler := schedulingimpact.CaptureToken(http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
+		captured = request.Context()
+	}))
+	request := httptest.NewRequest(http.MethodPost, "/", nil)
+	request.Header.Set(schedulingimpact.ConfirmationTokenHeader, token)
+	handler.ServeHTTP(httptest.NewRecorder(), request)
+	if captured == nil {
+		t.Fatal("scheduling impact request context was not captured")
+	}
+	return captured
 }
 
 func loadAcceptanceTask(t *testing.T, database *gorm.DB, id string) acceptanceTaskRecord {
@@ -821,4 +862,20 @@ func loadAcceptanceAllocations(t *testing.T, database *gorm.DB, taskID, timeline
 		t.Fatal(err)
 	}
 	return values
+}
+
+func TestImpactProjectsPreservesRequestedLifecycleClassification_US62_AC15_AC20_AC21(t *testing.T) {
+	state := &portfolioState{projects: map[string]projectModel{
+		"open":   {ID: "open", Name: "Open", Status: "open", ScheduleVersion: 3},
+		"locked": {ID: "locked", Name: "Locked", Status: "locked", ScheduleVersion: 7},
+	}}
+
+	locked := impactProjects(state, []string{"locked", "open"}, "locked")
+	if len(locked) != 1 || locked[0].ID != "locked" || locked[0].Version != 7 {
+		t.Fatalf("locked impact projects = %#v", locked)
+	}
+	open := impactProjects(state, []string{"locked", "open"}, "open")
+	if len(open) != 1 || open[0].ID != "open" || open[0].Version != 3 {
+		t.Fatalf("open impact projects = %#v", open)
+	}
 }

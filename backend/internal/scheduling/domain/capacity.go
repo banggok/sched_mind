@@ -19,7 +19,15 @@ type Timeline string
 const (
 	Execution  Timeline = "execution"
 	Commitment Timeline = "commitment"
+	Actual     Timeline = "actual"
 )
+
+func BAUCapacityMinutes(resolvedHours *big.Rat) *big.Rat {
+	if resolvedHours == nil || resolvedHours.Sign() <= 0 {
+		return new(big.Rat)
+	}
+	return new(big.Rat).Mul(resolvedHours, big.NewRat(60, 1))
+}
 
 func ParseDecimal(value string) (*big.Rat, error) {
 	decimal, ok := new(big.Rat).SetString(value)
