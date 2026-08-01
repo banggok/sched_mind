@@ -48,6 +48,13 @@ export function updateProject(
     validateProjectBuffer(projectBuffer),
   );
 }
+export function renameProject(
+  gateway: ProjectsGateway,
+  id: string,
+  name: string,
+): Promise<Project> {
+  return gateway.rename(id, normalizeProjectName(name));
+}
 export function changeProjectStatus(
   gateway: ProjectsGateway,
   id: string,

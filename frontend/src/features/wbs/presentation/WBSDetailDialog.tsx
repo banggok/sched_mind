@@ -39,6 +39,7 @@ export function WBSDetailDialog({
   onClose,
   onChanged,
   onReopened,
+  nested = true,
 }: {
   project: Project;
   node: WBSNode;
@@ -53,6 +54,7 @@ export function WBSDetailDialog({
   onClose(): void;
   onChanged(message: string): void;
   onReopened(node: WBSNode, message: string): void;
+  nested?: boolean;
 }) {
   const [roles, setRoles] = useState<Role[]>([]);
   const [members, setMembers] = useState<TeamMember[]>([]);
@@ -101,6 +103,7 @@ export function WBSDetailDialog({
   const previewingVersion = useRef<number | undefined>(undefined);
   const lastPreviewedVersion = useRef(0);
   useEffect(() => {
+    if (node.hasChildren) return;
     const controller = new AbortController();
     setError("");
     void Promise.all([
@@ -122,7 +125,7 @@ export function WBSDetailDialog({
           setError("Role and member options could not be loaded.");
       });
     return () => controller.abort();
-  }, [rolesGateway, membersGateway]);
+  }, [membersGateway, node.hasChildren, rolesGateway]);
   useEffect(
     () => () => {
       previewController.current?.abort();
@@ -337,10 +340,28 @@ export function WBSDetailDialog({
       setReopenBusy(false);
     }
   }
+  async function saveGroup(event: FormEvent) {
+    event.preventDefault();
+    if (project.status !== "open" || busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      await gateway.rename(project.id, node.id, name);
+      onChanged("Group updated.");
+    } catch (reason: unknown) {
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : "Group could not be updated.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
   return (
     <Dialog
-      nested
-      wide={!node.hasChildren}
+      nested={nested}
+      wide
       titleID="wbs-detail-title"
       onClose={() => !busy && !reopenBusy && !reopenLock.current && onClose()}
     >
@@ -351,7 +372,22 @@ export function WBSDetailDialog({
         {node.hasChildren ? "Group" : "Task"}
       </p>
       {node.hasChildren ? (
-        <>
+        <form className="mt-5" onSubmit={(event) => void saveGroup(event)}>
+          <FormField
+            id="group-detail-name"
+            name="name"
+            label="Name"
+            value={name}
+            disabled={project.status !== "open" || busy}
+            autoFocus={project.status === "open"}
+            onChange={(event) => setName(event.target.value)}
+          />
+          {project.status !== "open" ? (
+            <p className="mt-2 text-sm text-muted">
+              Group details are read-only while this Project is {project.status}
+              .
+            </p>
+          ) : null}
           <div className="mt-5">
             <WBSSummary
               summary={summarizeWBS(node.children)}
@@ -359,10 +395,22 @@ export function WBSDetailDialog({
               idPrefix={`group-${node.id}-summary`}
             />
           </div>
-          <div className="mt-6 flex justify-end">
-            <Button onClick={onClose}>Close</Button>
+          {error ? (
+            <Alert tone="danger" className="mt-4">
+              {error}
+            </Alert>
+          ) : null}
+          <div className="mt-6 flex justify-end gap-3">
+            <Button type="button" disabled={busy} onClick={onClose}>
+              {project.status === "open" ? "Cancel" : "Close"}
+            </Button>
+            {project.status === "open" ? (
+              <Button type="submit" variant="primary" loading={busy}>
+                Save
+              </Button>
+            ) : null}
           </div>
-        </>
+        </form>
       ) : (
         <>
           <form

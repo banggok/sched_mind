@@ -187,6 +187,15 @@ PATCH  /api/projects/{projectId}/settings
 DELETE /api/projects/{projectId}
 ```
 
+`PUT /api/projects/{projectId}` has two explicit contracts. A payload containing
+only `name` invokes the Project rename path, which is valid for Open and Locked
+Projects and updates only `name`, normalized `name_key`, and `updated_at`.
+Supplying scheduling fields requires the complete settings tuple and invokes
+the existing full Open-Project update transaction. Partial tuples are rejected,
+and a mixed Locked payload is rejected atomically. The Locked name-only path
+does not acquire the schedule-mutation lock, emit scheduling impact, invoke the
+scheduler, or change schedule version and protected snapshots.
+
 Project Settings persist `automatic_scheduling` (default `true`), nullable
 `scheduling_start_date` as SQL `DATE`, and integer `project_buffer` (default
 `20`, constrained to `0..100`). The API represents the anchor as `YYYY-MM-DD`.
@@ -279,10 +288,30 @@ The Role, Member, and Capacity Override features separate domain/application
 models from HTTP DTOs. Capacity Overrides are presented inside the Member
 workflow rather than as standalone navigation.
 
-The WBS domain remains the only work-item model. Its frontend presents the
-feature as **Project Structure**, an Executable WBS as **Task**, and a Grouping
-WBS as **Group**. These labels are derived from child existence and never create
-or persist a separate type field.
+The WBS domain remains the only work-item model. Its frontend presents an
+Executable WBS as **Task** and a Grouping WBS as **Group**; these labels are
+derived from child existence and never create or persist a separate type field.
+Home is the canonical active-WBS surface. `App.tsx` keeps Home mounted while it
+opens the shared Project controller or a direct-entry WBS dialog for Group,
+Task, Add Task, Add Child, and Move to. The standalone Project Structure panel
+has been removed; the WBS controller accepts only a direct Home action and
+renders the corresponding shared dialog. Direct-entry dialogs fetch the
+authoritative Project tree, so Move to destinations are not narrowed by the
+current Home Role projection.
+
+The Home portfolio is rendered as a synchronized split grid/timeline. WBS,
+Name, Role, Assignee, Effort, Start, and End remain individually resizable data
+columns. Eligible quick and overflow actions are positioned inside Name and are
+revealed on hover or keyboard focus; no separate Actions column exists. Name is
+the only row edit activation. Project and Group Role cells are blank, while
+Task Role remains direct data. Start and End display timezone-stable
+`D Mon YYYY` values. The timeline header uses three rows for working-day
+sequence, grouped month/year, and calendar date. Timeline bars and other cells
+are read-only.
+Structural actions reuse the WBS gateway commands, and Project lifecycle
+actions reuse the same `ProjectsPage` controller used by Projects. Confirmed
+mutations advance the shared schedule projection clock or explicitly reload the
+portfolio projection while retaining selected filters and expansion IDs.
 
 The approved US-4.3 implementation uses one frontend-only recursive read model over current confirmed WBS roots. View Group passes the selected subtree; Edit Project treats the Project as logical WBS level `0` and passes every top-level WBS root. One deterministic typed traversal returns Execution aggregate and coverage, Commitment aggregate and coverage, completed/total known Effort, percentage, and Task-without-Effort count. Timeline dates come only from complete Task pairs; completion requires complete Actual Date; missing Effort is never coerced to zero. Integer minutes remain the arithmetic source so half-hour precision and percentage calculation do not accumulate floating-point error.
 
@@ -293,8 +322,8 @@ two executable WBS Tasks. Relations may cross active Projects, but Groups and
 Tasks belonging to Closed Projects cannot become new endpoints. Completed
 Tasks may be blockers; completed Tasks cannot become newly blocked, and an
 existing relation whose blocked Task is completed is historical read-only.
-Dependency editing is composed into the contextual Edit Task dialog in Project
-Structure. One endpoint pair is persisted once with `manual_owned` and
+Dependency editing is composed into the shared contextual Edit Task dialog
+opened from Home. One endpoint pair is persisted once with `manual_owned` and
 `automatic_owned` flags. The API projects the source as `manual`, `automatic`,
 or `both`; deleting a shared relation removes manual ownership only, while an
 automatic-only relation is read-only through generic delete and may be retained
@@ -535,9 +564,10 @@ US-7.1 adds a Home feature boundary as the default frontend composition. Home is
 a portfolio read workspace, not a new WBS or scheduler aggregate. The left grid
 renders selected active Project/WBS rows, while the right timeline renders
 read-only daily Execution or Commitment bars and effective dependency arrows.
-Project Structure remains available. Add Task, Add Child, Project edit, and
-Task/Group edit must reuse existing application use cases and dialogs so Home
-does not fork validation, impact preview, transaction, or rollback behaviour.
+The standalone Project Structure entry point is removed. Add Task, Add Child,
+Project edit, and Task/Group edit must reuse existing application use cases and
+dialogs directly over Home so the canonical workspace does not fork validation,
+impact preview, transaction, or rollback behaviour.
 
 The Home read path requires a dedicated portfolio projection or equivalent
 bounded set-based composition. It must return stable Project/WBS identities,
@@ -556,6 +586,11 @@ semantics as US-4.3 and are not persisted as new writable aggregate columns.
 The daily timeline includes weekends and Public Holidays. Its first header row
 counts working dates from the earliest scheduled Start of the selected
 Execution/Commitment projection; pre-anchor and non-working cells remain blank.
+When an effective Finish-to-Start chain shares one calendar date because the
+successor uses remaining same-day capacity, Home derives equal visual sequence
+slots from the visible dependency chain. This prevents overlapping bars and a
+backward-pointing arrow without claiming that slot width represents allocated
+minutes.
 
 The frontend must use bounded row/date rendering. A naive permanent
 `visible rows × visible dates` interactive DOM matrix is not acceptable for

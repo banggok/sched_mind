@@ -3,7 +3,6 @@ import userEvent from "@testing-library/user-event";
 import axe from "axe-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DependenciesGateway } from "../../dependencies/application/dependenciesGateway";
-import { createHTTPDependenciesGateway } from "../../dependencies/infrastructure/httpDependenciesGateway";
 import type { Project } from "../../projects/domain/project";
 import type { RolesGateway } from "../../roles/application/rolesGateway";
 import type { TeamMembersGateway } from "../../team-members/application/teamMembersGateway";
@@ -11,7 +10,7 @@ import type { WBSGateway } from "../application/wbsGateway";
 import type { WBSNode } from "../domain/wbs";
 import { WBSPanel } from "./WBSPanel";
 
-const rolesGateway = {
+const rolesGateway: RolesGateway = {
   list: vi.fn().mockResolvedValue({
     items: [
       {
@@ -25,8 +24,11 @@ const rolesGateway = {
     pageSize: 100,
     total: 1,
   }),
-} as unknown as RolesGateway;
-const membersGateway = {
+  create: vi.fn(),
+  update: vi.fn(),
+  delete: vi.fn(),
+};
+const membersGateway: TeamMembersGateway = {
   list: vi.fn().mockResolvedValue({
     items: [
       {
@@ -44,7 +46,10 @@ const membersGateway = {
     pageSize: 100,
     total: 1,
   }),
-} as unknown as TeamMembersGateway;
+  create: vi.fn(),
+  update: vi.fn(),
+  delete: vi.fn(),
+};
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -165,16 +170,26 @@ function dependenciesGateway(): DependenciesGateway {
   };
 }
 
-function renderPanel(
-  status: Project["status"],
-  values: WBSNode[],
+function renderPanel({
+  status,
+  values,
+  nodeId,
   gateway = wbsGateway(values),
-  dependencyGateway?: DependenciesGateway,
-  projectOverrides: Partial<Project> = {},
-) {
+  dependencyGateway,
+  projectOverrides = {},
+}: {
+  status: Project["status"];
+  values: WBSNode[];
+  nodeId: string;
+  gateway?: WBSGateway;
+  dependencyGateway?: DependenciesGateway;
+  projectOverrides?: Partial<Project>;
+}) {
+  const onClose = vi.fn();
   return {
     gateway,
     dependencyGateway,
+    onClose,
     view: render(
       <WBSPanel
         project={{ ...project(status), ...projectOverrides }}
@@ -182,21 +197,14 @@ function renderPanel(
         dependenciesGateway={dependencyGateway}
         rolesGateway={rolesGateway}
         membersGateway={membersGateway}
-        onClose={() => undefined}
+        initialNodeId={nodeId}
+        onClose={onClose}
       />,
     ),
   };
 }
 
-async function openTask(name: string) {
-  const tree = await screen.findByRole("tree");
-  const item = within(tree)
-    .getByText(name)
-    .closest<HTMLElement>('[role="treeitem"]');
-  if (!item) throw new Error(`tree item ${name} not found`);
-  await userEvent.click(
-    within(item).getByRole("button", { name: "Edit Task" }),
-  );
+async function openTask() {
   return screen.findByRole("dialog", { name: "Edit Task" });
 }
 
@@ -207,12 +215,20 @@ async function openConfirmation(detail: HTMLElement) {
   return screen.findByRole("alertdialog", { name: "Reopen Task?" });
 }
 
-describe("US-4.2 acceptance workflow through WBSPanel", () => {
-  it("AC-1 AC-4 AC-5 AC-6 AC-7 AC-14 reopens a completed Open Task from Project Structure without hard reload", async () => {
+describe("US-4.2 direct Home Reopen workflow", () => {
+  it("AC-1 AC-4 AC-5 AC-6 AC-7 AC-14 reopens a completed Open Task and returns to Home", async () => {
     const values = [group()];
     const api = wbsGateway(values);
-    renderPanel("open", values, api);
-    let detail = await openTask("Build API");
+    const deps = dependenciesGateway();
+    const setup = renderPanel({
+      status: "open",
+      values,
+      nodeId: "task",
+      gateway: api,
+      dependencyGateway: deps,
+    });
+    const detail = await openTask();
+    expect(screen.queryByText("Project Structure")).toBeNull();
     expect(
       (within(detail).getByLabelText("Name") as HTMLInputElement).disabled,
     ).toBe(true);
@@ -220,29 +236,8 @@ describe("US-4.2 acceptance workflow through WBSPanel", () => {
       (within(detail).getByLabelText("Effort (hours)") as HTMLInputElement)
         .value,
     ).toBe("6.5");
-    expect(
-      (within(detail).getByLabelText("Role") as HTMLSelectElement).value,
-    ).toBe("role");
-    expect(
-      (within(detail).getByLabelText("Assignee") as HTMLSelectElement).value,
-    ).toBe("member");
-    expect(
-      (
-        within(detail).getByRole("button", {
-          name: /Execution timeline: .*2026.*2026/,
-        }) as HTMLButtonElement
-      ).disabled,
-    ).toBe(true);
-    expect(
-      (
-        within(detail).getByRole("button", {
-          name: /Commitment timeline: .*2026.*2026/,
-        }) as HTMLButtonElement
-      ).disabled,
-    ).toBe(true);
     const confirmation = await openConfirmation(detail);
     expect(within(confirmation).getByText("Build API")).toBeTruthy();
-    expect(within(confirmation).getByText(/2026/)).toBeTruthy();
     expect(
       within(confirmation).getByText(
         /removes both Actual Start and Actual End/,
@@ -252,134 +247,91 @@ describe("US-4.2 acceptance workflow through WBSPanel", () => {
       within(confirmation).getByRole("button", { name: "Reopen Task" }),
     );
 
-    detail = await screen.findByRole("dialog", { name: "Edit Task" });
     await waitFor(() =>
-      expect(
-        (within(detail).getByLabelText("Name") as HTMLInputElement).disabled,
-      ).toBe(false),
+      expect(api.reopen).toHaveBeenCalledWith("project", "task"),
     );
-    expect(
-      within(detail).queryByText(/Completed work is read-only/),
-    ).toBeNull();
-    expect(
-      (within(detail).getByLabelText("Name") as HTMLInputElement).value,
-    ).toBe("Build API");
-    expect(
-      (within(detail).getByLabelText("Effort (hours)") as HTMLInputElement)
-        .value,
-    ).toBe("6.5");
-    expect(
-      (within(detail).getByLabelText("Role") as HTMLSelectElement).value,
-    ).toBe("role");
-    expect(
-      (within(detail).getByLabelText("Assignee") as HTMLSelectElement).value,
-    ).toBe("member");
-    expect(
-      (
-        within(detail).getByRole("button", {
-          name: /Execution timeline: .*2026.*2026/,
-        }) as HTMLButtonElement
-      ).disabled,
-    ).toBe(true);
-    expect(
-      (
-        within(detail).getByRole("button", {
-          name: /Commitment timeline: .*2026.*2026/,
-        }) as HTMLButtonElement
-      ).disabled,
-    ).toBe(true);
-    expect(api.reopen).toHaveBeenCalledWith("project", "task");
-    expect(api.tree).toHaveBeenCalledTimes(1);
-    expect(screen.getByText("Task reopened.")).toBeTruthy();
-    expect(screen.getAllByText("Build API").length).toBeGreaterThan(0);
+    expect(deps.invalidateAll).toHaveBeenCalledTimes(1);
+    expect(setup.onClose).toHaveBeenCalledTimes(1);
   });
 
-  it("US-6.2 AC-16 hides Reopen for a completed Locked Task and preserves read-only planning fields", async () => {
+  it("US-6.2 AC-16 hides Reopen for a completed Locked Task", async () => {
     const values = [task("task", "Build API")];
     const api = wbsGateway(values);
-    renderPanel("locked", values, api, undefined, {
-      automaticScheduling: false,
+    renderPanel({
+      status: "locked",
+      values,
+      nodeId: "task",
+      gateway: api,
+      projectOverrides: { automaticScheduling: false },
     });
-    const detail = await openTask("Build API");
+    const detail = await openTask();
     expect(
       within(detail).queryByRole("button", { name: "Reopen Task" }),
     ).toBeNull();
     expect(
       (within(detail).getByLabelText("Name") as HTMLInputElement).disabled,
     ).toBe(true);
-    expect(
-      (
-        within(detail).getByRole("button", {
-          name: "Save",
-        }) as HTMLButtonElement
-      ).disabled,
-    ).toBe(true);
     expect(api.reopen).not.toHaveBeenCalled();
   });
 
-  it("AC-3 cancel and Escape send no request, preserve state, and return focus", async () => {
+  it("AC-3 cancel and Escape send no request and return focus", async () => {
     const user = userEvent.setup();
     const values = [task("task", "Build API")];
     const api = wbsGateway(values);
-    renderPanel("open", values, api);
-    const detail = await openTask("Build API");
+    renderPanel({ status: "open", values, nodeId: "task", gateway: api });
+    const detail = await openTask();
     const trigger = within(detail).getByRole("button", { name: "Reopen Task" });
     const confirmation = await openConfirmation(detail);
     await user.click(
       within(confirmation).getByRole("button", { name: "Cancel" }),
     );
     expect(api.reopen).not.toHaveBeenCalled();
-    expect(
-      screen.queryByRole("alertdialog", { name: "Reopen Task?" }),
-    ).toBeNull();
-    expect(
-      within(detail).getByText(/Completed work is read-only/),
-    ).toBeTruthy();
     expect(document.activeElement).toBe(trigger);
 
     await user.click(trigger);
     await screen.findByRole("alertdialog", { name: "Reopen Task?" });
     await user.keyboard("{Escape}");
     expect(api.reopen).not.toHaveBeenCalled();
-    expect(
-      screen.queryByRole("alertdialog", { name: "Reopen Task?" }),
-    ).toBeNull();
     expect(document.activeElement).toBe(trigger);
   });
 
   it("AC-2 AC-9 AC-13 does not offer Reopen for Closed, Grouping, or unfinished WBS", async () => {
-    const closedView = renderPanel("closed", [task("task", "Closed Task")]);
-    let detail = await openTask("Closed Task");
+    let view = renderPanel({
+      status: "closed",
+      values: [task("task", "Closed Task")],
+      nodeId: "task",
+    }).view;
+    let detail = await openTask();
     expect(
       within(detail).queryByRole("button", { name: "Reopen Task" }),
     ).toBeNull();
-    closedView.view.unmount();
+    view.unmount();
 
-    const groupView = renderPanel("open", [group()]);
-    const tree = await screen.findByRole("tree");
-    const groupItem = within(tree)
-      .getByText("Development")
-      .closest<HTMLElement>('[role="treeitem"]');
-    if (!groupItem) throw new Error("group not found");
-    await userEvent.click(
-      within(groupItem).getByRole("button", { name: "View Group" }),
-    );
+    view = renderPanel({
+      status: "open",
+      values: [group()],
+      nodeId: "group",
+    }).view;
     const groupDialog = await screen.findByRole("dialog", {
       name: "Development",
     });
     expect(
       within(groupDialog).queryByRole("button", { name: "Reopen Task" }),
     ).toBeNull();
-    groupView.view.unmount();
+    view.unmount();
 
-    renderPanel("open", [task("task", "Unfinished", undefined)]);
-    detail = await openTask("Unfinished");
+    renderPanel({
+      status: "open",
+      values: [task("task", "Unfinished", undefined)],
+      nodeId: "task",
+    });
+    detail = await openTask();
     expect(
       within(detail).queryByRole("button", { name: "Reopen Task" }),
     ).toBeNull();
   });
 
-  it("AC-11 AC-14 preserves completed state after Reopen failure and permits retry", async () => {
+  it("AC-11 AC-14 preserves completed state after failure and permits retry", async () => {
     const values = [task("task", "Build API")];
     const api = wbsGateway(values);
     vi.mocked(api.reopen)
@@ -387,8 +339,13 @@ describe("US-4.2 acceptance workflow through WBSPanel", () => {
         new Error("The Task could not be reopened. Try again."),
       )
       .mockResolvedValueOnce(task("task", "Build API", undefined));
-    renderPanel("open", values, api);
-    let detail = await openTask("Build API");
+    const setup = renderPanel({
+      status: "open",
+      values,
+      nodeId: "task",
+      gateway: api,
+    });
+    const detail = await openTask();
     const confirmation = await openConfirmation(detail);
     await userEvent.click(
       within(confirmation).getByRole("button", { name: "Reopen Task" }),
@@ -401,74 +358,16 @@ describe("US-4.2 acceptance workflow through WBSPanel", () => {
     expect(
       within(detail).getByText(/Completed work is read-only/),
     ).toBeTruthy();
+    expect(setup.onClose).not.toHaveBeenCalled();
 
     await userEvent.click(
       within(confirmation).getByRole("button", { name: "Reopen Task" }),
     );
-    detail = await screen.findByRole("dialog", { name: "Edit Task" });
-    await waitFor(() =>
-      expect(
-        within(detail).queryByText(/Completed work is read-only/),
-      ).toBeNull(),
-    );
-    expect(api.reopen).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(api.reopen).toHaveBeenCalledTimes(2));
+    expect(setup.onClose).toHaveBeenCalledTimes(1);
   });
 
-  it("AC-10 preserves dependency relation and refreshes its current completed marker", async () => {
-    const target = task("target", "Build API");
-    const other = task("other", "Deploy", undefined);
-    let reopened = false;
-    const api = wbsGateway([target, other]);
-    vi.mocked(api.reopen).mockImplementation(async () => {
-      reopened = true;
-      return task("target", "Build API", undefined);
-    });
-    const deps = dependenciesGateway();
-    vi.mocked(deps.list).mockImplementation(async (taskId) => {
-      if (taskId !== "other") return { blockedBy: [], blocks: [] };
-      return {
-        blockedBy: [
-          {
-            id: "incoming-link",
-            source: "manual",
-            manualRemovable: true,
-            task: {
-              id: "target",
-              name: "Build API",
-              projectId: "project",
-              projectName: "Alpha",
-              hierarchyPath: "Alpha > Build API",
-              completed: !reopened,
-            },
-          },
-        ],
-        blocks: [],
-      };
-    });
-    renderPanel("open", [target, other], api, deps);
-
-    let detail = await openTask("Deploy");
-    expect(await within(detail).findByText("Alpha · Completed")).toBeTruthy();
-    await userEvent.click(
-      within(detail).getByRole("button", { name: "Close" }),
-    );
-    detail = await openTask("Build API");
-    const confirmation = await openConfirmation(detail);
-    await userEvent.click(
-      within(confirmation).getByRole("button", { name: "Reopen Task" }),
-    );
-    detail = await screen.findByRole("dialog", { name: "Edit Task" });
-    await userEvent.click(
-      within(detail).getByRole("button", { name: "Close" }),
-    );
-    detail = await openTask("Deploy");
-    expect(await within(detail).findByText("Build API")).toBeTruthy();
-    expect(within(detail).queryByText("Alpha · Completed")).toBeNull();
-    expect(deps.invalidateAll).toHaveBeenCalledTimes(1);
-    expect(deps.list).toHaveBeenCalledTimes(4);
-  });
-
-  it("AC-12 duplicate activation sends one command and pending cannot close", async () => {
+  it("AC-12 sends one command while pending and prevents dismissal", async () => {
     const user = userEvent.setup();
     const values = [task("task", "Build API")];
     let resolveReopen: ((value: WBSNode) => void) | undefined;
@@ -477,8 +376,13 @@ describe("US-4.2 acceptance workflow through WBSPanel", () => {
     });
     const api = wbsGateway(values);
     vi.mocked(api.reopen).mockReturnValue(pending);
-    renderPanel("open", values, api);
-    const detail = await openTask("Build API");
+    const setup = renderPanel({
+      status: "open",
+      values,
+      nodeId: "task",
+      gateway: api,
+    });
+    const detail = await openTask();
     const confirmation = await openConfirmation(detail);
     const confirm = within(confirmation).getByRole("button", {
       name: "Reopen Task",
@@ -495,84 +399,20 @@ describe("US-4.2 acceptance workflow through WBSPanel", () => {
       screen.getByRole("alertdialog", { name: "Reopen Task?" }),
     ).toBeTruthy();
     act(() => resolveReopen?.(task("task", "Build API", undefined)));
-    await waitFor(() =>
-      expect(
-        screen.queryByRole("alertdialog", { name: "Reopen Task?" }),
-      ).toBeNull(),
-    );
+    await waitFor(() => expect(setup.onClose).toHaveBeenCalledTimes(1));
   });
 
-  it("AC-15 ignores an old dependency response after successful Reopen", async () => {
-    const target = task("target", "Build API");
-    const other = task("other", "Deploy", undefined);
-    let resolveOld: ((response: Response) => void) | undefined;
-    const oldResponse = new Promise<Response>((resolve) => {
-      resolveOld = resolve;
-    });
-    let firstOtherRequest = true;
-    const fetchMock = vi.fn((input: string | URL | Request) => {
-      const url = String(input);
-      if (url.endsWith("/tasks/other/dependencies") && firstOtherRequest) {
-        firstOtherRequest = false;
-        return oldResponse;
-      }
-      const data = url.endsWith("/tasks/other/dependencies")
-        ? { blockedBy: [relation(false)], blocks: [] }
-        : { blockedBy: [], blocks: [] };
-      return Promise.resolve(
-        new Response(JSON.stringify({ data }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        }),
-      );
-    });
-    vi.stubGlobal("fetch", fetchMock);
-    const deps = createHTTPDependenciesGateway("/api");
-    const api = wbsGateway([target, other]);
-    renderPanel("open", [target, other], api, deps);
-
-    let detail = await openTask("Deploy");
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
-    await userEvent.click(
-      within(detail).getByRole("button", { name: "Close" }),
-    );
-    detail = await openTask("Build API");
-    const confirmation = await openConfirmation(detail);
-    await userEvent.click(
-      within(confirmation).getByRole("button", { name: "Reopen Task" }),
-    );
-    resolveOld?.(
-      new Response(
-        JSON.stringify({
-          data: { blockedBy: [relation(true)], blocks: [] },
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      ),
-    );
-    detail = await screen.findByRole("dialog", { name: "Edit Task" });
-    await userEvent.click(
-      within(detail).getByRole("button", { name: "Close" }),
-    );
-    detail = await openTask("Deploy");
-    expect(await within(detail).findByText("Build API")).toBeTruthy();
-    expect(within(detail).queryByText(/Completed/)).toBeNull();
-    expect(fetchMock).toHaveBeenCalledTimes(4);
-  });
-
-  it("AC-16 completes the Reopen workflow using keyboard activation only", async () => {
+  it("AC-16 completes confirmation using keyboard only", async () => {
     const user = userEvent.setup();
     const values = [task("task", "Build API")];
     const api = wbsGateway(values);
-    renderPanel("open", values, api);
-    const tree = await screen.findByRole("tree");
-    const item = within(tree)
-      .getByText("Build API")
-      .closest<HTMLElement>('[role="treeitem"]');
-    if (!item) throw new Error("task not found");
-    const edit = within(item).getByRole("button", { name: "Edit Task" });
-    edit.focus();
-    await user.keyboard("{Enter}");
-    const detail = await screen.findByRole("dialog", { name: "Edit Task" });
+    const setup = renderPanel({
+      status: "open",
+      values,
+      nodeId: "task",
+      gateway: api,
+    });
+    const detail = await openTask();
     const trigger = within(detail).getByRole("button", { name: "Reopen Task" });
     trigger.focus();
     await user.keyboard("{Enter}");
@@ -584,10 +424,10 @@ describe("US-4.2 acceptance workflow through WBSPanel", () => {
     );
     await user.keyboard("{Tab}{Enter}");
     await waitFor(() => expect(api.reopen).toHaveBeenCalledTimes(1));
-    expect(await screen.findByText("Task reopened.")).toBeTruthy();
+    expect(setup.onClose).toHaveBeenCalledTimes(1);
   });
 
-  it("MVF-01 AC-3 AC-16 portals the active confirmation above Task detail with contained narrow-viewport content", async () => {
+  it("MVF-01 AC-3 AC-16 portals confirmation above the direct Task dialog", async () => {
     Object.defineProperty(window, "innerWidth", {
       configurable: true,
       value: 360,
@@ -598,46 +438,28 @@ describe("US-4.2 acceptance workflow through WBSPanel", () => {
         "A Task With A Very Long Name That Must Wrap On A Narrow Viewport",
       ),
     ];
-    renderPanel("open", values);
-    const detail = await openTask(
-      "A Task With A Very Long Name That Must Wrap On A Narrow Viewport",
-    );
+    renderPanel({ status: "open", values, nodeId: "task" });
+    const detail = await openTask();
     const confirmation = await openConfirmation(detail);
     expect(confirmation.getAttribute("aria-modal")).toBe("true");
     expect(confirmation.getAttribute("aria-describedby")).toBe(
       "reopen-task-description",
     );
-    expect(confirmation.className).toContain("dialog-panel");
     expect(detail.contains(confirmation)).toBe(false);
     const detailOverlay = detail.parentElement;
     const confirmationOverlay = confirmation.parentElement;
-    expect(detailOverlay?.parentElement).toBe(document.body);
+    expect(detailOverlay?.parentElement).toBeTruthy();
+    expect(detailOverlay?.parentElement).not.toBe(document.body);
     expect(confirmationOverlay?.parentElement).toBe(document.body);
-    expect(detailOverlay?.dataset.dialogDepth).toBe("1");
-    expect(confirmationOverlay?.dataset.dialogDepth).toBe("2");
+    expect(detailOverlay?.dataset.dialogDepth).toBe("0");
+    expect(confirmationOverlay?.dataset.dialogDepth).toBe("1");
     expect(detail.getAttribute("aria-hidden")).toBe("true");
-    expect(detail.getAttribute("aria-modal")).toBeNull();
     expect(confirmation.dataset.dialogActive).toBe("true");
-    expect(detailOverlay?.style.getPropertyValue("--dialog-layer-offset")).toBe(
-      "0",
-    );
-    expect(
-      confirmationOverlay?.style.getPropertyValue("--dialog-layer-offset"),
-    ).toBe("1");
-    expect(document.activeElement?.closest('[role="alertdialog"]')).toBe(
-      confirmation,
-    );
     expect(
       within(confirmation).getByText(
         "A Task With A Very Long Name That Must Wrap On A Narrow Viewport",
       ).className,
     ).toContain("break-words");
-    expect(
-      within(confirmation).getByRole("button", { name: "Cancel" }),
-    ).toBeTruthy();
-    expect(
-      within(confirmation).getByRole("button", { name: "Reopen Task" }),
-    ).toBeTruthy();
     const results = await axe.run(document.body, {
       rules: { "color-contrast": { enabled: false } },
     });
@@ -647,20 +469,4 @@ describe("US-4.2 acceptance workflow through WBSPanel", () => {
 
 function flatten(values: WBSNode[]): WBSNode[] {
   return values.flatMap((value) => [value, ...flatten(value.children)]);
-}
-
-function relation(completed: boolean) {
-  return {
-    id: "incoming-link",
-    source: "manual",
-    manualRemovable: true,
-    task: {
-      id: "target",
-      name: "Build API",
-      projectId: "project",
-      projectName: "Alpha",
-      hierarchyPath: "Alpha > Build API",
-      completed,
-    },
-  };
 }

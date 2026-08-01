@@ -19,6 +19,11 @@ import (
 )
 
 func testHandler(t *testing.T) http.Handler {
+	handler, _ := testHandlerWithDatabase(t)
+	return handler
+}
+
+func testHandlerWithDatabase(t *testing.T) (http.Handler, *gorm.DB) {
 	t.Helper()
 	database, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{TranslateError: true})
 	if err != nil {
@@ -31,7 +36,7 @@ func testHandler(t *testing.T) http.Handler {
 	service := application.NewService(gormrepo.New(database), application.NoopScheduler{})
 	mux := http.NewServeMux()
 	New(service).Register(mux)
-	return mux
+	return mux, database
 }
 func TestProjectHTTPFlowAndValidation(t *testing.T) {
 	handler := testHandler(t)
@@ -54,6 +59,51 @@ func TestProjectHTTPFlowAndValidation(t *testing.T) {
 	}
 	if response := request(handler, "PATCH", "/api/projects/"+projectID(responseBody(request(handler, "GET", "/api/projects?search=al&page=1&pageSize=5", "")))+"/settings", `{"automaticScheduling":false,"projectBuffer":35}`); response.Code != 200 || !strings.Contains(response.Body.String(), `"projectBuffer":35`) {
 		t.Fatalf("settings: %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestProjectHTTPAllowsLockedNameOnlyRenameAndRejectsSettingsMutation_US31_AC11_US62_AC16A(t *testing.T) {
+	handler, database := testHandlerWithDatabase(t)
+	created := request(handler, "POST", "/api/projects", `{"name":"Alpha","automaticScheduling":false,"schedulingStartDate":"2026-08-03","projectBuffer":35}`)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create: %d %s", created.Code, created.Body.String())
+	}
+	id := projectID(request(handler, "GET", "/api/projects?search=Alpha&page=1&pageSize=5", "").Body.String())
+	if id == "" {
+		t.Fatal("created project ID is empty")
+	}
+
+	// The HTTP fixture has no WBS rows, so seed the Locked state directly. The
+	// scenario under test is the update contract, not lifecycle eligibility.
+	if err := database.Exec("UPDATE projects SET status = ?, schedule_version = ? WHERE id = ?", string(domain.StatusLocked), 7, id).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	renamed := request(handler, "PUT", "/api/projects/"+id, `{"name":" Renamed "}`)
+	if renamed.Code != http.StatusOK || !strings.Contains(renamed.Body.String(), `"name":"Renamed"`) ||
+		!strings.Contains(renamed.Body.String(), `"status":"locked"`) ||
+		!strings.Contains(renamed.Body.String(), `"automaticScheduling":false`) ||
+		!strings.Contains(renamed.Body.String(), `"schedulingStartDate":"2026-08-03"`) ||
+		!strings.Contains(renamed.Body.String(), `"projectBuffer":35`) ||
+		!strings.Contains(renamed.Body.String(), `"scheduleVersion":7`) {
+		t.Fatalf("name-only rename: %d %s", renamed.Code, renamed.Body.String())
+	}
+
+	mixed := request(handler, "PUT", "/api/projects/"+id, `{"name":"Rejected","automaticScheduling":true,"schedulingStartDate":null,"projectBuffer":20}`)
+	if mixed.Code != http.StatusConflict || !strings.Contains(mixed.Body.String(), "PROJECT_LOCKED_READ_ONLY") {
+		t.Fatalf("mixed locked update: %d %s", mixed.Code, mixed.Body.String())
+	}
+	after := request(handler, "GET", "/api/projects/"+id, "")
+	if after.Code != http.StatusOK || !strings.Contains(after.Body.String(), `"name":"Renamed"`) ||
+		!strings.Contains(after.Body.String(), `"automaticScheduling":false`) ||
+		!strings.Contains(after.Body.String(), `"projectBuffer":35`) ||
+		!strings.Contains(after.Body.String(), `"scheduleVersion":7`) {
+		t.Fatalf("mixed update changed state: %d %s", after.Code, after.Body.String())
+	}
+
+	partial := request(handler, "PUT", "/api/projects/"+id, `{"name":"Rejected","projectBuffer":20}`)
+	if partial.Code != http.StatusBadRequest || !strings.Contains(partial.Body.String(), "INVALID_REQUEST") {
+		t.Fatalf("partial settings update: %d %s", partial.Code, partial.Body.String())
 	}
 }
 
@@ -108,6 +158,9 @@ func (*errorService) Create(context.Context, string, bool, *time.Time, int) (*do
 	return nil, errors.New("unused")
 }
 func (*errorService) Update(context.Context, string, string, bool, *time.Time, int) (*domain.Project, error) {
+	return nil, errors.New("unused")
+}
+func (*errorService) Rename(context.Context, string, string) (*domain.Project, error) {
 	return nil, errors.New("unused")
 }
 func (*errorService) ChangeStatus(context.Context, string, domain.Status) (*domain.Project, error) {

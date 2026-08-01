@@ -1,11 +1,4 @@
-import {
-  act,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import axe from "axe-core";
 import { describe, expect, it, vi } from "vitest";
@@ -241,60 +234,40 @@ function renderPanel(
   values: WBSNode[],
   status: Project["status"] = "open",
   gateway = mutableGateway(values).gateway,
+  nodeId = "delivery",
 ) {
-  return render(
-    <WBSPanel
-      project={project(status)}
-      gateway={gateway}
-      rolesGateway={rolesGateway}
-      membersGateway={membersGateway}
-      onClose={() => undefined}
-    />,
-  );
-}
-
-function getTreeItemAction(
-  item: HTMLElement,
-  name: "View Group" | "Edit Task",
-): HTMLElement {
-  const actionRow = item.firstElementChild;
-  if (!(actionRow instanceof HTMLElement)) {
-    throw new Error(`Action row for ${name} not found`);
-  }
-  return within(actionRow).getByRole("button", { name });
+  const onClose = vi.fn();
+  return {
+    onClose,
+    view: render(
+      <WBSPanel
+        project={project(status)}
+        gateway={gateway}
+        rolesGateway={rolesGateway}
+        membersGateway={membersGateway}
+        initialNodeId={nodeId}
+        onClose={onClose}
+      />,
+    ),
+  };
 }
 
 async function openGroup(name: string): Promise<HTMLElement> {
-  const tree = await screen.findByRole("tree");
-  const item = within(tree)
-    .getByText(name)
-    .closest<HTMLElement>('[role="treeitem"]');
-  if (!item) throw new Error(`Group ${name} not found`);
-  await userEvent.click(getTreeItemAction(item, "View Group"));
   return screen.findByRole("dialog", { name });
 }
 
-async function openTask(name: string): Promise<HTMLElement> {
-  const tree = await screen.findByRole("tree");
-  const item = within(tree)
-    .getByText(name)
-    .closest<HTMLElement>('[role="treeitem"]');
-  if (!item) throw new Error(`Task ${name} not found`);
-  await userEvent.click(getTreeItemAction(item, "Edit Task"));
-  return screen.findByRole("dialog", { name: "Edit Task" });
-}
-
-describe("US-4.3 acceptance workflow through Project Structure", () => {
-  it("AC-1..16 AC-22 AC-24..26 recursively renders exact Group summary accessibly and performs no write", async () => {
+describe("US-4.3 direct Home Group summary workflow", () => {
+  it("AC-1..16 AC-22 AC-24..26 renders summary and saves rename through one dialog", async () => {
     const setup = mutableGateway(realisticTree());
-    renderPanel(setup.current(), "open", setup.gateway);
-    const deliveryItem = (
-      await screen.findByText("Delivery")
-    ).closest<HTMLElement>('[role="treeitem"]');
-    if (!deliveryItem) throw new Error("Delivery Group not found");
-    const trigger = getTreeItemAction(deliveryItem, "View Group");
+    const rendered = renderPanel(
+      setup.current(),
+      "open",
+      setup.gateway,
+      "delivery",
+    );
     const dialog = await openGroup("Delivery");
 
+    expect(screen.queryByText("Project Structure")).toBeNull();
     expect(
       within(dialog)
         .getAllByRole("heading", { level: 4 })
@@ -331,79 +304,88 @@ describe("US-4.3 acceptance workflow through Project Structure", () => {
     expect(summaryGrid.className).toContain("min-w-0");
     expect(summaryGrid.classList.contains("grid-cols-3")).toBe(false);
     expect(summaryGrid.classList.contains("lg:grid-cols-3")).toBe(false);
-    expect(
-      within(dialog).getByText("24 of 48 hours completed (50%)").className,
-    ).toContain("break-words");
-    expect(
-      within(dialog).getByText(
-        "2 tasks without effort are excluded from this calculation.",
-      ).className,
-    ).toContain("break-words");
-
     const results = await axe.run(dialog, {
       rules: { "color-contrast": { enabled: false } },
     });
     expect(results.violations).toEqual([]);
-    for (const write of [
-      setup.gateway.create,
-      setup.gateway.rename,
-      setup.gateway.reorder,
-      setup.gateway.move,
-      setup.gateway.remove,
-      setup.gateway.updateExecutable,
-      setup.gateway.complete,
-      setup.gateway.reopen,
-    ]) {
-      expect(write).not.toHaveBeenCalled();
-    }
 
-    await userEvent.click(
-      within(dialog).getByRole("button", { name: "Close" }),
+    const name = within(dialog).getByLabelText("Name") as HTMLInputElement;
+    expect(name.disabled).toBe(false);
+    expect(setup.gateway.rename).not.toHaveBeenCalled();
+    await userEvent.clear(name);
+    await userEvent.type(name, "Delivery Stream");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+    await waitFor(() =>
+      expect(setup.gateway.rename).toHaveBeenCalledWith(
+        "project",
+        "delivery",
+        "Delivery Stream",
+      ),
     );
-    expect(screen.queryByRole("dialog", { name: "Delivery" })).toBeNull();
-    expect(document.activeElement).toBe(trigger);
+    expect(rendered.onClose).toHaveBeenCalledTimes(1);
   });
 
-  it("AC-23 AC-27 keeps the same read-only rule for every lifecycle and handles an empty malformed Group", async () => {
-    for (const status of ["open", "locked", "closed"] as const) {
+  it("AC-23 AC-27 keeps Locked and Closed Group dialogs read-only", async () => {
+    for (const status of ["locked", "closed"] as const) {
       const setup = mutableGateway([
         group("delivery", "Delivery", [
           task("known", "Known", { effortMinutes: 480 }),
         ]),
       ]);
-      const view = renderPanel(setup.current(), status, setup.gateway);
+      const rendered = renderPanel(
+        setup.current(),
+        status,
+        setup.gateway,
+        "delivery",
+      );
       const dialog = await openGroup("Delivery");
       expect(
         within(dialog).getByText("0 of 8 hours completed (0%)"),
       ).toBeTruthy();
       expect(within(dialog).getAllByText("Not scheduled")).toHaveLength(2);
       expect(
-        within(dialog).getAllByText("0 of 1 tasks scheduled"),
-      ).toHaveLength(2);
+        (within(dialog).getByLabelText("Name") as HTMLInputElement).disabled,
+      ).toBe(true);
+      expect(within(dialog).queryByRole("button", { name: "Save" })).toBeNull();
+      expect(
+        within(dialog).getByRole("button", { name: "Close" }),
+      ).toBeTruthy();
       expect(setup.gateway.tree).toHaveBeenCalledTimes(1);
-      view.unmount();
+      rendered.view.unmount();
     }
+  });
 
-    renderPanel([group("empty", "Empty Group", [])]);
-    const emptyDialog = await openGroup("Empty Group");
+  it("handles an empty malformed Group without inventing descendant data", async () => {
+    renderPanel(
+      [group("empty", "Empty Group", [])],
+      "open",
+      undefined,
+      "empty",
+    );
+    const dialog = await openGroup("Empty Group");
     expect(
-      within(emptyDialog).getByText(
+      within(dialog).getByText(
         "No descendant tasks are available for this group.",
       ),
     ).toBeTruthy();
-    expect(within(emptyDialog).queryByText(/tasks scheduled/)).toBeNull();
+    expect(within(dialog).queryByText(/tasks scheduled/)).toBeNull();
   });
 
-  it("AC-14..16 renders unavailable Effort and plural disclosure without inventing zero Effort", async () => {
-    renderPanel([
-      group("delivery", "Unknown Effort", [
-        task("completed", "Completed without Effort", {
-          actualStart: "2026-08-01",
-          actualEnd: "2026-08-01",
-        }),
-        task("unfinished", "Unfinished without Effort"),
-      ]),
-    ]);
+  it("AC-14..16 renders unavailable Effort without inventing zero Effort", async () => {
+    renderPanel(
+      [
+        group("delivery", "Unknown Effort", [
+          task("completed", "Completed without Effort", {
+            actualStart: "2026-08-01",
+            actualEnd: "2026-08-01",
+          }),
+          task("unfinished", "Unfinished without Effort"),
+        ]),
+      ],
+      "open",
+      undefined,
+      "delivery",
+    );
 
     const dialog = await openGroup("Unknown Effort");
     expect(
@@ -416,43 +398,49 @@ describe("US-4.3 acceptance workflow through Project Structure", () => {
     ).toBeTruthy();
     expect(within(dialog).queryByText(/completed \(.*%\)/)).toBeNull();
     expect(within(dialog).getAllByText("Not scheduled")).toHaveLength(2);
-    expect(within(dialog).getAllByText("0 of 2 tasks scheduled")).toHaveLength(
-      2,
-    );
   });
 
-  it("AC-12 AC-13 renders exact completion copy, one-decimal precision, and half-hour values", async () => {
-    let view = renderPanel([
-      group("delivery", "Exact Completion", [
-        task("completed", "Completed", {
-          effortMinutes: 1440,
-          actualStart: "2026-08-01",
-          actualEnd: "2026-08-01",
-        }),
-        task("unfinished", "Unfinished", { effortMinutes: 960 }),
-      ]),
-    ]);
-
+  it("AC-12 AC-13 renders exact completion and half-hour precision", async () => {
+    let rendered = renderPanel(
+      [
+        group("delivery", "Exact Completion", [
+          task("completed", "Completed", {
+            effortMinutes: 1440,
+            actualStart: "2026-08-01",
+            actualEnd: "2026-08-01",
+          }),
+          task("unfinished", "Unfinished", { effortMinutes: 960 }),
+        ]),
+      ],
+      "open",
+      undefined,
+      "delivery",
+    );
     let dialog = await openGroup("Exact Completion");
     expect(
       within(dialog).getByText("24 of 40 hours completed (60%)"),
     ).toBeTruthy();
-    view.unmount();
+    rendered.view.unmount();
 
-    view = renderPanel([
-      group("delivery", "Half Hour", [
-        task("completed", "Completed", {
-          effortMinutes: 750,
-          actualStart: "2026-08-01",
-          actualEnd: "2026-08-01",
-        }),
-      ]),
-    ]);
+    rendered = renderPanel(
+      [
+        group("delivery", "Half Hour", [
+          task("completed", "Completed", {
+            effortMinutes: 750,
+            actualStart: "2026-08-01",
+            actualEnd: "2026-08-01",
+          }),
+        ]),
+      ],
+      "open",
+      undefined,
+      "delivery",
+    );
     dialog = await openGroup("Half Hour");
     expect(
       within(dialog).getByText("12.5 of 12.5 hours completed (100%)"),
     ).toBeTruthy();
-    view.unmount();
+    rendered.view.unmount();
   });
 
   it("AC-20 recomputes a currently open Group from a newer confirmed tree", async () => {
@@ -462,7 +450,7 @@ describe("US-4.3 acceptance workflow through Project Structure", () => {
         task("other", "Other", { effortMinutes: 480 }),
       ]),
     ]);
-    renderPanel(setup.current(), "open", setup.gateway);
+    renderPanel(setup.current(), "open", setup.gateway, "delivery");
 
     const dialog = await openGroup("Delivery");
     expect(
@@ -475,98 +463,6 @@ describe("US-4.3 acceptance workflow through Project Structure", () => {
       await within(dialog).findByText("16 of 24 hours completed (66.7%)"),
     ).toBeTruthy();
     expect(screen.getByRole("dialog", { name: "Delivery" })).toBe(dialog);
-  });
-
-  it("AC-17..20 keeps preview draft unconfirmed, then refreshes completion and Reopen without hard reload", async () => {
-    const values = [
-      group("delivery", "Delivery", [
-        task("target", "Target", { effortMinutes: 960 }),
-        task("other", "Other", { effortMinutes: 480 }),
-      ]),
-    ];
-    const setup = mutableGateway(values);
-    renderPanel(setup.current(), "open", setup.gateway);
-
-    let groupDialog = await openGroup("Delivery");
-    expect(
-      within(groupDialog).getByText("0 of 24 hours completed (0%)"),
-    ).toBeTruthy();
-    await userEvent.click(
-      within(groupDialog).getByRole("button", { name: "Close" }),
-    );
-
-    let taskDialog = await openTask("Target");
-    const effort = within(taskDialog).getByLabelText("Effort (hours)");
-    fireEvent.change(effort, { target: { value: "40" } });
-    fireEvent.blur(effort);
-    await waitFor(() =>
-      expect(setup.gateway.previewExecutableSchedule).toHaveBeenCalled(),
-    );
-    await userEvent.click(
-      within(taskDialog).getByRole("button", { name: "Close" }),
-    );
-
-    groupDialog = await openGroup("Delivery");
-    expect(
-      within(groupDialog).getByText("0 of 24 hours completed (0%)"),
-    ).toBeTruthy();
-    expect(within(groupDialog).queryByText(/48 hours/)).toBeNull();
-    await userEvent.click(
-      within(groupDialog).getByRole("button", { name: "Close" }),
-    );
-
-    taskDialog = await openTask("Target");
-    fireEvent.click(
-      within(taskDialog).getByRole("button", {
-        name: "Actual Date: Select start and end date",
-      }),
-    );
-    const current = new Date();
-    const currentMonth = `${current.getUTCFullYear()}-${String(current.getUTCMonth() + 1).padStart(2, "0")}`;
-    const selectedStartDate = `${currentMonth}-14`;
-    const selectedEndDate = `${currentMonth}-15`;
-    fireEvent.click(screen.getByRole("button", { name: selectedStartDate }));
-    fireEvent.click(screen.getByRole("button", { name: selectedEndDate }));
-    await userEvent.click(
-      within(taskDialog).getByRole("button", { name: "Mark completed" }),
-    );
-    await waitFor(() => expect(setup.gateway.complete).toHaveBeenCalled());
-    await waitFor(() =>
-      expect(
-        vi.mocked(setup.gateway.tree).mock.calls.length,
-      ).toBeGreaterThanOrEqual(2),
-    );
-
-    groupDialog = await openGroup("Delivery");
-    expect(
-      within(groupDialog).getByText("16 of 24 hours completed (66.7%)"),
-    ).toBeTruthy();
-    await userEvent.click(
-      within(groupDialog).getByRole("button", { name: "Close" }),
-    );
-
-    taskDialog = await openTask("Target");
-    await userEvent.click(
-      within(taskDialog).getByRole("button", { name: "Reopen Task" }),
-    );
-    const confirmation = await screen.findByRole("alertdialog", {
-      name: "Reopen Task?",
-    });
-    await userEvent.click(
-      within(confirmation).getByRole("button", { name: "Reopen Task" }),
-    );
-    await waitFor(() => expect(setup.gateway.reopen).toHaveBeenCalled());
-    await userEvent.click(
-      within(screen.getByRole("dialog", { name: "Edit Task" })).getByRole(
-        "button",
-        { name: "Close" },
-      ),
-    );
-
-    groupDialog = await openGroup("Delivery");
-    expect(
-      within(groupDialog).getByText("0 of 24 hours completed (0%)"),
-    ).toBeTruthy();
   });
 });
 

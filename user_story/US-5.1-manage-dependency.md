@@ -1,9 +1,12 @@
 # US-5.1 — Manage Dependency
 
-> **Product decision update — US-7.1:** Home Portfolio Gantt displays one
-> read-only arrow per effective dependency endpoint pair when both Task bars are
-> renderable. Dependency creation, deletion, ownership changes, validation, and
-> contextual editing remain owned by US-5.1 and continue through the Task form.
+> **Product decision update — US-7.1:** Home Portfolio Gantt is the canonical
+> active-Project WBS surface and displays one read-only arrow per effective
+> dependency endpoint pair when both Task bars are renderable. The standalone
+> Project Structure entry point is removed. Dependency creation, deletion,
+> ownership changes, validation, and contextual editing remain owned by US-5.1
+> and continue through the shared Edit Task form opened directly from Task Name
+> on Home.
 
 > **Product decision update — US-6.2:** Dependency planning is immutable while either endpoint belongs to a Locked Project. Existing relations remain readable scheduling anchors, but create/delete/ownership change/retarget requires affected Projects to be Open and follows the generic cross-project impact warning/confirmation contract. Completion uses complete Actual Date. Successor completion requires every predecessor already completed, but historical Actual Date ranges may overlap. Actual End remains the readiness anchor.
 
@@ -83,10 +86,12 @@ Expected Start pada bagian `Blocks` merupakan scheduler projection dari US-6.1. 
 
 ## 5. UI Placement and User Flow
 
-Dependency dikelola dari contextual Edit Task form yang digunakan oleh
-Project Structure dan US-7.1 Home Portfolio Gantt. US-7.1 menyediakan workspace
-dan read-only arrow projection; komponen serta application contract story ini
-harus digunakan kembali dan tidak boleh diduplikasi oleh Home.
+Dependency dikelola dari shared contextual Edit Task form opened by activating
+Task Name on US-7.1 Home Portfolio Gantt. US-7.1 menyediakan workspace dan
+read-only arrow projection; komponen serta application contract story ini harus
+digunakan kembali dan tidak boleh diduplikasi oleh Home. Home invocation renders
+directly over Home and must not mount Projects or an intermediate Project
+Structure page.
 
 ### Task Grid
 
@@ -96,8 +101,9 @@ Task menyediakan dua field atau detail sections:
 - **Blocks**
 
 Keduanya editable melalui contextual Edit Task form. Home Task Grid menggunakan
-behaviour yang sama melalui form tersebut. Gantt tetap read-only: arrow tidak
-mempunyai create/delete/retarget interaction.
+behaviour yang sama melalui form tersebut. Activating Task Name is the primary
+entry; completed and Locked Task retain Edit Task according to US-4.2/US-6.2.
+Gantt tetap read-only: arrow tidak mempunyai create/delete/retarget interaction.
 
 Dependency row menampilkan source text/badge:
 
@@ -466,7 +472,7 @@ Rules:
 
 ### AC-1 — Menampilkan Blocked by dan Blocks
 
-**Given** Engineering Lead membuka contextual Edit Task form pada Project Structure
+**Given** Engineering Lead membuka shared Edit Task form dari Task Name pada Home
 **When** dependency data berhasil dimuat
 **Then** Task menampilkan `Blocked by` dan `Blocks`
 **And** keduanya merepresentasikan relation yang sama dari arah berbeda.
@@ -1254,8 +1260,9 @@ Implementasi harus menilai dan memperbarui:
   - Concurrency and transaction strategy.
   - Index and query strategy.
 - API documentation.
-- Project Structure dan US-7.1 Home Portfolio Gantt documentation untuk
-  contextual dependency editor reuse dan read-only arrow projection.
+- US-7.1 Home Portfolio Gantt documentation untuk shared Edit Task dependency
+  editor reuse, removed Project Structure routing, dan read-only arrow
+  projection.
 - US-6.1 agar menggunakan effective dependency graph dan ownership projection ini.
 - Manual/automatic dependency source, reconciliation, and unlink semantics.
 
@@ -1285,8 +1292,8 @@ README dan environment documentation hanya diubah bila setup berubah.
 - Delete Task memutus seluruh incoming dan outgoing dependency.
 - Tidak ada auto-reconnect manual dependency; automatic reconciliation tidak pernah menciptakan manual ownership.
 - Expected Start pada `Blocks` berasal dari US-6.1; sebelum concrete projection tersedia tampil `Not scheduled`.
-- Project Structure dan US-7.1 Home Task Grid menggunakan contextual Edit Task
-  form dan application contract yang sama.
+- US-7.1 Home Task Grid membuka shared contextual Edit Task form dan application
+  contract yang sama secara langsung tanpa Project Structure.
 - Structural Task-to-Group conversion me-retarget dependency ke conversion child
   secara atomik.
 - Story ini tidak mengimplementasikan timeline algorithm; successful mutation dapat mengoordinasikan concrete US-6.1 scheduler.

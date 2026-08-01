@@ -38,6 +38,7 @@ export function SchedulingImpactDialog() {
       titleID="scheduling-impact-title"
       descriptionID="scheduling-impact-description"
       kind="alertdialog"
+      nested
       closeOnBackdrop={false}
       onClose={close}
     >

@@ -6,6 +6,8 @@
 > transitive recalculation scope, and Project Priority/capacity changes while
 > Locked Projects exist. It supersedes contradictory wording in US-1.2,
 > US-2.1, US-2.2, US-3.1, US-3.3, US-4.1, US-4.2, US-5.1, and US-6.1.
+> US-7.1 remains authoritative for the Home presentation surface and direct
+> dialog orchestration described by this story.
 
 ## 1. User Story
 
@@ -66,6 +68,7 @@ membuka Project satu per satu dalam urutan yang mustahil.
 | Impacted Project | Project other than the mutation owner whose confirmed scheduling projection would change |
 | Transitive impacted scope | Impacted set expanded A→B→C until no further Project changes |
 | Required Locked Reopen Closure | Every Locked Project that must become Open together so a requested Reopen can be calculated without mutating any remaining Locked Project |
+| Locked Project Name exception | Project Name may be renamed while Locked; all scheduling-relevant Project settings and Task/WBS planning data remain immutable |
 
 ---
 
@@ -84,8 +87,9 @@ membuka Project satu per satu dalam urutan yang mustahil.
 - Recalculation of unfinished work in transitive impacted scope.
 - Generic cross-project impact preview, warning, confirmation, stale-preview protection, and atomic save.
 - Impact caused by Task, dependency, priority, Member capacity/buffer, Capacity Override, Public Holiday, Project Buffer, Project Reopen, and future scheduling-impacting settings.
-- Locked Project blocking rules and Actual Date exception.
+- Locked Project blocking rules, Project Name-only rename exception, and Actual Date exception.
 - Atomic bulk reopen for mutually/transitively related Locked Projects.
+- Direct Home entry for Locked Project rename and Locked Task Actual Date without hidden Project/Project Structure navigation.
 - Lock eligibility, rollback, concurrency, structured errors, accessibility, and Three-Level Confidence evidence.
 
 ### 4.2 Out of Scope
@@ -394,23 +398,42 @@ queryable without recomputing different numbers.
 Lock validates current confirmed state and does not run scheduler to repair an
 unscheduled Task. Failure leaves Project Open and unchanged.
 
-### 8.2 Planning Immutability
+### 8.2 Planning Immutability and Project Name Exception
 
 While Project Locked, the following are prohibited:
 
 - create, rename, edit, delete, move, or reorder Task/WBS;
 - add child or Executable-to-Group conversion;
-- change Role, Assignee, Effort, Lag, Name, or manual/generated timeline;
+- change Task/WBS Role, Assignee, Effort, Lag, Name, or manual/generated timeline;
 - create, edit, delete, retarget, or change dependency ownership;
 - Reopen completed Task;
 - Project Settings changes that alter scheduling behavior.
 
-Frontend disables/hides planning actions with a clear explanation. Backend
-rejects direct API bypass. There is no implicit Reopen.
+The only Project-level edit permitted while Locked is **Project Name**. Rules:
+
+- Edit Project remains available from both Projects and the Home Project Name;
+- only the Project Name control is enabled; status and every scheduling-related
+  setting remain read-only;
+- the update payload must contain only the normalized Name and concurrency data
+  required by the established Project contract;
+- mixed payloads that also attempt to change Settings, status, Priority, or any
+  other protected field are rejected atomically;
+- successful rename does not run impact simulation, scheduler recalculation,
+  baseline mutation, status transition, or Project-version change beyond the
+  normal metadata concurrency contract defined by US-3.1;
+- rename uses the same shared Edit Project dialog and command from both entry
+  points; Home must not route through or render Projects in the background.
+
+Frontend disables/hides prohibited planning actions with a clear explanation.
+Backend rejects direct API bypass. There is no implicit Reopen.
 
 ### 8.3 Actual Date Exception
 
-Actual Date remains writable on an unfinished Task in a Locked Project.
+Actual Date remains writable on an unfinished Task in a Locked Project. The
+Task Name on Home opens the shared Edit Task dialog directly; Home must not
+change route, mount Projects, or open Project Structure in the background. All
+planning fields stay read-only while the eligible Actual Date controls remain
+writable.
 
 When saved:
 
@@ -470,7 +493,8 @@ scheduling state or available capacity, including:
 - future scheduling-impacting capacity or planning settings.
 
 A mutation that has no scheduling impact follows its owning story and need not
-show a cross-project warning.
+show a cross-project warning. Project Name-only rename is explicitly outside
+this impact guard.
 
 ### 9.2 Impact Definition
 
@@ -688,7 +712,7 @@ Existing owning endpoints remain authoritative. Minimum stable concepts:
 | `ACTUAL_DATE_INVALID_RANGE` | 400/422 | Actual Start is after Actual End |
 | `ACTUAL_DATE_PREDECESSOR_UNFINISHED` | 409 | At least one effective predecessor lacks a complete Actual Date |
 | `PROJECT_CANNOT_LOCK_WITH_UNSCHEDULED_TASKS` | 409 | At least one unfinished Task is not fully scheduled |
-| `PROJECT_LOCKED_READ_ONLY` | 409 | Prohibited planning mutation requested on Locked Project |
+| `PROJECT_LOCKED_READ_ONLY` | 409 | Prohibited mutation requested on Locked Project; Project Name-only rename and eligible Actual Date mutation are excluded |
 | `SCHEDULING_IMPACT_CONFIRMATION_REQUIRED` | 409 | Mutation affects Open Projects and requires user confirmation |
 | `SCHEDULING_LOCKED_PROJECT_IMPACT` | 409 | Ordinary mutation affects at least one Locked Project and is blocked |
 | `SCHEDULING_IMPACT_STALE` | 409 | Impact set/version changed after preview |
@@ -807,8 +831,27 @@ internal lock IDs, or per-Project scheduler internals.
 ### AC-16 — Locked planning mutation remains rejected
 
 **Given** Project Locked
-**When** non-Actual planning, WBS, dependency, Settings, or Task Reopen mutation is requested
-**Then** request is rejected with `PROJECT_LOCKED_READ_ONLY`.
+**When** non-Actual Task/WBS planning, dependency, Settings, lifecycle, or Task Reopen mutation is requested
+**Then** request is rejected with `PROJECT_LOCKED_READ_ONLY`
+**And** the Project Name-only exception cannot be used to smuggle another protected change.
+
+### AC-16A — Locked Project may be renamed from Projects or Home
+
+**Given** Project Locked
+**When** user opens Edit Project from Projects or clicks the Project Name on Home
+**Then** Project Name is editable
+**And** status and every scheduling-related setting are read-only
+**And** saving a valid Name-only change uses the same Project command from both entry points
+**And** no scheduler, impact preview, baseline mutation, or status transition runs.
+
+### AC-16B — Locked Task Actual Date opens directly from Home
+
+**Given** unfinished Task belongs to a Locked Project
+**When** user clicks the Task Name on Home
+**Then** the shared Edit Task dialog opens directly over Home
+**And** planning controls remain read-only
+**And** eligible Actual Date controls remain writable
+**And** Projects and Project Structure are not opened or rendered in the background.
 
 ### AC-17 — Lock requires every unfinished Task scheduled
 
@@ -925,6 +968,10 @@ schedule-version change.
 | TC-13 | Locked Task receives Actual Date | Baseline unchanged; Actual Allocation stored |
 | TC-14 | Locked Actual Date impacts Open B and independent C | B recalculated; C untouched |
 | TC-15 | Locked Actual Date overlaps another Locked allocation | Grouped warning/confirm; save succeeds; both locked baselines unchanged |
+| TC-15A | Rename Locked Project from Projects | Name changes; protected fields/baseline/status unchanged; no scheduler or impact preview |
+| TC-15B | Rename Locked Project from Home | Same shared command/result as Projects; route stays Home |
+| TC-15C | Submit Locked Project Name plus protected Settings change | Whole request rejected with `PROJECT_LOCKED_READ_ONLY` |
+| TC-15D | Open Locked Task from Home and save Actual Date | Direct shared Task dialog; planning fields read-only; factual save follows Locked Actual Date rules |
 | TC-16 | View completed Task allocation | Execution/Commitment/Actual groups show daily rows and totals |
 | TC-17 | Query Task POV and assignee POV | Same allocation row totals |
 | TC-18 | Edit Task impacts Open B/C | Warning names B/C; confirm required |
@@ -958,13 +1005,14 @@ schedule-version change.
 - Even excess distribution with deterministic minute remainder.
 - Historical overcapacity and no carry-over.
 - Completed predecessor validation with allowed Actual overlap.
-- Lock eligibility and Locked mutation policy.
+- Lock eligibility, Locked mutation policy, and Project Name-only exception.
 - Impact classification and Locked exception for Actual Date.
 - Required Locked Reopen closure/fixed-point expansion.
 
 ### 16.2 Application Tests
 
 - Completion coordination for Open and Locked Projects.
+- Locked Project Name-only rename bypasses scheduling impact while mixed protected payloads fail atomically.
 - Generic impact preview and confirmation token.
 - Stale preview rejection.
 - Actual Date save with Locked impact exception.
@@ -992,7 +1040,7 @@ schedule-version change.
 - Actual Date factual exception.
 - Stale-impact response.
 - Bulk-Reopen-required response and Reopen All command.
-- Locked read-only bypass protection.
+- Locked read-only bypass protection, including mixed Name + protected-field payloads.
 
 ### 16.5 Frontend and Acceptance-Level Tests
 
@@ -1002,6 +1050,8 @@ schedule-version change.
 - Grouped Open/Locked impact warning names only.
 - Confirmation, stale warning refresh, cancel, and no partial save.
 - Mutual Locked Reopen All workflow.
+- Locked Project rename from Projects and Home uses one shared command and leaves scheduling state untouched.
+- Locked Task opens directly from Home for Actual Date without hidden route/page orchestration.
 - Accessibility, focus management, pending state, retry/reload, and stale-response protection.
 
 Every affected Acceptance Criterion requires Code Inspection, Unit/Integration,
@@ -1016,12 +1066,13 @@ This story requires reconciliation of:
 - US-1.2 Member Daily Capacity and Buffer impact behavior;
 - US-2.1 Capacity Override impact behavior;
 - US-2.2 Public Holiday impact behavior;
-- US-3.1 Project Lock/Reopen/Priority lifecycle;
+- US-3.1 Project Lock/Reopen/Priority lifecycle and Locked Project Name-only edit;
 - US-3.3 Project Buffer and Settings impact behavior;
 - US-4.1 Task completion, Actual Date fields, and allocation verification;
 - US-4.2 clearing both Actual Start and Actual End;
 - US-5.1 completed predecessor validation and Actual overlap semantics;
 - US-6.1 trigger, completed allocation, transitive impact, and Locked anchors;
+- US-7.1 canonical Home WBS surface, direct shared dialogs, and removal of Project Structure;
 - architecture and product/domain context.
 
 Forecast remains deferred and must not be inferred from Actual Allocation.
@@ -1044,7 +1095,10 @@ Forecast remains deferred and must not be inferred from Actual Allocation.
 - Historical overcapacity is valid and never carried as debt.
 - One canonical allocation projection supports Task-centric and future assignee-centric views and is the sole capacity-consuming reservation for a completed Task.
 - Current UI displays Execution, Commitment, and Actual allocation in Task details for verification.
-- Locked Project baseline remains immutable, but Actual Date and Actual Allocation may be recorded.
+- Locked Project baseline remains immutable, but Project Name may be renamed and Actual Date/Actual Allocation may be recorded.
+- Locked Project Name-only rename is metadata-only: it uses the same Project command from Projects and Home and never runs scheduler or impact preview.
+- A Locked Project rename payload that also changes any protected field is rejected atomically.
+- Locked Task Edit opens directly over Home for eligible Actual Date mutation; no hidden Projects or Project Structure navigation is permitted.
 - Locked completion may trigger scheduler for impacted Open Projects while never mutating Locked Projects.
 - Actual Date remains saveable after grouped warning/confirmation even when another Locked Project is impacted.
 - Ordinary scheduling-impacting mutation is blocked when any Locked Project is impacted.

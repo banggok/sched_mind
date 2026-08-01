@@ -70,6 +70,20 @@ func (s *Service) Create(ctx context.Context, name string, automaticScheduling b
 	return value, nil
 }
 
+func (s *Service) Rename(ctx context.Context, id, name string) (*domain.Project, error) {
+	if _, err := domain.NormalizeName(name); err != nil {
+		return nil, err
+	}
+	value, err := s.store.Rename(ctx, id, name, s.now())
+	if err != nil {
+		return nil, fmt.Errorf("rename project: %w", err)
+	}
+	if value == nil {
+		return nil, errors.New("rename project: store returned nil without error")
+	}
+	return value, nil
+}
+
 func (s *Service) Update(ctx context.Context, id, name string, automaticScheduling bool, schedulingStartDate *time.Time, projectBuffer int) (*domain.Project, error) {
 	ctx = schedulingimpact.WithOperation(ctx, id, schedulingimpact.ModeOrdinary)
 	if _, err := domain.NormalizeName(name); err != nil {

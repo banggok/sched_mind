@@ -10,7 +10,7 @@ var (
 	ErrStatusInvalid              = errors.New("project status is invalid")
 	ErrStatusTransitionNotAllowed = errors.New("project status transition is not allowed")
 	ErrClosedReadOnly             = errors.New("closed project is read-only")
-	ErrLockedReadOnly             = errors.New("locked project is read-only except for Actual Date completion")
+	ErrLockedReadOnly             = errors.New("locked project is read-only except for Project Name and Actual Date completion")
 	ErrCannotLockUnscheduled      = errors.New("project cannot lock while unfinished tasks are not fully scheduled")
 	ErrCannotLockWithoutTasks     = errors.New("project cannot lock without tasks")
 	ErrCannotCloseWithActiveTasks = errors.New("project cannot close while tasks are unfinished")

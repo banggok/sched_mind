@@ -25,6 +25,7 @@ import {
   deleteProject,
   listProjects,
   moveProjectPriority,
+  renameProject,
   updateProject,
 } from "../application/projectManagement";
 import {
@@ -42,7 +43,7 @@ import {
 } from "../domain/project";
 
 type FormState = { mode: "create" | "edit"; project?: Project };
-type CommandState = {
+export type ProjectCommandState = {
   kind: "lock" | "close" | "reopen" | "delete";
   project: Project;
 };
@@ -50,24 +51,30 @@ type CommandState = {
 export function ProjectsPage({
   gateway,
   loadPublicHolidayDates,
-  onManageWBS,
   renderProjectSummary,
   initialEditProject,
   onInitialEditConsumed,
+  initialCommand,
+  onInitialCommandConsumed,
+  dialogOnly = false,
   returnPageOnClose,
   onReturnToPage,
+  onOverlayComplete,
 }: {
   gateway: ProjectsGateway;
   loadPublicHolidayDates?(
     startDate: string,
     endDate: string,
   ): Promise<string[]>;
-  onManageWBS?(project: Project): void;
   renderProjectSummary?(project: Project): ReactNode;
   initialEditProject?: Project;
   onInitialEditConsumed?(): void;
+  initialCommand?: ProjectCommandState;
+  onInitialCommandConsumed?(): void;
+  dialogOnly?: boolean;
   returnPageOnClose?: string;
   onReturnToPage?(): void;
+  onOverlayComplete?(): void;
 }) {
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
@@ -77,7 +84,7 @@ export function ProjectsPage({
   const [error, setError] = useState("");
   const [reload, setReload] = useState(0);
   const [form, setForm] = useState<FormState>();
-  const [command, setCommand] = useState<CommandState>();
+  const [command, setCommand] = useState<ProjectCommandState>();
   const [bulkReopenPlan, setBulkReopenPlan] = useState<BulkReopenPlan>();
   const [name, setName] = useState("");
   const [automaticScheduling, setAutomaticScheduling] = useState(true);
@@ -111,6 +118,17 @@ export function ProjectsPage({
   }, [initialEditProject, onInitialEditConsumed]);
 
   useEffect(() => {
+    if (!initialCommand) return;
+    setOperationError("");
+    setCommand(initialCommand);
+    onInitialCommandConsumed?.();
+  }, [initialCommand, onInitialCommandConsumed]);
+
+  useEffect(() => {
+    if (dialogOnly) {
+      setLoading(false);
+      return;
+    }
     const controller = new AbortController();
     setLoading(true);
     setError("");
@@ -129,7 +147,7 @@ export function ProjectsPage({
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [gateway, page, query, reload]);
+  }, [dialogOnly, gateway, page, query, reload]);
 
   function refresh(message: string) {
     setNotification(message);
@@ -195,17 +213,22 @@ export function ProjectsPage({
           schedulingStartDate || undefined,
           Number(projectBuffer),
         );
-      else if (form.project)
-        await updateProject(
-          gateway,
-          form.project.id,
-          name,
-          automaticScheduling,
-          schedulingStartDate || undefined,
-          Number(projectBuffer),
-        );
+      else if (form.project) {
+        if (form.project.status === "locked")
+          await renameProject(gateway, form.project.id, name);
+        else
+          await updateProject(
+            gateway,
+            form.project.id,
+            name,
+            automaticScheduling,
+            schedulingStartDate || undefined,
+            Number(projectBuffer),
+          );
+      }
       setForm(undefined);
       refresh(form.mode === "create" ? "Project added." : "Project updated.");
+      onOverlayComplete?.();
       if (returnPageOnClose && form.mode === "edit") onReturnToPage?.();
     } catch (reason: unknown) {
       if (
@@ -247,6 +270,7 @@ export function ProjectsPage({
               : "Project reopened.";
       setCommand(undefined);
       refresh(message);
+      onOverlayComplete?.();
     } catch (reason: unknown) {
       if (
         reason instanceof ProjectOperationError &&
@@ -273,6 +297,7 @@ export function ProjectsPage({
       );
       setBulkReopenPlan(undefined);
       refresh("Related projects reopened.");
+      onOverlayComplete?.();
     } catch (reason: unknown) {
       setOperationError(userMessage(reason));
     } finally {
@@ -294,98 +319,99 @@ export function ProjectsPage({
   }
   return (
     <>
-      <PageContent>
-        <section className="min-w-0">
-          <div className="page-header">
-            <Breadcrumb activePage="projects" />
-            <Button variant="primary" onClick={openCreate}>
-              + Add Project
-            </Button>
-          </div>
-          <ListSurface
-            title="Projects"
-            controls={
-              <SearchField
-                label="Search projects"
-                value={search}
-                onChange={(value) => {
-                  setSearch(value);
-                  setPage(1);
-                }}
-              />
-            }
-          >
-            {(loading && items.length === 0) || searchPending ? (
-              <ListSkeleton label="Loading projects" />
-            ) : error ? (
-              <div className="p-10 text-center">
-                <p className="font-bold text-danger" role="alert">
-                  {error}
-                </p>
-                <Button
-                  variant="quiet"
-                  className="mt-4"
-                  onClick={() => setReload((value) => value + 1)}
-                >
-                  Try again
-                </Button>
-              </div>
-            ) : items.length === 0 && !debouncedSearch ? (
-              <EmptyState
-                title="No projects yet"
-                description="Add the first project to begin planning delivery."
-                action={
-                  <Button variant="quiet" onClick={openCreate}>
-                    Add Project
-                  </Button>
-                }
-              />
-            ) : items.length === 0 ? (
-              <EmptyState
-                title="No matching projects"
-                description="Try another search term."
-                action={
+      {!dialogOnly ? (
+        <PageContent>
+          <section className="min-w-0">
+            <div className="page-header">
+              <Breadcrumb activePage="projects" />
+              <Button variant="primary" onClick={openCreate}>
+                + Add Project
+              </Button>
+            </div>
+            <ListSurface
+              title="Projects"
+              controls={
+                <SearchField
+                  label="Search projects"
+                  value={search}
+                  onChange={(value) => {
+                    setSearch(value);
+                    setPage(1);
+                  }}
+                />
+              }
+            >
+              {(loading && items.length === 0) || searchPending ? (
+                <ListSkeleton label="Loading projects" />
+              ) : error ? (
+                <div className="p-10 text-center">
+                  <p className="font-bold text-danger" role="alert">
+                    {error}
+                  </p>
                   <Button
                     variant="quiet"
-                    onClick={() => {
-                      setSearch("");
-                      setPage(1);
-                    }}
+                    className="mt-4"
+                    onClick={() => setReload((value) => value + 1)}
                   >
-                    Clear search
+                    Try again
                   </Button>
-                }
-              />
-            ) : (
-              <ul className="divide-y divide-border-subtle">
-                {items.map((project, index) => (
-                  <ProjectRow
-                    key={project.id}
-                    project={project}
-                    first={page === 1 && index === 0}
-                    busy={submitting}
-                    onEdit={() => openEdit(project)}
-                    onCommand={(kind) => {
-                      setOperationError("");
-                      setCommand({ kind, project });
-                    }}
-                    onMove={(direction) => void move(project, direction)}
-                    onManageWBS={() => onManageWBS?.(project)}
-                  />
-                ))}
-              </ul>
-            )}
-            {!loading && !searchPending && !error && total > 0 ? (
-              <PaginationControls
-                page={page}
-                pageSize={5}
-                total={total}
-                onPageChange={setPage}
-              />
-            ) : null}
-          </ListSurface>
-        </section>
-      </PageContent>
+                </div>
+              ) : items.length === 0 && !debouncedSearch ? (
+                <EmptyState
+                  title="No projects yet"
+                  description="Add the first project to begin planning delivery."
+                  action={
+                    <Button variant="quiet" onClick={openCreate}>
+                      Add Project
+                    </Button>
+                  }
+                />
+              ) : items.length === 0 ? (
+                <EmptyState
+                  title="No matching projects"
+                  description="Try another search term."
+                  action={
+                    <Button
+                      variant="quiet"
+                      onClick={() => {
+                        setSearch("");
+                        setPage(1);
+                      }}
+                    >
+                      Clear search
+                    </Button>
+                  }
+                />
+              ) : (
+                <ul className="divide-y divide-border-subtle">
+                  {items.map((project, index) => (
+                    <ProjectRow
+                      key={project.id}
+                      project={project}
+                      first={page === 1 && index === 0}
+                      busy={submitting}
+                      onEdit={() => openEdit(project)}
+                      onCommand={(kind) => {
+                        setOperationError("");
+                        setCommand({ kind, project });
+                      }}
+                      onMove={(direction) => void move(project, direction)}
+                    />
+                  ))}
+                </ul>
+              )}
+              {!loading && !searchPending && !error && total > 0 ? (
+                <PaginationControls
+                  page={page}
+                  pageSize={5}
+                  total={total}
+                  onPageChange={setPage}
+                />
+              ) : null}
+            </ListSurface>
+          </section>
+        </PageContent>
+      ) : null}
       {form ? (
         <ProjectForm
           form={form}
@@ -414,7 +440,11 @@ export function ProjectsPage({
           command={command}
           error={operationError}
           submitting={submitting}
-          onClose={() => !submitting && setCommand(undefined)}
+          onClose={() => {
+            if (submitting) return;
+            setCommand(undefined);
+            if (dialogOnly) onReturnToPage?.();
+          }}
           onConfirm={() => void confirmCommand()}
         />
       ) : null}
@@ -423,7 +453,11 @@ export function ProjectsPage({
           plan={bulkReopenPlan}
           error={operationError}
           submitting={submitting}
-          onClose={() => !submitting && setBulkReopenPlan(undefined)}
+          onClose={() => {
+            if (submitting) return;
+            setBulkReopenPlan(undefined);
+            if (dialogOnly) onReturnToPage?.();
+          }}
           onConfirm={() => void confirmBulkReopen()}
         />
       ) : null}
@@ -439,15 +473,13 @@ function ProjectRow({
   onEdit,
   onCommand,
   onMove,
-  onManageWBS,
 }: {
   project: Project;
   first: boolean;
   busy: boolean;
   onEdit(): void;
-  onCommand(kind: CommandState["kind"]): void;
+  onCommand(kind: ProjectCommandState["kind"]): void;
   onMove(direction: PriorityDirection): void;
-  onManageWBS(): void;
 }) {
   const active = project.status !== "closed";
   return (
@@ -465,9 +497,6 @@ function ProjectRow({
         </p>
       </div>
       <div className="flex flex-wrap justify-end gap-2">
-        <Button compact disabled={busy} onClick={onManageWBS}>
-          Project Structure
-        </Button>
         {active ? (
           <>
             <Button
@@ -494,6 +523,11 @@ function ProjectRow({
         {project.status === "open" ? (
           <Button compact disabled={busy} onClick={() => onCommand("lock")}>
             Lock
+          </Button>
+        ) : null}
+        {project.status === "locked" ? (
+          <Button compact disabled={busy} onClick={() => onCommand("reopen")}>
+            Reopen
           </Button>
         ) : null}
         {active ? (
@@ -651,7 +685,7 @@ function ProjectForm({
               Earliest working date allowed for the first executable task.
             </p>
           </div>
-          {automaticScheduling && !schedulingStartDate ? (
+          {settingsEditable && automaticScheduling && !schedulingStartDate ? (
             <p className="mt-3 text-sm font-semibold text-danger" role="status">
               Automatic Scheduling requires a Project Scheduling Start Date.
             </p>
@@ -757,7 +791,7 @@ function CommandDialog({
   onClose,
   onConfirm,
 }: {
-  command: CommandState;
+  command: ProjectCommandState;
   error: string;
   submitting: boolean;
   onClose(): void;
@@ -868,11 +902,11 @@ function BulkReopenDialog({
 }
 
 function targetStatus(
-  kind: Exclude<CommandState["kind"], "delete">,
+  kind: Exclude<ProjectCommandState["kind"], "delete">,
 ): ProjectStatus {
   return kind === "lock" ? "locked" : kind === "close" ? "closed" : "open";
 }
-function commandCopy(command: CommandState) {
+function commandCopy(command: ProjectCommandState) {
   if (command.kind === "lock")
     return {
       title: `Lock ${command.project.name}?`,

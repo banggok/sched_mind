@@ -69,4 +69,41 @@ describe("HTTP projects gateway", () => {
       createHTTPProjectsGateway("/api").delete("p1"),
     ).rejects.toBeInstanceOf(ProjectOperationError);
   });
+
+  it("sends a name-only payload for Locked Project rename_US31_AC11_US62_AC16A", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: {
+            id: "p1",
+            name: "Renamed",
+            status: "locked",
+            startDate: null,
+            endDate: null,
+            autoCalculateDate: true,
+            automaticScheduling: true,
+            schedulingStartDate: "2026-08-03",
+            projectBuffer: 20,
+            scheduleVersion: 4,
+            projectPriority: 1,
+            closedAt: null,
+            createdAt: "2026-07-26T00:00:00Z",
+            updatedAt: "2026-08-01T00:00:00Z",
+          },
+        }),
+        { status: 200 },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await createHTTPProjectsGateway("/api").rename("p1", "Renamed");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/projects/p1",
+      expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({ name: "Renamed" }),
+      }),
+    );
+  });
 });

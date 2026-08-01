@@ -1,5 +1,6 @@
 import { SchedulingImpactDialog } from "../shared/presentation/SchedulingImpactDialog";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { Toast } from "../shared/presentation/Toast";
 import { createHTTPRolesGateway } from "../features/roles/infrastructure/httpRolesGateway";
 import { RolesDashboardPage } from "../features/roles/presentation/RolesDashboardPage";
 import { createHTTPTeamMembersGateway } from "../features/team-members/infrastructure/httpTeamMembersGateway";
@@ -12,14 +13,20 @@ import type { TeamMember } from "../features/team-members/domain/teamMember";
 import { createHTTPPublicHolidaysGateway } from "../features/public-holidays/infrastructure/httpPublicHolidaysGateway";
 import { PublicHolidaysPage } from "../features/public-holidays/presentation/PublicHolidaysPage";
 import { createHTTPProjectsGateway } from "../features/projects/infrastructure/httpProjectsGateway";
-import { ProjectsPage } from "../features/projects/presentation/ProjectsPage";
+import {
+  ProjectsPage,
+  type ProjectCommandState,
+} from "../features/projects/presentation/ProjectsPage";
 import type { Project } from "../features/projects/domain/project";
 import { createHTTPWBSGateway } from "../features/wbs/infrastructure/httpWBSGateway";
 import { WBSPanel } from "../features/wbs/presentation/WBSPanel";
 import { ProjectWBSSummary } from "../features/wbs/presentation/ProjectWBSSummary";
 import { createHTTPDependenciesGateway } from "../features/dependencies/infrastructure/httpDependenciesGateway";
 import { createHTTPPortfolioGateway } from "../features/portfolio/infrastructure/httpPortfolioGateway";
-import { PortfolioHomePage } from "../features/portfolio/presentation/PortfolioHomePage";
+import {
+  PortfolioHomePage,
+  type HomeProjectCommandKind,
+} from "../features/portfolio/presentation/PortfolioHomePage";
 
 const apiBaseURL = requiredEnvironment(
   "VITE_API_BASE_URL",
@@ -42,7 +49,7 @@ type WBSRequest = {
   project: Project;
   nodeId?: string;
   createParentId?: string | null;
-  returnToHome?: boolean;
+  moveNodeId?: string;
 };
 
 export function App() {
@@ -50,7 +57,10 @@ export function App() {
   const [capacityMember, setCapacityMember] = useState<TeamMember>();
   const [wbsRequest, setWBSRequest] = useState<WBSRequest>();
   const [projectToEdit, setProjectToEdit] = useState<Project>();
-  const [projectReturnPage, setProjectReturnPage] = useState<ApplicationPage>();
+  const [projectCommand, setProjectCommand] = useState<ProjectCommandState>();
+  const [homeOverlayError, setHomeOverlayError] = useState("");
+  const overlayRequestVersion = useRef(0);
+  const activePageRef = useRef<ApplicationPage>("home");
   useEffect(() => {
     const updateRoute = () => setRoute(window.location.hash);
     window.addEventListener("hashchange", updateRoute);
@@ -73,28 +83,78 @@ export function App() {
 
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+    activePageRef.current = activePage;
+    if (activePage !== "home") {
+      overlayRequestVersion.current += 1;
+      setProjectToEdit(undefined);
+      setProjectCommand(undefined);
+      setWBSRequest(undefined);
+      setHomeOverlayError("");
+    }
   }, [activePage]);
 
-  async function openProject(projectID: string, returnPage?: ApplicationPage) {
-    const project = await projectsGateway.get(projectID);
-    setProjectToEdit(project);
-    setProjectReturnPage(returnPage);
-    window.location.hash = "#projects";
+  async function openProject(projectID: string) {
+    const requestVersion = beginHomeOverlayRequest();
+    try {
+      const project = await projectsGateway.get(projectID);
+      if (!isCurrentHomeOverlayRequest(requestVersion)) return;
+      setProjectToEdit(project);
+    } catch {
+      showHomeOverlayLoadFailure(requestVersion);
+    }
+  }
+  async function openProjectCommand(
+    kind: HomeProjectCommandKind,
+    projectID: string,
+  ) {
+    const requestVersion = beginHomeOverlayRequest();
+    try {
+      const project = await projectsGateway.get(projectID);
+      if (!isCurrentHomeOverlayRequest(requestVersion)) return;
+      setProjectCommand({ kind, project });
+    } catch {
+      showHomeOverlayLoadFailure(requestVersion);
+    }
   }
   async function openWBS(request: {
     projectId: string;
     nodeId?: string;
     createParentId?: string | null;
-    returnToHome?: boolean;
+    moveNodeId?: string;
   }) {
-    const project = await projectsGateway.get(request.projectId);
-    setWBSRequest({
-      key: Date.now(),
-      project,
-      nodeId: request.nodeId,
-      createParentId: request.createParentId,
-      returnToHome: request.returnToHome,
-    });
+    const requestVersion = beginHomeOverlayRequest();
+    try {
+      const project = await projectsGateway.get(request.projectId);
+      if (!isCurrentHomeOverlayRequest(requestVersion)) return;
+      setWBSRequest({
+        key: requestVersion,
+        project,
+        nodeId: request.nodeId,
+        createParentId: request.createParentId,
+        moveNodeId: request.moveNodeId,
+      });
+    } catch {
+      showHomeOverlayLoadFailure(requestVersion);
+    }
+  }
+  function beginHomeOverlayRequest(): number {
+    const requestVersion = overlayRequestVersion.current + 1;
+    overlayRequestVersion.current = requestVersion;
+    setHomeOverlayError("");
+    setProjectToEdit(undefined);
+    setProjectCommand(undefined);
+    setWBSRequest(undefined);
+    return requestVersion;
+  }
+  function isCurrentHomeOverlayRequest(requestVersion: number): boolean {
+    return (
+      requestVersion === overlayRequestVersion.current &&
+      activePageRef.current === "home"
+    );
+  }
+  function showHomeOverlayLoadFailure(requestVersion: number) {
+    if (!isCurrentHomeOverlayRequest(requestVersion)) return;
+    setHomeOverlayError("The selected Project could not be loaded. Try again.");
   }
 
   return (
@@ -102,24 +162,17 @@ export function App() {
       {activePage === "home" ? (
         <PortfolioHomePage
           gateway={portfolioGateway}
-          onOpenProject={(projectID) => void openProject(projectID, "home")}
-          onOpenWBS={(request) =>
-            void openWBS({ ...request, returnToHome: true })
+          wbsGateway={wbsGateway}
+          onOpenProject={(projectID) => void openProject(projectID)}
+          onProjectCommand={(kind, projectID) =>
+            void openProjectCommand(kind, projectID)
           }
+          onOpenWBS={(request) => void openWBS(request)}
         />
       ) : activePage === "projects" ? (
         <ProjectsPage
           gateway={projectsGateway}
           loadPublicHolidayDates={publicHolidaysGateway.calendar}
-          onManageWBS={(project) => setWBSRequest({ key: Date.now(), project })}
-          initialEditProject={projectToEdit}
-          onInitialEditConsumed={() => setProjectToEdit(undefined)}
-          returnPageOnClose={projectReturnPage}
-          onReturnToPage={() => {
-            if (!projectReturnPage) return;
-            setProjectReturnPage(undefined);
-            window.location.hash = `#${projectReturnPage}`;
-          }}
           renderProjectSummary={(project) => (
             <ProjectWBSSummary
               key={project.id}
@@ -147,8 +200,7 @@ export function App() {
           onClose={() => setCapacityMember(undefined)}
         />
       ) : null}
-      <SchedulingImpactDialog />
-      {wbsRequest ? (
+      {activePage === "home" && wbsRequest ? (
         <WBSPanel
           key={wbsRequest.key}
           project={wbsRequest.project}
@@ -159,10 +211,44 @@ export function App() {
           loadPublicHolidayDates={publicHolidaysGateway.calendar}
           initialNodeId={wbsRequest.nodeId}
           initialCreateParentId={wbsRequest.createParentId}
-          returnToCallerOnComplete={wbsRequest.returnToHome}
+          initialMoveNodeId={wbsRequest.moveNodeId}
           onClose={() => setWBSRequest(undefined)}
         />
       ) : null}
+      {activePage === "home" && projectToEdit ? (
+        <ProjectsPage
+          gateway={projectsGateway}
+          dialogOnly
+          initialEditProject={projectToEdit}
+          returnPageOnClose="home"
+          onReturnToPage={() => setProjectToEdit(undefined)}
+          onOverlayComplete={() => setProjectToEdit(undefined)}
+          loadPublicHolidayDates={publicHolidaysGateway.calendar}
+          renderProjectSummary={(project) => (
+            <ProjectWBSSummary
+              key={project.id}
+              projectId={project.id}
+              gateway={wbsGateway}
+            />
+          )}
+        />
+      ) : null}
+      {activePage === "home" && projectCommand ? (
+        <ProjectsPage
+          gateway={projectsGateway}
+          dialogOnly
+          initialCommand={projectCommand}
+          onReturnToPage={() => setProjectCommand(undefined)}
+          onOverlayComplete={() => setProjectCommand(undefined)}
+        />
+      ) : null}
+      {homeOverlayError ? (
+        <Toast
+          message={homeOverlayError}
+          onDismiss={() => setHomeOverlayError("")}
+        />
+      ) : null}
+      <SchedulingImpactDialog />
     </AppShell>
   );
 }

@@ -19,6 +19,7 @@ type Service interface {
 	List(context.Context, listing.Query) (listing.Page[domain.Project], error)
 	Get(context.Context, string) (*domain.Project, error)
 	Create(context.Context, string, bool, *time.Time, int) (*domain.Project, error)
+	Rename(context.Context, string, string) (*domain.Project, error)
 	Update(context.Context, string, string, bool, *time.Time, int) (*domain.Project, error)
 	ChangeStatus(context.Context, string, domain.Status) (*domain.Project, error)
 	BulkReopen(context.Context, string, string) ([]domain.Project, error)
@@ -47,6 +48,12 @@ type nameRequest struct {
 	AutomaticScheduling *bool   `json:"automaticScheduling,omitempty"`
 	SchedulingStartDate *string `json:"schedulingStartDate"`
 	ProjectBuffer       *int    `json:"projectBuffer,omitempty"`
+}
+type updateRequest struct {
+	Name                string          `json:"name"`
+	AutomaticScheduling *bool           `json:"automaticScheduling,omitempty"`
+	SchedulingStartDate json.RawMessage `json:"schedulingStartDate"`
+	ProjectBuffer       *int            `json:"projectBuffer,omitempty"`
 }
 type statusRequest struct {
 	Status string `json:"status"`
@@ -142,15 +149,29 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	h.writeProject(w, value, err, 201)
 }
 func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
-	var payload nameRequest
+	var payload updateRequest
 	if !decode(w, r, &payload) {
 		return
 	}
-	if payload.AutomaticScheduling == nil || payload.ProjectBuffer == nil {
-		httpjson.Write(w, 400, errorResponse{"INVALID_REQUEST", "automaticScheduling and projectBuffer are required", ""})
+	hasAutomatic := payload.AutomaticScheduling != nil
+	hasAnchor := payload.SchedulingStartDate != nil
+	hasBuffer := payload.ProjectBuffer != nil
+	settingsFields := 0
+	for _, present := range []bool{hasAutomatic, hasAnchor, hasBuffer} {
+		if present {
+			settingsFields++
+		}
+	}
+	if settingsFields == 0 {
+		value, err := h.service.Rename(r.Context(), r.PathValue("projectId"), payload.Name)
+		h.writeProject(w, value, err, 200)
 		return
 	}
-	anchor, ok := parseDate(w, payload.SchedulingStartDate)
+	if settingsFields != 3 {
+		httpjson.Write(w, 400, errorResponse{"INVALID_REQUEST", "automaticScheduling, schedulingStartDate, and projectBuffer must be supplied together", ""})
+		return
+	}
+	anchor, ok := parseOptionalDateJSON(w, payload.SchedulingStartDate)
 	if !ok {
 		return
 	}
@@ -271,6 +292,18 @@ func mapItem(value domain.Project) item {
 		closedAt = &utc
 	}
 	return item{value.ID, value.Name, string(value.Status), dateString(value.StartDate), dateString(value.EndDate), value.AutoCalculateDate, value.AutomaticScheduling, dateString(value.SchedulingStartDate), value.ProjectBuffer, value.ScheduleVersion, value.Priority, closedAt, value.CreatedAt.UTC(), value.UpdatedAt.UTC()}
+}
+
+func parseOptionalDateJSON(w http.ResponseWriter, value json.RawMessage) (*time.Time, bool) {
+	if string(value) == "null" {
+		return nil, true
+	}
+	var date string
+	if err := json.Unmarshal(value, &date); err != nil {
+		httpjson.Write(w, 400, errorResponse{"INVALID_REQUEST", "schedulingStartDate must be a date or null", "schedulingStartDate"})
+		return nil, false
+	}
+	return parseDate(w, &date)
 }
 
 func parseDate(w http.ResponseWriter, value *string) (*time.Time, bool) {

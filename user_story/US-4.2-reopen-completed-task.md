@@ -6,6 +6,13 @@
 > Project is Open and follows the generic cross-project impact
 > preview/confirmation contract.
 
+> **Product decision update — US-7.1:** Completed Task Name on Home opens the
+> shared Edit Task dialog directly over Home. The action remains **Edit Task**,
+> not View Task, because eligible Open completed Tasks may Reopen from inside the
+> dialog. Locked Task also opens Edit Task for Actual Date, but Reopen remains
+> unavailable until Project Reopen. No Project Structure route or background is
+> used.
+
 ## 1. User Story
 
 **Sebagai** Engineering Lead,
@@ -49,7 +56,8 @@ Date dan Actual Allocation atomically.
 
 ### 4.1 In Scope
 
-- Contextual `Reopen Task` action for eligible completed Task.
+- Contextual `Reopen Task` action inside the shared Edit Task dialog for an eligible completed Task.
+- Open that dialog from completed Task Name on Home without route/background change.
 - Confirmation before mutation.
 - Clear Actual Start and Actual End together.
 - Remove/rebuild Actual Allocation as required by US-6.2.
@@ -90,7 +98,18 @@ Reopen Task is available only when:
 Locked Project must use Project Reopen first. Closed Project must use the
 approved Project lifecycle command first. Backend rejects direct API bypass.
 
-### 5.2 Dedicated Atomic Command
+### 5.2 Home Edit Task Entry
+
+- Completed Task row uses the same **Edit Task** primary action as unfinished
+  Task.
+- Reopen Task is located inside Edit Task, not as a permanent row icon.
+- Completed Task row may expose structural Move Up/Down/Move to through Home
+  overflow according to US-4.1, but it exposes no Add Child or Delete.
+- Locked Task Name still opens Edit Task for US-6.2 Actual Date; Reopen is hidden
+  or disabled with the Project Reopen requirement.
+- Save/Close/Reopen success keeps Home as the route and visible background.
+
+### 5.3 Dedicated Atomic Command
 
 Successful Reopen changes exactly:
 
@@ -113,7 +132,7 @@ It preserves:
 `Updated At`, schedule version, and affected projection versions may change
 according to repository conventions.
 
-### 5.3 Scheduling Impact
+### 5.4 Scheduling Impact
 
 Reopen removes historical capacity consumption and returns the Task to
 unfinished scheduling. Therefore it is a scheduling-impacting mutation:
@@ -128,13 +147,13 @@ unfinished scheduling. Therefore it is a scheduling-impacting mutation:
 
 The reopened Task uses original Effort, not estimated remaining effort.
 
-### 5.4 Dependency Preservation
+### 5.5 Dependency Preservation
 
 Reopen never creates, deletes, retargets, or changes ownership of dependency.
 The same immutable Task ID remains the endpoint. Because the Task is unfinished
 again, normal dependency readiness applies on confirmed recalculation.
 
-### 5.5 Failure and Concurrency
+### 5.6 Failure and Concurrency
 
 - Duplicate submission sends one command.
 - Concurrent Reopen allows at most one completed→unfinished transition.
@@ -239,6 +258,23 @@ Generic Task update may not clear either Actual field as a bypass.
 **Then** action, confirmation, impact warning, pending/error state, and focus
 management are keyboard and assistive-technology accessible.
 
+### AC-15 — Completed Task remains editable from Home
+
+**Given** a completed Task in an Open Project is visible on Home
+**When** Engineering Lead activates Task Name
+**Then** the shared Edit Task dialog opens directly over Home
+**And** Reopen Task is available inside the dialog
+**And** Add Child and Delete are absent from the row.
+
+### AC-16 — Locked Task edit does not imply Reopen
+
+**Given** a completed or unfinished Task belongs to a Locked Project
+**When** Engineering Lead activates Task Name on Home
+**Then** Edit Task opens for the factual Actual Date capability allowed by
+US-6.2
+**And** Reopen Task is unavailable
+**And** no Projects/Project Structure background route is opened.
+
 ---
 
 ## 8. Test Cases
@@ -261,6 +297,8 @@ management are keyboard and assistive-technology accessible.
 | TC-14 | Double activation | One command |
 | TC-15 | Concurrent Reopen | At most one success |
 | TC-16 | Old response after success | Cannot restore completed state |
+| TC-17 | Open completed Task from Home | Edit Task over Home; Reopen inside; no Add Child/Delete |
+| TC-18 | Open Locked Task from Home | Edit Task factual fields only; Reopen unavailable |
 
 ---
 
@@ -271,8 +309,10 @@ management are keyboard and assistive-technology accessible.
 - Repository: both fields, allocation removal, identity/dependency preservation,
   rollback, concurrency.
 - API: dedicated command and structured errors.
-- Frontend/acceptance: contextual action, confirmation, grouped impact warning,
-  success/failure/stale state, keyboard/focus behavior.
+- Frontend/acceptance: Home Task Name opens shared Edit Task directly, Reopen
+  remains inside completed Task dialog, Locked Task retains Actual Date without
+  Reopen, confirmation, grouped impact warning, success/failure/stale state,
+  keyboard/focus behavior, and no Project Structure routing.
 
 Every affected AC requires Code Inspection, Unit/Integration, and
 Acceptance-Level evidence.
@@ -291,6 +331,9 @@ Acceptance-Level evidence.
 - Task identity, planning data, and dependency are preserved.
 - Original Effort is used when Task returns to unfinished scheduling.
 - Forecast remains deferred.
+- Completed Task remains an Edit Task workflow on Home; Reopen stays inside the
+  dialog.
+- Locked Task Edit is retained for Actual Date but does not expose Reopen.
 
 ## 11. Unresolved Questions
 

@@ -1,9 +1,11 @@
 # US-6.1 — Automatic Execution and Commitment Scheduling
 
-> **Product decision update — US-7.1:** Home Portfolio Gantt is a read-only
-> consumer of confirmed Execution/Commitment dates, unscheduled state,
-> dependencies, and schedule versions. Projection switching or timeline range
-> changes never invoke this scheduler; mutations opened from Home continue
+> **Product decision update — US-7.1:** Home Portfolio Gantt is the canonical
+> active-Project WBS surface and a read-only consumer of confirmed
+> Execution/Commitment dates, unscheduled state, dependencies, and schedule
+> versions. The standalone Project Structure entry point is removed. Projection
+> switching or timeline range changes never invoke this scheduler; mutations
+> opened directly from Home continue
 > through the existing owning use cases and US-6.2 impact coordination.
 
 > **Product decision update — US-6.2:** Actual Date range, Open timeline actualization, Actual Allocation, historical overcapacity, Locked Project immutability, generic cross-project impact warning/confirmation, capacity-setting impact, atomic bulk Project Reopen, transitive impacted-scope recalculation, and Priority validation around Locked Projects are owned by US-6.2 and supersede contradictory wording in this story.
@@ -256,6 +258,9 @@ Successful confirmed mutations berikut menjalankan portfolio recalculation sesua
 
 - Create child yang mengonversi Executable WBS existing dan memindahkan executable data atau me-retarget dependency endpoint.
 - Sibling reorder.
+  - The business trigger remains an adjacent-sibling persisted-position change.
+  - Home may disable the UI action while a restrictive Role filter hides
+    siblings; this does not change scheduler semantics.
 - Move WBS atau subtree.
 - Delete Executable WBS.
 - Structural conversion.
@@ -460,7 +465,7 @@ Di antara Task yang sudah dependency-ready dan bersaing untuk kapasitas assignee
 1. Project Priority ascending; angka lebih kecil berarti lebih tinggi.
 2. Visual WBS order dalam Project.
 
-Visual WBS order berarti depth-first order Executable WBS berdasarkan persisted sibling position sebagaimana tampil pada Project Structure.
+Visual WBS order berarti depth-first order Executable WBS berdasarkan persisted sibling position sebagaimana tampil pada Home. Generated Execution/Commitment Start atau End tidak pernah menjadi sumber row order atau scheduler priority.
 
 Current Project baseline menggunakan unique active Project Priority sehingga cross-project priority tie tidak tersedia. WBS sibling position juga deterministik. Tidak ada additional business tie-breaker seperti Created At, Task ID, atau alphabetical Name.
 
@@ -811,7 +816,7 @@ Implementation may serialize, use optimistic version checks, or equivalent. Conf
 
 Successful scheduling invalidates or version-updates:
 
-- affected Project Structure.
+- affected Home WBS hierarchy and action eligibility.
 - Task detail.
 - Blocks / Blocked by.
 - candidate lookup.
@@ -1439,7 +1444,7 @@ For `8`, `30%`, and `20%`, Raw Commitment is `4.48` and rounded Commitment is `4
 
 ### 21.6 Acceptance-Level Tests
 
-Acceptance-level tests must exercise the highest practical user-facing feature boundary available, primarily Project Structure contextual Edit Task plus real application orchestration.
+Acceptance-level tests must exercise the highest practical user-facing feature boundary available, primarily Home → Task Name → shared Edit Task plus real application orchestration. Reorder/move acceptance starts from Home row overflow, and no acceptance workflow may depend on the removed Project Structure page.
 
 Minimum scenarios:
 

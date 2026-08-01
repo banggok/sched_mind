@@ -3,6 +3,7 @@ package gormrepo
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/banggok/sched_mind/backend/internal/publicholidays/application"
 	"github.com/banggok/sched_mind/backend/internal/publicholidays/domain"
 	"github.com/banggok/sched_mind/backend/internal/shared/listing"
+	sharedpersistence "github.com/banggok/sched_mind/backend/internal/shared/persistence"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -146,5 +148,65 @@ func TestRepositoryListsCurrentBeforeExpiredThenByRange(t *testing.T) {
 		if got[index] != want[index] {
 			t.Fatalf("IDs=%v want=%v", got, want)
 		}
+	}
+}
+
+func TestScheduleAwareWritesPropagateSerializedTransactionContext_DefectNestedScheduleLock(t *testing.T) {
+	repository := setup(t)
+	ctx := context.Background()
+	now := time.Date(2026, 8, 3, 0, 0, 0, 0, time.UTC)
+	value := holiday(t, "holiday", "2026-08-03", "Holiday", now)
+
+	assertSchedulerContext := func(wantHolidayCount, wantDateCount int64, wantDescription string) func(context.Context) error {
+		return func(scheduleContext context.Context) error {
+			if !sharedpersistence.ScheduleMutationSerialized(scheduleContext) {
+				return errors.New("scheduler callback lost the schedule-mutation serialization marker")
+			}
+
+			nestedContext, release := sharedpersistence.SerializeScheduleMutation(scheduleContext)
+			defer release()
+			transaction := sharedpersistence.Transaction(nestedContext, repository.database)
+
+			var holidayCount int64
+			if err := transaction.Model(&publicHolidayModel{}).Where("id = ?", value.ID).Count(&holidayCount).Error; err != nil {
+				return err
+			}
+			if holidayCount != wantHolidayCount {
+				return fmt.Errorf("holiday count inside scheduler transaction = %d, want %d", holidayCount, wantHolidayCount)
+			}
+
+			var dateCount int64
+			if err := transaction.Model(&publicHolidayDateModel{}).Where("public_holiday_id = ?", value.ID).Count(&dateCount).Error; err != nil {
+				return err
+			}
+			if dateCount != wantDateCount {
+				return fmt.Errorf("holiday date count inside scheduler transaction = %d, want %d", dateCount, wantDateCount)
+			}
+
+			if wantHolidayCount == 1 {
+				var stored publicHolidayModel
+				if err := transaction.First(&stored, "id = ?", value.ID).Error; err != nil {
+					return err
+				}
+				if stored.Description != wantDescription {
+					return fmt.Errorf("description inside scheduler transaction = %q, want %q", stored.Description, wantDescription)
+				}
+			}
+			return nil
+		}
+	}
+
+	if err := repository.CreateWithSchedule(ctx, value, assertSchedulerContext(1, 1, "Holiday")); err != nil {
+		t.Fatalf("create with schedule: %v", err)
+	}
+
+	value.Description = "Updated"
+	value.UpdatedAt = now.Add(time.Hour)
+	if err := repository.UpdateWithSchedule(ctx, value, true, assertSchedulerContext(1, 1, "Updated")); err != nil {
+		t.Fatalf("update with schedule: %v", err)
+	}
+
+	if err := repository.DeleteWithSchedule(ctx, value.ID, assertSchedulerContext(0, 0, "")); err != nil {
+		t.Fatalf("delete with schedule: %v", err)
 	}
 }

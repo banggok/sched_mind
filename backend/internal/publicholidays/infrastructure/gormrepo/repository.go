@@ -98,11 +98,11 @@ func (r *Repository) Create(ctx context.Context, value domain.PublicHoliday) err
 }
 
 func (r *Repository) CreateWithSchedule(ctx context.Context, value domain.PublicHoliday, schedule func(context.Context) error) error {
-	return r.withScheduleMutation(ctx, func(tx *gorm.DB) error {
+	return r.withScheduleMutation(ctx, func(mutationContext context.Context, tx *gorm.DB) error {
 		if err := r.create(tx, value); err != nil {
 			return err
 		}
-		return schedule(sharedpersistence.WithTransaction(ctx, tx))
+		return schedule(mutationContext)
 	})
 }
 
@@ -123,12 +123,12 @@ func (r *Repository) Update(ctx context.Context, value domain.PublicHoliday) err
 }
 
 func (r *Repository) UpdateWithSchedule(ctx context.Context, value domain.PublicHoliday, dateRangeChanged bool, schedule func(context.Context) error) error {
-	return r.withScheduleMutation(ctx, func(tx *gorm.DB) error {
+	return r.withScheduleMutation(ctx, func(mutationContext context.Context, tx *gorm.DB) error {
 		if err := r.update(tx, value); err != nil {
 			return err
 		}
 		if dateRangeChanged {
-			return schedule(sharedpersistence.WithTransaction(ctx, tx))
+			return schedule(mutationContext)
 		}
 		return nil
 	})
@@ -156,11 +156,11 @@ func (r *Repository) Delete(ctx context.Context, id string) error {
 }
 
 func (r *Repository) DeleteWithSchedule(ctx context.Context, id string, schedule func(context.Context) error) error {
-	return r.withScheduleMutation(ctx, func(tx *gorm.DB) error {
+	return r.withScheduleMutation(ctx, func(mutationContext context.Context, tx *gorm.DB) error {
 		if err := r.delete(tx, id); err != nil {
 			return err
 		}
-		return schedule(sharedpersistence.WithTransaction(ctx, tx))
+		return schedule(mutationContext)
 	})
 }
 
@@ -177,14 +177,14 @@ func (r *Repository) delete(tx *gorm.DB, id string) error {
 	return tx.Where("id = ?", id).Delete(&publicHolidayModel{}).Error
 }
 
-func (r *Repository) withScheduleMutation(ctx context.Context, mutation func(*gorm.DB) error) error {
+func (r *Repository) withScheduleMutation(ctx context.Context, mutation func(context.Context, *gorm.DB) error) error {
 	ctx, release := sharedpersistence.SerializeScheduleMutation(ctx)
 	defer release()
 	err := sharedpersistence.Transaction(ctx, r.database).Transaction(func(tx *gorm.DB) error {
 		if err := sharedpersistence.LockScheduleMutation(tx); err != nil {
 			return fmt.Errorf("lock public holiday mutation: %w", err)
 		}
-		return mutation(tx)
+		return mutation(sharedpersistence.WithTransaction(ctx, tx), tx)
 	})
 	return mapWriteError("schedule public holiday", err)
 }

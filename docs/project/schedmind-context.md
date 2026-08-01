@@ -48,14 +48,13 @@ Detailed rules are owned by:
 
 The primary product actor in these stories is the Engineering Lead.
 
-## Approved target scope not yet implemented
+## Home portfolio workspace
 
-The current working-tree requirements also approve US-7.1 Home Portfolio Gantt.
-It adds Home as the root frontend page, composes selected Open/Locked Projects in
-a read-only daily Gantt, reuses existing Project/WBS forms for Add Task, Add
-Child, and edit flows, and persists globally named Project-selection filters.
-The current code may not yet implement this target; implementation status must
-be determined from code and test evidence rather than this approval statement.
+US-7.1 defines Home as the root frontend page and canonical active-WBS surface.
+It composes selected Open/Locked Projects in a read-only daily Gantt, invokes
+the shared Project, Group, Task, Add Task, Add Child, and lifecycle dialogs
+directly over Home, and persists globally named Project-selection filters. The
+standalone Project Structure action is not a current navigation surface.
 
 ## Terminology and current invariants
 
@@ -107,7 +106,18 @@ changes and impacted Open schedules persist atomically.
 
 A Project is the root planning entity and WBS level `0`. It has a unique
 case-insensitive Name, system-assigned Priority, and an Open, Locked, or Closed
-lifecycle. Locked protects Execution/Commitment baseline as an immutable anchor. Planning, WBS, Task, Settings, and dependency changes require explicit `Locked → Open` Reopen; complete Actual Date remains the only Task mutation allowed while Locked. It changes no protected baseline, but Actual Allocation may recalculate impacted Open Projects. Mutual/transitive Locked impact is resolved through atomic Reopen All closure. Forecast behavior while Locked is deferred. Closed Projects are historical, read-only, and excluded from scheduling and Gantt. Exact transitions, ordering, deletion, and downstream contracts belong to US-3.1 and US-6.2.
+lifecycle. Locked protects Execution/Commitment baseline as an immutable anchor.
+Project Name is the only Project field that may be changed while Locked; the
+rename path does not change settings, priority, snapshots, schedule version, or
+invoke scheduling. Planning, WBS structure, Task planning fields, Settings, and
+dependency changes otherwise require explicit `Locked → Open` Reopen. Complete
+Actual Date remains the only Task mutation allowed while Locked. It changes no
+protected baseline, but Actual Allocation may recalculate impacted Open
+Projects. Mutual/transitive Locked impact is resolved through atomic Reopen All
+closure. Forecast behavior while Locked is deferred. Closed Projects are
+historical, read-only, and excluded from scheduling and Gantt. Exact
+transitions, ordering, deletion, and downstream contracts belong to US-3.1 and
+US-6.2.
 
 Project Settings use `automaticScheduling` as the sole activation toggle and
 optionally define the Project-level Scheduling Start Date. This date is the
@@ -151,8 +161,15 @@ Capacity Overrides are accessed from a Member workflow and do not have a
 standalone sidebar destination. Product-specific control behavior, including the
 shared calendar usage, is authoritative in US-2.1.
 
-Home is the default application page. Its left Project Grid uses the existing
-Project/Task/Group terminology and opens the same forms as Project Structure.
-The right Gantt timeline is always read-only. Saved Project filters are global
-backend data and are presented by name because the product has no login or user
-identity in current scope. Exact Home behaviour belongs to US-7.1.
+Home is the default application page and canonical active-WBS workspace. Its
+left Project Grid uses the existing Project/Task/Group terminology, keeps Name
+as the primary edit action, and reveals creation, lifecycle, reorder, Move to,
+and Delete icons inside the Name cell on hover or keyboard focus. There is no
+Actions column. Project and Group Role cells are blank; only Task rows display
+their direct Role. Start and End use `D Mon YYYY`. The right Gantt header has
+working-day, grouped month/year, and calendar-date rows, while timeline bars and
+all non-Name row space remain read-only. Shared dialogs open directly over Home
+without routing through Projects or a Project Structure background. Saved
+Project filters are global backend data and are presented by name because the
+product has no login or user identity in current scope. Exact Home behaviour
+belongs to US-7.1.

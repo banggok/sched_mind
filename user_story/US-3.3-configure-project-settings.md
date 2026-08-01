@@ -1,6 +1,19 @@
 # US-3.3 — Configure Project Settings
 
-> **Product decision update — US-6.2:** Locked Project Settings are fully read-only. Planning changes require explicit Project Reopen (`Locked → Open`). Complete Actual Date remains a Task-level factual-data exception and does not make Settings editable. Daily Capacity, Member Buffer, Capacity Override, Public Holiday, Project Buffer, and other scheduling-impacting settings use the generic cross-project impact warning/blocking contract. Project Buffer affects Commitment only and does not alter Actual BAU Capacity. Forecast behavior while Locked is deferred.
+> **Product decision update — US-6.2:** Locked Project Settings are fully
+> read-only. Project Name rename remains allowed as the non-scheduling
+> Project-field exception owned by US-3.1; it does not make Settings editable.
+> Planning changes require explicit Project Reopen (`Locked → Open`). Complete
+> Actual Date remains a Task-level factual-data exception. Daily Capacity,
+> Member Buffer, Capacity Override, Public Holiday, Project Buffer, and other
+> scheduling-impacting settings use the generic cross-project impact
+> warning/blocking contract. Project Buffer affects Commitment only and does not
+> alter Actual BAU Capacity. Forecast behavior while Locked is deferred.
+
+> **Product decision update — US-7.1:** The shared Add/Edit Project form may be
+> opened from Projects or directly from Project Name on Home. Home invocation
+> remains over Home without background routing. The standalone Project Structure
+> entry point is removed. Project lifecycle actions remain owned by US-3.1.
 
 > **Product decision update — US-6.1:** Automatic Scheduling is the only
 > activation configuration for generated Execution/Commitment timelines and
@@ -170,7 +183,13 @@ Project Settings may be modified subject to validation.
 
 #### Locked
 
-Project Settings are visible and read-only. Locked Execution/Commitment baseline remains immutable. Actual Date entry on an unfinished Task does not make settings editable; its Actual Allocation may recalculate impacted Open Projects under US-6.2. Reopen Task is unavailable while Locked; the Project must first use explicit `Locked → Open` Reopen. Forecast behavior while Locked is deferred.
+Project Settings are visible and read-only. Project Name remains editable through
+the shared form under US-3.1, but it is not a Setting and does not enter this
+story's mutation payload/impact workflow. Locked Execution/Commitment baseline
+remains immutable. Actual Date entry on an unfinished Task does not make
+settings editable; its Actual Allocation may recalculate impacted Open Projects
+under US-6.2. Reopen Task is unavailable while Locked; the Project must first
+use explicit `Locked → Open` Reopen. Forecast behavior while Locked is deferred.
 
 #### Closed
 
@@ -219,7 +238,9 @@ Forecast implementation remains outside this story. No Forecast behavior for Loc
 
 ## 6. UI Behaviour
 
-- Project Name and Project Settings use one Add/Edit Project form.
+- Project Name and Project Settings use one reusable Add/Edit Project form.
+- The form may be composed by Projects or Home; Home opens it directly over Home
+  and does not route through Projects or Project Structure.
 - Because Project is WBS level `0`, Edit Project also includes the read-only Project Summary owned by US-4.3 after the Project fields; it is not a setting and is not submitted.
 - Edit Project uses the existing shared wide Dialog variant. Add Project has no confirmed Task subtree, omits Project Summary, and may retain the standard dialog width.
 - There is no separate Settings or Summary action.
@@ -261,7 +282,7 @@ Forecast implementation remains outside this story. No Forecast behavior for Loc
 20. Execution and Commitment dates are read-only while Automatic Scheduling is ON.
 21. Manual Execution and Commitment dates are editable only while Automatic Scheduling is OFF and other lifecycle rules allow it.
 22. Forecast implementation remains deferred; this story defines no Locked Project Forecast behavior.
-23. Locked Projects reject Project Settings updates without changing status.
+23. Locked Projects reject Project Settings updates without changing status; Project Name rename remains allowed through US-3.1 and does not invoke settings impact/scheduling.
 24. Closed Projects reject Project Settings updates.
 25. Project Name and settings share one Add/Edit form.
 26. Scheduling Start Date is visible and editable whenever Project Settings are editable.
@@ -275,6 +296,8 @@ Forecast implementation remains outside this story. No Forecast behavior for Loc
 34. On narrow supported viewports the wide Edit Project dialog remains within viewport padding, summary sections stack in semantic order, and form actions remain reachable without horizontal scrolling.
 35. Scheduling-impacting Settings/Project Buffer changes use grouped cross-project impact warning, Locked blocking, server revalidation, and atomic transitive Open recalculation.
 36. Project Buffer does not alter Actual BAU Capacity.
+37. Activating Project Name on Home opens the same Edit Project form directly over Home and returns to Home after Save/Close.
+38. Locked Edit Project permits Name only and rejects any Settings change atomically without partial Name update.
 
 ---
 
@@ -332,7 +355,8 @@ commands.
 - Project Buffer below `0` or above `100`.
 - Invalid Scheduling Start Date format.
 - Request includes removed `autoDependencyByAssignee`.
-- Locked or Closed Project update.
+- Locked Settings update, including a request that mixes Name and Settings.
+- Closed Project update.
 - Cancel with unsaved changes.
 - OFF→ON without anchor.
 - OFF→ON scheduler failure rolls back settings and dates.
@@ -349,7 +373,9 @@ commands.
 - Project Buffer never changes Execution Capacity.
 - Member Buffer affects both Execution and Commitment through the formula chain.
 - Automatic dependency is not reconciled while OFF.
-- Edit Project wide layout and US-4.3 summary do not change Project update payload or lifecycle permissions.
+- Edit Project wide layout and US-4.3 summary do not change Settings payload or lifecycle permissions.
+- Home and Projects compose the same form without duplicate validation/orchestration.
+- Locked Name-only rename does not invoke settings impact preview or scheduler.
 - Add Project remains summary-free.
 
 ---
@@ -390,6 +416,10 @@ Update architecture, Project Settings, API, and Scheduling Engine documentation 
 - Forecast behavior for Locked Projects is deferred.
 - Tasks with complete Actual Date remain completed historical anchors during OFF→ON recalculation.
 - Locked and Closed Projects cannot modify Project Settings.
+- Locked Project may rename Project Name only under US-3.1; Name is not a Setting
+  and does not invoke this story's impact/scheduler flow.
+- Home and Projects reuse the same Add/Edit Project form; Home never routes
+  through Projects or Project Structure.
 - Edit Project also composes the read-only US-4.3 whole-Project summary and uses the shared wide Dialog variant; Add Project omits summary.
 - Project Summary is excluded from Project mutation payloads and its loading/error state does not block settings Save/Cancel.
 - Changes apply only after Save.

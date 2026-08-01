@@ -1,9 +1,11 @@
 # US-4.3 — View Group and Project Summary
 
-> **Product decision update — US-7.1:** Home Portfolio Gantt reuses this
-> story's recursive confirmed-descendant date and known-Effort semantics for
-> Project and Group grid rows. US-7.1 owns the Gantt composition and timeline;
-> this story still owns the shared read-only aggregation rules.
+> **Product decision update — US-7.1:** Home Portfolio Gantt is the canonical
+> active-Project WBS surface and reuses this story's recursive confirmed-
+> descendant date and known-Effort semantics for Project and Group rows. The
+> standalone Project Structure entry point is removed. US-7.1 owns Gantt
+> composition and row actions; this story owns the shared read-only aggregation
+> rules and the combined Group summary/rename dialog composition.
 
 > **Product decision update — US-6.2:** Completion now requires a complete Actual
 > Date pair (`Actual Start` and `Actual End`). Effort Completion counts a Task as
@@ -25,11 +27,13 @@ SchedMind tidak mempunyai entity Group atau Task yang terpisah dari WBS:
 - **Task** adalah Executable WBS, yaitu WBS leaf tanpa child.
 - **Group** adalah Grouping WBS, yaitu WBS yang mempunyai child.
 
-View Group saat ini hanya menampilkan jumlah direct item dan informasi bahwa detail Task dikelola pada Task di dalam Group. Informasi tersebut tidak membantu Engineering Lead memahami rencana maupun progres subtree Group.
+The previous Group dialog only displayed direct-item count and an
+informational message. The Home Group dialog must instead combine a useful
+recursive summary with Group rename when the owning Project is Open.
 
 Project adalah WBS level `0` tanpa root WBS record terpisah. Karena itu Edit Project harus menampilkan summary yang sama untuk keseluruhan Project, dengan seluruh Task dalam Project diperlakukan sebagai descendant dari WBS level `0`. Summary Project ditempatkan pada combined Edit Project form; Add Project tidak mempunyai confirmed Task subtree dan tidak menampilkan summary.
 
-Story ini mengganti informasi View Group yang lama dan menambahkan Project Summary pada Edit Project dengan tiga read-only summaries yang dihitung dari **seluruh descendant Task secara rekursif**, tanpa membatasi kedalaman hierarchy:
+Story ini mengganti informasi Home Group dialog yang lama dan menambahkan Project Summary pada Edit Project dengan tiga read-only summaries yang dihitung dari **seluruh descendant Task secara rekursif**, tanpa membatasi kedalaman hierarchy:
 
 1. Execution Timeline dan coverage.
 2. Commitment Timeline dan coverage.
@@ -43,11 +47,11 @@ Summary adalah projection dari current confirmed Task data. Summary bukan execut
 
 | Product Term | Meaning |
 | --- | --- |
-| Project Structure | UI hierarchy WBS |
+| Home WBS Grid | Canonical active-Project WBS hierarchy shown on Home |
 | Task | Executable WBS / WBS leaf |
 | Group | Grouping WBS / WBS yang mempunyai child |
 | Project Summary Root | Project sebagai logical WBS level `0`; tidak mempunyai root WBS record terpisah |
-| Summary Subject | Selected Group pada View Group atau selected Project pada Edit Project |
+| Summary Subject | Selected Group pada Home Group dialog atau selected Project pada Edit Project |
 | Direct Child | WBS tepat satu level di bawah Group atau Project Summary Root |
 | Descendant | Seluruh WBS di bawah selected Group atau logical Project level `0` pada kedalaman berapa pun |
 | Descendant Task | Seluruh descendant yang merupakan Executable WBS |
@@ -64,7 +68,9 @@ Summary adalah projection dari current confirmed Task data. Summary bukan execut
 
 ### 4.1 In Scope
 
-- Mengganti informational alert pada View Group dengan useful read-only summary.
+- Mengganti informational alert pada Group dialog dengan useful read-only summary.
+- Menggabungkan Group rename dan Group summary dalam satu dialog pada Open Project.
+- Menampilkan Group dialog read-only pada Locked Project.
 - Menampilkan summary yang sama pada combined Edit Project form karena Project adalah WBS level `0`.
 - Mengagregasi seluruh descendant Task secara rekursif untuk selected Group atau seluruh Task dalam selected Project.
 - Menampilkan Execution Timeline aggregate.
@@ -92,7 +98,7 @@ Summary adalah projection dari current confirmed Task data. Summary bukan execut
 - Mengubah Execution atau Commitment scheduling algorithm.
 - Menambahkan backend endpoint, database column, migration, aggregate table, atau new summary-specific production query hanya untuk summary ini.
 - Mengubah Add Project menjadi summary view; Add Project belum mempunyai confirmed Task data.
-- Mengubah Group rename, Task edit, Reopen Task, Project lifecycle, atau dependency behaviour.
+- Mengubah business rule Group rename, Task edit, Reopen Task, Project lifecycle, atau dependency behaviour; story ini hanya menggabungkan existing Group rename dengan summary dalam satu dialog.
 - Menghitung summary dari unconfirmed schedule preview atau unsaved Task draft.
 
 ---
@@ -101,7 +107,7 @@ Summary adalah projection dari current confirmed Task data. Summary bukan execut
 
 ### 5.1 Recursive Descendant Scope
 
-- Untuk View Group, calculation dimulai dari selected Group dan menelusuri seluruh `children` secara rekursif.
+- Untuk Home Group dialog, calculation dimulai dari selected Group dan menelusuri seluruh `children` secara rekursif.
 - Untuk Edit Project, calculation dimulai dari Project Summary Root pada WBS level `0` dan menelusuri seluruh top-level WBS nodes beserta `children` secara rekursif.
 - Hanya descendant **Task** yang masuk ke calculation.
 - Nested Group tidak dihitung sebagai Task dan tidak menyumbang Effort, dates, atau completion secara langsung.
@@ -134,8 +140,13 @@ Project Summary untuk Project yang memiliki tree di atas menggunakan Task 1, Tas
 - Group tetap tidak boleh memiliki executable attributes.
 - Project Summary tidak menjadi writable Project setting dan tidak menggunakan Project form draft sebagai aggregate source.
 - Summary dihitung dari current confirmed descendant Task projection.
-- View Group summary tidak mempunyai Save action. Project Summary berada di dalam Edit Project dialog tetapi tetap read-only dan bukan bagian dari Project update payload.
-- Membuka atau menutup View Group atau Edit Project tidak melakukan summary mutation request.
+- Group summary selalu read-only and is never part of the Group rename payload.
+- On an Open Project, the combined Group dialog may expose Save for Group Name
+  only; summary values are excluded from validation and mutation.
+- On a Locked Project, the Group dialog has no rename Save action and remains
+  read-only.
+- Project Summary berada di dalam Edit Project dialog tetapi tetap read-only dan bukan bagian dari Project update payload.
+- Membuka atau menutup Group dialog atau Edit Project tidak melakukan summary mutation request. Saving an Open Group may send only the established rename mutation.
 - Tidak ada summary field baru pada WBS atau Project domain entity, persistence model, atau API DTO.
 - Tidak ada separate Group atau Project Summary aggregate.
 - Frontend menggunakan satu pure deterministic helper pada WBS feature domain/presentation boundary untuk menghasilkan view model dari confirmed tree; Group dan Project presentation tidak boleh menduplikasi calculation logic.
@@ -339,7 +350,7 @@ Group dan Project Summary harus merefleksikan confirmed state setelah operation 
 
 Rules:
 
-- Existing WBS invalidation/versioned request-cache contract tetap digunakan untuk View Group dan Edit Project.
+- Existing WBS invalidation/versioned request-cache contract tetap digunakan untuk Home Group dialog dan Edit Project.
 - Older in-flight tree response tidak boleh mengembalikan summary ke stale confirmed values setelah mutation.
 - Unconfirmed automatic schedule preview pada Edit Task tidak mengubah Group atau Project Summary.
 - Unsaved Task draft tidak mengubah Group atau Project Summary.
@@ -348,22 +359,42 @@ Rules:
 
 ### 5.13 Project Lifecycle
 
-- View Group summary tersedia pada Open, Locked, dan Closed Project selama Project Structure dapat dibuka.
-- Project Summary tersedia ketika Edit Project dibuka untuk Open, Locked, dan Closed Project.
-- Summary selalu read-only untuk semua status; Project field edit permissions remain owned by US-3.1 and US-3.3.
-- Locked dan Closed status tidak mengubah calculation rules.
-- Closed Project summary menggunakan retained confirmed Task data dan tidak memicu scheduler.
-- Story ini tidak mengubah Project visibility, Gantt exclusion, lifecycle transition, atau edit permissions.
+- Home Group dialog is available for Open and Locked Projects because those
+  statuses are eligible for Home.
+- Open Project allows Group Name rename while the summary remains read-only.
+- Locked Project exposes the same Group summary read-only and forbids Group
+  rename.
+- Closed Project remains excluded from Home; this story does not add historical
+  Closed-Project Gantt or a new Group entry point.
+- Project Summary remains available when Edit Project is opened for Open,
+  Locked, and Closed Project from Projects.
+- Summary calculation rules do not change by status.
+- Closed Project Summary uses retained confirmed Task data and does not trigger
+  scheduler.
+- Project field edit permissions remain owned by US-3.1 and US-3.3.
 
 ### 5.14 UI Composition
 
-#### View Group
+#### Home Group Dialog
 
-View Group retains:
+The shared Group dialog is opened by activating Group Name on Home.
 
-- Group Name as dialog heading;
+For an Open Project it contains:
+
+- editable Group Name using the existing US-4.1 validation and rename command;
 - `Group` as supporting type label;
-- `Close` action.
+- the three read-only summary sections;
+- Save and Cancel/Close actions following the shared form contract.
+
+For a Locked Project it contains:
+
+- read-only Group Name;
+- `Group` as supporting type label;
+- the same three read-only summary sections;
+- Close only.
+
+The summary is never submitted. Rename success refreshes Home without a route
+change and must not invoke scheduling when only Group Name changes.
 
 The obsolete informational alert is removed:
 
@@ -383,7 +414,7 @@ This group contains <n> direct item items. Task details are managed on tasks ins
 
 #### Shared Summary Sections
 
-View Group and Project Summary display the same three semantic information groups and the same calculation/copy rules:
+Home Group dialog and Project Summary display the same three semantic information groups and the same calculation/copy rules:
 
 1. **Execution Timeline**
    - Aggregate date range or `Not scheduled`.
@@ -415,7 +446,7 @@ Project list DTO does not carry all Task fields needed for separate Execution/Co
 
 ### 5.16 Accessibility and Responsive Behaviour
 
-- View Group and Edit Project use the existing shared Dialog focus contract.
+- Home Group dialog and Edit Project use the existing shared Dialog focus contract.
 - Edit Project opts into the existing wide variant; no new fixed pixel width or viewport overflow exception is allowed.
 - Heading hierarchy, Project Summary region, and section labels are semantic.
 - Values are not distinguished only by color.
@@ -525,7 +556,7 @@ It does not derive the two timeline summaries from Project `startDate`/`endDate`
 
 **AC-1**
 **Given** a Group contains direct Tasks and nested Groups at multiple levels
-**When** Engineering Lead opens View Group
+**When** Engineering Lead opens the Home Group dialog
 **Then** every descendant Task at every depth contributes to the applicable summary calculation.
 
 **AC-2**
@@ -535,7 +566,7 @@ It does not derive the two timeline summaries from Project `startDate`/`endDate`
 
 **AC-3**
 **Given** child order changes without descendant Task data changing
-**When** View Group is reopened or refreshed
+**When** the Home Group dialog is reopened or refreshed
 **Then** all summary values remain identical.
 
 ### Execution Timeline
@@ -629,7 +660,7 @@ It does not derive the two timeline summaries from Project `startDate`/`endDate`
 **AC-20**
 **Given** a confirmed descendant mutation or schedule recalculation changes dates, Effort, Actual Date, or subtree membership
 **When** WBS confirmed state refreshes
-**Then** an open or subsequently opened View Group or Edit Project shows recomputed values without browser hard refresh.
+**Then** an open or subsequently opened Home Group dialog or Edit Project shows recomputed values without browser hard refresh.
 
 **AC-21**
 **Given** an older WBS tree request resolves after a successful mutation and newer confirmed response
@@ -637,87 +668,103 @@ It does not derive the two timeline summaries from Project `startDate`/`endDate`
 **Then** the older response cannot restore stale Group or Project Summary values.
 
 **AC-22**
-**Given** Engineering Lead opens View Group
+**Given** Engineering Lead opens the Home Group dialog
 **When** no mutation is performed
 **Then** opening and closing the dialog sends no write request and persists no aggregate fields.
 
 **AC-23**
-**Given** the Project is Open, Locked, or Closed
-**When** View Group is available
-**Then** the same summary calculations are read-only and no Project lifecycle or scheduler action is triggered.
+**Given** the owning Project is Open or Locked
+**When** the Home Group dialog is available
+**Then** the same summary calculations are read-only and no Project lifecycle or scheduler action is triggered
+**And** only Open permits Group Name rename.
 
-### UX, Accessibility, and Defensive Behaviour
+### Group Rename, UX, Accessibility, and Defensive Behaviour
 
 **AC-24**
-**Given** View Group is rendered
-**Then** the obsolete direct-item alert is absent and the dialog displays exactly the required Execution Timeline, Commitment Timeline, and Effort Completion information groups.
+**Given** an Open Project Group
+**When** Engineering Lead opens the Home Group dialog
+**Then** Group Name is editable and the same dialog displays the required Execution Timeline, Commitment Timeline, and Effort Completion summaries
+**And** the obsolete direct-item alert is absent.
 
 **AC-25**
-**Given** long localized dates, large Task counts, large hour values, or a narrow supported viewport
-**When** View Group is rendered
-**Then** content wraps without clipping or uncontrolled horizontal scrolling and Close remains usable.
+**Given** Group Name is changed validly
+**When** Save succeeds
+**Then** only the established Group rename mutation is submitted
+**And** summary fields are excluded from the payload
+**And** Home refreshes without scheduler invocation or route change.
 
 **AC-26**
-**Given** a keyboard or screen-reader user opens View Group
-**When** they navigate the dialog
-**Then** heading, labels, values, coverage/disclosure, focus containment, Close action, and focus restoration satisfy the shared Dialog and accessibility contracts.
+**Given** a Group belongs to a Locked Project
+**When** the Home Group dialog opens
+**Then** Group Name and summary are read-only
+**And** no Save action is available.
 
 **AC-27**
+**Given** long localized dates, large Task counts, large hour values, or a narrow supported viewport
+**When** the Home Group dialog is rendered
+**Then** content wraps without clipping or uncontrolled horizontal scrolling and form/Close actions remain usable.
+
+**AC-28**
+**Given** a keyboard or screen-reader user opens the Home Group dialog
+**When** they navigate the dialog
+**Then** heading, Group Name field/read-only value, labels, summary values, coverage/disclosure, focus containment, actions, and focus restoration satisfy the shared Dialog and accessibility contracts.
+
+**AC-29**
 **Given** malformed or transient data marks a node as Group but contains no descendant Task
-**When** View Group is rendered
+**When** the Home Group dialog is rendered
 **Then** a safe `No descendant tasks are available for this group.` state is shown without crash or misleading aggregate values.
 
 ### Project Summary and Wide Edit Form
 
-**AC-28**
+**AC-30**
 **Given** Project is the logical WBS level `0` and has multiple top-level WBS roots
 **When** Engineering Lead opens Edit Project
-**Then** Project Summary recursively includes every Task in every root and nested descendant, using exactly the same timeline, coverage, effort, percentage, and missing-Effort rules as View Group.
+**Then** Project Summary recursively includes every Task in every root and nested descendant, using exactly the same timeline, coverage, effort, percentage, and missing-Effort rules as Home Group dialog.
 
-**AC-29**
+**AC-31**
 **Given** Edit Project has loaded confirmed WBS data
 **When** Project Summary is rendered
-**Then** it displays Execution Timeline, Commitment Timeline, and Effort Completion in the same semantic order and with the same copy/precision contract as View Group.
+**Then** it displays Execution Timeline, Commitment Timeline, and Effort Completion in the same semantic order and with the same copy/precision contract as the Home Group dialog.
 
-**AC-30**
+**AC-32**
 **Given** a Project has no confirmed Task
 **When** Edit Project is opened
 **Then** Project Summary displays `No tasks are available for this project.` and does not display `0 of 0`, a percentage, or invented dates.
 
-**AC-31**
+**AC-33**
 **Given** Edit Project opens without a fresh confirmed WBS tree in cache
 **When** summary data is being loaded
 **Then** the form opens immediately, Project fields remain usable according to lifecycle rules, focus remains on the form, and only the Project Summary region shows a local loading state.
 
-**AC-32**
+**AC-34**
 **Given** Project Summary loading fails
 **When** Edit Project remains open
 **Then** a local recoverable error and Retry are shown without clearing Project draft, closing the dialog, or blocking valid Save/Cancel operations.
 
-**AC-33**
+**AC-35**
 **Given** an older Project WBS response resolves after a newer confirmed response
 **When** Project Summary state coordinates
 **Then** the older response cannot restore stale summary values.
 
-**AC-34**
+**AC-36**
 **Given** Engineering Lead opens Edit Project on a supported desktop viewport
 **Then** the dialog uses the existing shared wide variant and the Project fields plus summary are not constrained to the standard `28rem` dialog cap.
 
-**AC-35**
+**AC-37**
 **Given** Edit Project is displayed on a narrow supported viewport
 **When** the wide dialog and summary sections reflow
 **Then** the dialog remains within viewport padding, summary sections stack in semantic order, no uncontrolled horizontal scrolling occurs, and form actions remain reachable.
 
-**AC-36**
+**AC-38**
 **Given** Engineering Lead opens Add Project
 **Then** Project Summary is absent and the Add form is not required to use the wide variant.
 
-**AC-37**
+**AC-39**
 **Given** Edit Project is Open, Locked, or Closed
 **When** Project Summary is displayed
 **Then** the summary remains read-only, follows the same calculation rules, and does not change existing field permissions or lifecycle behaviour.
 
-**AC-38**
+**AC-40**
 **Given** Project `startDate` and `endDate` are present
 **When** Project Summary is calculated
 **Then** those generic Project fields are not used as a substitute for recursive Task Execution/Commitment pairs or Effort Completion.
@@ -758,7 +805,7 @@ It does not derive the two timeline summaries from Project `startDate`/`endDate`
 
 ### 8.2 Component Tests
 
-- View Group replaces obsolete direct-item alert.
+- Home Group dialog replaces obsolete direct-item alert.
 - Dialog renders three required summary sections.
 - Correct date-only formatting without timezone shift.
 - Correct `3 of 5 tasks scheduled` copy per timeline.
@@ -766,8 +813,8 @@ It does not derive the two timeline summaries from Project `startDate`/`endDate`
 - Singular Task Without Effort copy.
 - Plural Task Without Effort copy.
 - Zero-known-effort unavailable state.
-- No write gateway method is called when View Group opens/closes.
-- Summary is read-only for Open, Locked, and Closed Project.
+- Opening/closing Home Group dialog sends no write request; Save sends only Group rename.
+- Summary is read-only for Open and Locked Home Group dialogs; Open alone permits rename.
 - Unconfirmed Task preview does not alter Group or Project Summary.
 - Confirmed Actual Date updates summary.
 - Confirmed Reopen updates summary.
@@ -776,7 +823,7 @@ It does not derive the two timeline summaries from Project `startDate`/`endDate`
 - Keyboard open/close and focus restoration.
 - axe accessibility assertion.
 - Narrow viewport and long-content containment.
-- Edit Project displays the same three sections as View Group.
+- Edit Project displays the same three sections as the Home Group dialog.
 - Edit Project uses shared wide Dialog variant; Add Project remains summary-free.
 - Project Summary local skeleton does not block form interaction or steal focus.
 - Project Summary local error and Retry preserve draft and Save/Cancel behaviour.
@@ -784,7 +831,8 @@ It does not derive the two timeline summaries from Project `startDate`/`endDate`
 
 ### 8.3 Acceptance-Level Tests
 
-At least one Project Structure workflow must prove recursively aggregated output from a realistic tree that includes:
+At least one Home workflow must activate Group Name and prove the combined
+summary/rename dialog against a realistic tree containing:
 
 - a direct Task;
 - a nested Group with deeper Tasks;
@@ -794,11 +842,21 @@ At least one Project Structure workflow must prove recursively aggregated output
 - one completed Task without Effort;
 - one unfinished Task without Effort.
 
-The workflow must observe the exact aggregate ranges, both coverage values, completed/total known effort, percentage, and missing-effort disclosure.
+The workflow must observe the exact aggregate ranges, both coverage values,
+completed/total known effort, percentage, and missing-effort disclosure; rename
+the Group; verify only the rename payload is submitted; return to refreshed Home;
+and prove no Project Structure route/background is used.
 
-A second acceptance workflow must prove confirmed Actual Date and Reopen Task transitions update the same open/reopened Group and owning Project Summary without hard refresh and that unconfirmed preview does not affect either.
+A second Home workflow must prove the same dialog is read-only for Locked
+Project and that confirmed Actual Date/Reopen Task transitions update the
+applicable Group and owning Project Summary without hard refresh while
+unconfirmed preview affects neither.
 
-A third acceptance workflow must open Edit Project for a realistic multi-root WBS, verify the exact Project Summary, wide desktop layout, narrow stacked layout, and empty Project state. It must also prove local summary loading/error/Retry does not block or clear the Project form and that an older response cannot restore stale values.
+A third acceptance workflow must open Edit Project for a realistic multi-root
+WBS, verify the exact Project Summary, wide desktop layout, narrow stacked
+layout, and empty Project state. It must also prove local summary
+loading/error/Retry does not block or clear the Project form and that an older
+response cannot restore stale values.
 
 ---
 
@@ -810,14 +868,14 @@ Every AC requires all three confidence levels defined by `AGENTS.md`:
 2. Unit or Integration Test.
 3. Acceptance-Level Test.
 
-An implementation agent must maintain explicit AC traceability. Pure calculations should be proven at the lowest meaningful deterministic boundary, while observable View Group and Edit Project behaviour must also be proven through their component/acceptance workflows.
+An implementation agent must maintain explicit AC traceability. Pure calculations should be proven at the lowest meaningful deterministic boundary, while observable Home Group dialog and Edit Project behaviour must also be proven through their component/acceptance workflows.
 
 A broad test that opens the dialog but does not assert the exact recursive calculations is not sufficient acceptance evidence.
 
 The implementation is not complete when:
 
 - only snapshot/UI text tests exist;
-- only a pure helper is tested without the actual View Group and Edit Project workflows;
+- only a pure helper is tested without the actual Home Group dialog and Edit Project workflows;
 - only the happy path exists without missing Effort and partial schedule cases;
 - stale state or unconfirmed preview behaviour is unverified;
 - local validation has not passed.
@@ -837,7 +895,7 @@ The current WBS tree response already contains every required descendant field:
 - `commitmentTimeline.start/end`;
 - `actualEnd`.
 
-Therefore this story is implemented as a frontend read-model calculation over the confirmed WBS tree. View Group passes the selected subtree roots; Edit Project passes all Project top-level roots into the same aggregation helper.
+Therefore this story is implemented as a frontend read-model calculation over the confirmed WBS tree. Home Group dialog passes the selected subtree roots; Edit Project passes all Project top-level roots into the same aggregation helper.
 
 - Use one pure, deterministic, typed aggregation helper.
 - Keep calculation ownership within the WBS feature boundary and expose only an intentional context-free summary contract to Project presentation; Project feature must not import WBS presentation internals or copy the algorithm.
@@ -865,7 +923,7 @@ A future scale-driven change may introduce backend projection only through a sep
 
 ### 10.3 Query Review
 
-This story introduces no new production query shape. Edit Project reuses the existing WBS tree read that Project Structure already requires. The completion report must explicitly state whether that response was reused from cache or requested on open and that no summary-specific query-review gate was triggered.
+This story introduces no new production query shape. Edit Project and Home Group dialog reuse the existing authoritative WBS tree read. The completion report must explicitly state whether that response was reused from cache or requested on open and that no summary-specific query-review gate was triggered.
 
 If an implementation nevertheless changes a production query, it must stop, explain why the approved no-query design is insufficient, obtain approval, and complete the mandatory query-review gate before proceeding.
 
@@ -952,13 +1010,13 @@ Before implementation, the agent must inspect completely:
 - `docs/project/schedmind-context.md`.
 - US-3.1, US-3.3, US-4.1, US-4.2, and US-6.1.
 - Existing Project form/page/gateway and tests.
-- Existing WBS frontend domain, gateway, Project Structure panel, View Group dialog, request cache, date-only formatter, shared Dialog wide variant, and relevant tests.
+- Existing WBS frontend domain, gateway, Home WBS grid, reusable Group dialog, request cache, date-only formatter, shared Dialog wide variant, and relevant tests.
 
 The agent must:
 
 - preserve the single WBS model;
 - implement one deterministic recursive summary from confirmed descendant Tasks for both Group and Project;
-- keep Group read-only and free of executable state, and keep Project Summary outside the update payload;
+- keep Group summary read-only and free of executable state, and keep Project Summary outside the update payload;
 - reuse the existing WBS tree data/read contract and cache coordination;
 - use the shared wide Dialog variant for Edit Project without changing Add Project unnecessarily;
 - prevent stale and preview-only values from entering confirmed summary;
