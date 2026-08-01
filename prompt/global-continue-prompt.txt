@@ -1,0 +1,465 @@
+Continue from the current repository state and the latest checkpoint in this session.
+
+Do not restart implementation from the last implemented baseline.
+Do not reset, clean, checkout, stash, revert, discard, overwrite, recreate, or replace valid repository changes.
+
+## Checkpoint Authority
+
+Locate the latest assistant response in this session that ends with:
+
+CONTINUATION_READY
+
+Treat that complete response as the authoritative continuation checkpoint.
+
+Read the checkpoint in full before modifying any file.
+
+The checkpoint may contain:
+
+- Execution Configuration;
+- Initial Working Tree Snapshot;
+- Initial Requirement Delta Snapshot;
+- frozen Requirement Delta Matrix;
+- completed phases;
+- completed Requirement Delta IDs;
+- unfinished Requirement Delta IDs;
+- implementation defects;
+- manual validation feedback;
+- local validation failures;
+- files already changed;
+- tests already authored;
+- unresolved contradictions;
+- blockers;
+- strongest diagnosis;
+- exact next file or symbol.
+
+Do not require the user to repeat information already recorded in the checkpoint.
+
+Automatically continue the highest-priority unresolved item recorded there.
+
+Priority order:
+
+1. confirmed implementation defect or validation feedback recorded in the checkpoint;
+2. first unfinished production implementation;
+3. missing or obsolete unit/integration tests;
+4. missing acceptance-level tests;
+5. cross-requirement regression reconciliation;
+6. documentation reconciliation;
+7. evidence-table readiness;
+8. static review;
+9. validation according to the frozen Validation Mode;
+10. delivery according to the frozen Delivery Mode.
+
+If the current user message includes new logs, screenshots, errors, or manual feedback, treat them as an additional Implementation Feedback Delta and prioritise them when they directly relate to the frozen requirement scope.
+
+Do not ask the user to restate feedback that is already visible in the current conversation.
+
+If no checkpoint ending with CONTINUATION_READY is available in the current session:
+
+1. Do not reconstruct the original requirement scope from the current mixed Git diff.
+2. Stop before editing.
+3. Request the complete previous checkpoint.
+
+## Frozen Execution Configuration
+
+Reuse the Execution Configuration recorded in the checkpoint:
+
+- EXECUTION_MODE;
+- REQUIREMENT_ROOTS;
+- VALIDATION_MODE;
+- DELIVERY_MODE.
+
+Do not silently change any configuration value.
+
+Expected behaviour:
+
+- LOCAL_WORKTREE:
+  Continue directly in the existing local Git working tree.
+
+- UPLOADED_ARCHIVE:
+  Continue in the existing extracted sandbox repository.
+  Do not re-extract the original archive unless the previous sandbox state is genuinely unavailable or corrupted.
+
+- USER_LOCAL_VALIDATION:
+  Author all required tests but do not execute automated validation, but still do code inspection at validation code to minimize issue in local validation .
+
+- AGENT_VALIDATION:
+  Execute repository-supported validation according to the validation and failure policies.
+
+- DIRECT_WORKTREE:
+  Do not create a ZIP.
+
+- CHANGES_ONLY_ZIP:
+  Create and verify a changes-only ZIP at checkpoint or completion.
+
+## Frozen Requirement Scope
+
+Continue using the previously frozen:
+
+1. Initial Working Tree Snapshot.
+2. Initial Requirement Delta Snapshot.
+3. Requirement Delta Matrix.
+
+Do not recalculate requirement scope from the current Git diff.
+
+The current Git state may already contain:
+
+- initial requirement changes;
+- pre-existing user changes;
+- production implementation changes;
+- unit and integration test changes;
+- acceptance-level test changes;
+- documentation changes;
+- evidence-table changes;
+- implementation defect repairs.
+
+The current Git diff may only be used to inspect and preserve current repository state.
+
+It must not be used to reconstruct the original requirement delta.
+
+If a frozen artifact is missing but the checkpoint still contains an authoritative summary:
+
+- use the checkpoint summary;
+- record the missing artifact as a traceability limitation;
+- continue only work whose scope remains explicit and unambiguous;
+- do not restart the full implementation.
+
+## First Actions
+
+Before modifying any file, run the lightweight inspection commands permitted by the frozen Execution Configuration:
+
+git status --short
+git diff --name-status --find-renames
+git diff --cached --name-status --find-renames
+git diff --stat
+git diff --check
+git ls-files --others --exclude-standard
+
+Then:
+
+1. Confirm that valid changes recorded in the checkpoint still exist.
+2. Compare the current repository state with the checkpoint.
+3. Identify unexpected changes not recorded in the checkpoint.
+4. Preserve all valid existing user and agent changes.
+5. Confirm:
+   - the first unfinished phase;
+   - the highest-priority unresolved feedback or defect;
+   - the first unfinished Requirement Delta ID;
+   - the first affected Acceptance Criterion without complete required implementation or evidence;
+   - the exact next production file, test file, document, or symbol.
+6. Continue from that exact point.
+7. Do not repeat completed work.
+8. Do not rewrite valid completed code merely to use a different style.
+9. Do not broaden the frozen requirement scope.
+
+## Requirement Authority
+
+Use this precedence:
+
+1. Explicit instruction in the current user message.
+2. Confirmed implementation feedback or validation evidence in the latest checkpoint.
+3. Frozen Initial Requirement Delta Snapshot.
+4. Frozen Requirement Delta Matrix.
+5. Complete current content of authoritative changed requirement files.
+6. Current unchanged authoritative project requirement documentation.
+7. Architecture documentation.
+8. Existing production code.
+9. Existing tests.
+
+Implementation feedback may correct a defect against the frozen requirement.
+
+It must not silently introduce a new business rule.
+
+Existing code and tests represent prior behaviour and are not more authoritative than the frozen requirements.
+
+Do not invent a business rule to resolve an unresolved contradiction.
+
+## Continuation Execution
+
+Continue from the exact unresolved item identified from the checkpoint.
+
+For every affected Requirement Delta entry:
+
+- preserve completed valid implementation;
+- finish missing impacted layers;
+- remove or revise obsolete behaviour;
+- revise tests that encode superseded requirements;
+- preserve unaffected previous behaviour;
+- update implementation and evidence readiness.
+
+For every confirmed implementation defect or validation failure:
+
+1. Identify the actual root cause.
+2. Fix the smallest architecturally correct scope.
+3. Preserve unrelated completed behaviour.
+4. Add or revise regression tests.
+5. Update affected evidence mappings.
+6. Do not convert implementation feedback into an undocumented business requirement.
+
+Do not perform broad unrelated refactors.
+
+## Test Authoring Standard
+
+Author or revise all tests required by unfinished deltas and confirmed feedback.
+
+Every test must:
+
+- have a clear scenario-based name;
+- reference the relevant AC, Requirement Delta ID, or Feedback Delta where practical;
+- assert observable behaviour;
+- distinguish before and after state;
+- avoid snapshot-only evidence;
+- avoid mock-call-only evidence;
+- verify persisted state where applicable;
+- verify rollback by reading state again;
+- use genuine concurrent execution for concurrency scenarios;
+- control response-resolution order for stale-response scenarios;
+- explicitly verify identity preservation;
+- explicitly verify fields that must remain unchanged;
+- verify dependency endpoints rather than only relation count;
+- verify focus and keyboard behaviour for accessibility scenarios;
+- avoid unsafe type assertions;
+- avoid ambiguous fixtures.
+
+Do not weaken existing tests to make implementation appear complete.
+
+## Static Review
+
+Before completion or another checkpoint, inspect where applicable:
+
+- architecture boundaries;
+- domain invariants;
+- obsolete behaviour still active;
+- exception boundaries;
+- transaction atomicity;
+- rollback;
+- concurrency;
+- persistence predicates;
+- query cardinality and index implications;
+- API contracts;
+- error mapping;
+- cache invalidation;
+- stale-response protection;
+- identity preservation;
+- unchanged-field preservation;
+- dependency preservation;
+- frontend type safety;
+- accessibility and keyboard behaviour;
+- false-positive test patterns;
+- documentation consistency;
+- unrelated changes.
+
+Use the current Git diff only for implementation review, never for requirement-scope reconstruction.
+
+## Validation
+
+Apply the frozen VALIDATION_MODE.
+
+### USER_LOCAL_VALIDATION
+
+Do not execute automated validation.
+
+Do not run:
+
+- tests;
+- race tests;
+- vet;
+- builds;
+- linters;
+- typecheckers;
+- formatters;
+- package installation;
+- dependency downloads;
+- toolchain installation;
+- service startup;
+- database startup or migration;
+- Docker;
+- browser automation;
+- external integrations.
+
+Author all required tests and provide exact repository-supported local validation commands.
+
+Use:
+
+- Code Inspection:
+  IMPLEMENTED BY CODE INSPECTION
+
+- Unit/Integration:
+  AUTHORED — NOT RUN — LOCAL VALIDATION REQUIRED
+
+- Acceptance-Level:
+  AUTHORED — NOT RUN — LOCAL VALIDATION REQUIRED
+
+- Overall:
+  IMPLEMENTED — LOCAL VALIDATION REQUIRED
+
+Do not fabricate passing results.
+
+### AGENT_VALIDATION
+
+Run the smallest relevant targeted validation first.
+
+Do not run full validation while targeted validation is failing.
+
+For the same root cause:
+
+- perform at most two focused repair-and-rerun cycles;
+- do not rerun an unchanged failing command;
+- do not weaken repository quality rules.
+
+After targeted validation passes, run repository-supported full validation.
+
+Report exact commands and actual results.
+
+Do not claim environment-dependent validation passed unless it was actually executed successfully.
+
+## Three-Level Confidence
+
+For every affected Acceptance Criterion, report:
+
+### Code Inspection
+
+- production path;
+- exact symbol;
+- implemented behaviour or invariant;
+- obsolete behaviour removed;
+- unaffected behaviour preserved.
+
+### Unit/Integration Test
+
+- exact test path;
+- exact test name;
+- assertions covered;
+- exact validation command;
+- actual status according to VALIDATION_MODE.
+
+### Acceptance-Level Test
+
+- exact test path;
+- exact scenario;
+- observable outcome;
+- exact validation command;
+- actual status according to VALIDATION_MODE.
+
+Do not claim an Acceptance Criterion is verified unless all three levels were actually executed and passed in an authoritative environment.
+
+## Checkpoint-and-Pause Policy
+
+If the remaining work cannot be completed reliably:
+
+1. Preserve all valid modifications.
+2. Do not restart or roll back completed implementation.
+3. Inspect the current Git state.
+4. Produce the artifact required by DELIVERY_MODE.
+5. Return a complete checkpoint containing:
+   - Execution Configuration;
+   - frozen snapshot availability;
+   - Initial Working Tree Snapshot summary;
+   - Initial Requirement Delta Snapshot summary;
+   - complete frozen Requirement Delta Matrix;
+   - current repository state;
+   - completed phases;
+   - completed Requirement Delta IDs;
+   - first unfinished Requirement Delta ID;
+   - implementation or validation feedback and status;
+   - files changed;
+   - tests authored;
+   - tests executed, when applicable;
+   - affected Acceptance Criterion readiness;
+   - unresolved issue;
+   - strongest diagnosis;
+   - exact next file, symbol, test, document, or delta;
+   - validation status;
+   - artifact required by DELIVERY_MODE.
+
+End exactly with:
+
+CONTINUATION_READY
+
+Do not claim completion in a checkpoint.
+
+## Delivery
+
+Apply the frozen DELIVERY_MODE.
+
+### DIRECT_WORKTREE
+
+Do not create a ZIP.
+
+Changes remain directly in the current working tree.
+
+Return the actual results of:
+
+git status --short
+git diff --stat
+git diff --check
+
+### CHANGES_ONLY_ZIP
+
+Create a ZIP containing all files required to apply the complete frozen requirement delta and all valid continuation changes.
+
+Do not create a ZIP containing only the latest patch when earlier uncommitted implementation changes are also required.
+
+Include:
+
+- changed requirement files from the frozen initial snapshot;
+- production files added or modified by implementation;
+- test files added or modified by implementation;
+- documentation files added or modified by implementation;
+- files modified for confirmed implementation or validation feedback;
+- pre-existing non-requirement files only when further modified because the frozen scope required it.
+
+Exclude:
+
+- unchanged files;
+- untouched pre-existing non-requirement changes;
+- `.git`;
+- uploaded archives;
+- Archive.zip;
+- dependencies;
+- generated output;
+- temporary directories;
+- temporary compatibility copies;
+- editor metadata;
+- unrelated files.
+
+Preserve repository-relative paths.
+
+For deleted files, include a deletion manifest.
+
+Verify ZIP contents before returning it.
+
+## Completion Report
+
+When all frozen Requirement Delta entries and confirmed feedback items are complete, return:
+
+1. Execution Configuration.
+2. Frozen requirement scope used.
+3. Initial Snapshot summary.
+4. Final Requirement Delta Matrix.
+5. Implementation and validation feedback outcomes.
+6. Implementation outcome.
+7. Changed files grouped by layer.
+8. Cross-requirement impact.
+9. Obsolete rules and tests revised.
+10. Acceptance Criteria mapping.
+11. Three-Level Confidence readiness or verified evidence.
+12. Validation commands and actual execution status.
+13. Static-review findings.
+14. Remaining risks and assumptions.
+15. Current repository state.
+16. Delivery artifact required by DELIVERY_MODE.
+17. Final verdict according to actual validation status.
+
+When VALIDATION_MODE is USER_LOCAL_VALIDATION, use exactly:
+
+IMPLEMENTED — LOCAL VALIDATION REQUIRED
+
+When VALIDATION_MODE is AGENT_VALIDATION, use either:
+
+VERIFIED THROUGH AC-[number]
+
+or:
+
+NOT VERIFIED — FIRST GAP: AC-[number]
+
+Do not claim verification without actual passing evidence.

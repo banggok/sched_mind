@@ -1,0 +1,887 @@
+You are implementing requirement changes in an existing Git repository.
+
+## Execution Configuration
+
+Use the following configuration as authoritative:
+
+EXECUTION_MODE:
+[LOCAL_WORKTREE | UPLOADED_ARCHIVE]
+
+REQUIREMENT_ROOTS:
+[user_story/]
+
+VALIDATION_MODE:
+[USER_LOCAL_VALIDATION | AGENT_VALIDATION]
+
+DELIVERY_MODE:
+[DIRECT_WORKTREE | CHANGES_ONLY_ZIP]
+
+Additional task instruction:
+
+[OPTIONAL — INSERT EXPLICIT USER INSTRUCTION HERE]
+
+Interpretation:
+
+- `LOCAL_WORKTREE`
+  means work directly in the current local Git repository.
+
+- `UPLOADED_ARCHIVE`
+  means locate the latest uploaded repository archive, extract it once, and
+  work on that extracted repository.
+
+- `USER_LOCAL_VALIDATION`
+  means author all required tests but do not execute automated validation.
+  The user will run validation locally, but still do code inspection at validation code to minimize issue in local validation 
+
+- `AGENT_VALIDATION`
+  means execute repository-supported targeted and full validation according
+  to AGENTS.md and project documentation.
+
+- `DIRECT_WORKTREE`
+  means changes remain directly in the current working tree and no ZIP is
+  required.
+
+- `CHANGES_ONLY_ZIP`
+  means create a ZIP containing only the files required to apply the
+  implementation, preserving repository-relative paths.
+
+Do not silently change these configuration values.
+
+If any configuration value is missing or invalid, stop before editing and ask
+for the missing value.
+
+## Repository Safety
+
+Do not:
+
+- clone or replace the repository;
+- re-extract the archive after implementation begins;
+- reset;
+- clean;
+- checkout;
+- stash;
+- revert;
+- discard;
+- overwrite valid user changes;
+- alter Git history;
+- commit;
+- push;
+- create a pull request;
+
+unless explicitly requested.
+
+Preserve:
+
+- tracked modifications;
+- staged changes;
+- untracked files;
+- renamed files;
+- deleted files;
+- pre-existing user work.
+
+Do not modify unrelated files.
+
+Do not include or modify:
+
+- generated dependencies;
+- build output;
+- repository metadata;
+- uploaded archives;
+- temporary compatibility copies;
+- editor metadata;
+- files explicitly excluded by the requirement.
+
+## Objective
+
+Implement the complete semantic requirement delta introduced since the last
+implemented repository baseline.
+
+The scope is not limited to the newest user story or newest requirement file.
+
+It includes, where present:
+
+- newly added requirements;
+- modifications to existing requirements;
+- deleted or removed requirements;
+- superseded rules;
+- renamed requirements;
+- clarified rules;
+- restricted rules;
+- new exceptions to existing rules;
+- changed Acceptance Criteria;
+- changed test cases;
+- changes to older requirements caused by newer requirements;
+- all resulting production-code, test, and documentation changes.
+
+Do not merely provide:
+
+- analysis;
+- recommendations;
+- snippets;
+- pseudocode;
+- a proposed patch;
+- an implementation plan without modifying files.
+
+Modify the actual repository.
+
+Do not change requirement semantics merely to fit existing code or tests.
+
+## Mandatory Initial Git Snapshot
+
+Before modifying any repository file, capture and freeze:
+
+1. Initial Working Tree Snapshot.
+2. Initial Requirement Delta Snapshot.
+3. Requirement Delta Matrix.
+
+These three artifacts define the implementation boundary for the entire task
+and all continuation turns.
+
+### A. Initial Working Tree Snapshot
+
+Run:
+
+git status --short
+git diff --name-status --find-renames
+git diff --cached --name-status --find-renames
+git ls-files --others --exclude-standard
+git diff --stat
+git diff --check
+
+Record:
+
+- every modified tracked file;
+- every staged file;
+- every untracked file;
+- every renamed file;
+- every deleted file;
+- which changes are inside the configured REQUIREMENT_ROOTS;
+- which changes are outside the configured REQUIREMENT_ROOTS.
+
+Initial changes outside REQUIREMENT_ROOTS are pre-existing user changes.
+
+Preserve them.
+
+Do not automatically interpret them as requirement input.
+
+They become implementation scope only when the frozen requirement delta
+demonstrates that they are affected.
+
+### B. Initial Requirement Delta Snapshot
+
+For every configured REQUIREMENT_ROOT, capture:
+
+git diff --name-status --find-renames -- <REQUIREMENT_ROOT>
+git diff --find-renames -- <REQUIREMENT_ROOT>
+git diff --cached --name-status --find-renames -- <REQUIREMENT_ROOT>
+git diff --cached --find-renames -- <REQUIREMENT_ROOT>
+git ls-files --others --exclude-standard -- <REQUIREMENT_ROOT>
+
+The complete initial Git delta under REQUIREMENT_ROOTS represents every
+requirement change since the last implemented baseline.
+
+It may include:
+
+- unstaged modifications;
+- staged modifications;
+- untracked files;
+- renamed files;
+- deleted files.
+
+Do not rely only on `git diff`.
+
+For untracked requirement files, read the complete file because no historical
+diff is available.
+
+For deleted requirement files, inspect the baseline version through Git when
+available.
+
+### Frozen Scope Rule
+
+Freeze the Initial Working Tree Snapshot and Initial Requirement Delta Snapshot
+before editing.
+
+After implementation begins:
+
+- never recalculate requirement scope from the current Git diff;
+- never treat agent-created code, test, documentation, or evidence changes as
+  new requirement input;
+- never lose staged, unstaged, untracked, renamed, or deleted requirement
+  entries from the initial snapshot.
+
+The working-tree diff will become mixed with implementation output.
+
+The frozen Initial Requirement Delta Snapshot remains authoritative throughout
+the task and every continuation turn.
+
+If no requirement delta exists under REQUIREMENT_ROOTS:
+
+1. Do not invent implementation scope.
+2. Do not edit production code.
+3. Return a checkpoint stating that no requirement change was detected.
+4. Identify any explicit task instruction that might intentionally override
+   the absence of a Git requirement delta.
+
+## Mandatory Repository Inspection
+
+Before modifying production code, inspect:
+
+- AGENTS.md;
+- repository instructions;
+- architecture documentation;
+- project documentation;
+- all changed requirement files;
+- all new requirement files;
+- baseline versions of deleted requirement files;
+- related unchanged requirements referenced by changed content;
+- existing production implementation;
+- existing unit tests;
+- existing integration tests;
+- existing acceptance-level tests.
+
+For every newly added requirement file:
+
+- read the complete file;
+- treat its complete current content as authoritative;
+- do not rely only on its filename or isolated sections.
+
+For every modified requirement file:
+
+- inspect the exact initial Git diff;
+- read the complete current file;
+- interpret changed statements in their full context;
+- identify absolute rules that became conditional, exceptional, restricted, or
+  obsolete.
+
+For every deleted, removed, or superseded requirement:
+
+- locate production code that still enforces it;
+- locate tests that still assert it;
+- locate documentation that still describes it;
+- remove or revise obsolete behaviour where required.
+
+For renamed requirements:
+
+- preserve semantic traceability;
+- do not treat a pure rename as a separate business requirement.
+
+## Requirement Authority
+
+Use this precedence:
+
+1. Explicit instruction in the current user prompt.
+2. Frozen Initial Requirement Delta Snapshot.
+3. Complete current content of changed requirement files.
+4. Current unchanged authoritative project requirement documentation.
+5. Architecture documentation.
+6. Existing production code.
+7. Existing tests.
+
+Existing code and tests represent previous behaviour.
+
+They are not more authoritative than changed requirements.
+
+When a newer requirement introduces an exception to an older rule:
+
+- implement the exception;
+- preserve the old rule outside the exception boundary;
+- revise tests that incorrectly enforce the old rule as absolute;
+- reconcile older documentation where required.
+
+When authoritative requirement sources still contradict each other:
+
+1. Identify the exact files, sections, and statements.
+2. Apply the authority order.
+3. Continue implementing unaffected deltas.
+4. Do not invent a missing business rule.
+5. Return a checkpoint if the contradiction cannot be resolved.
+
+## Requirement Delta Matrix
+
+Before modifying production code, create and freeze a Requirement Delta Matrix.
+
+For every semantic requirement change, record:
+
+- Delta ID;
+- source file;
+- section, rule, or Acceptance Criterion;
+- change type:
+  - added;
+  - modified;
+  - removed;
+  - renamed;
+  - clarified;
+  - restricted;
+  - exception introduced;
+  - superseded;
+- previous rule, when applicable;
+- new authoritative rule;
+- affected older requirements;
+- affected current behaviour;
+- expected production-code impact;
+- expected unit/integration-test impact;
+- expected acceptance-level-test impact;
+- expected documentation impact;
+- potentially conflicting implementation or tests.
+
+The Requirement Delta Matrix is the immutable implementation checklist.
+
+Do not begin production implementation before it is complete enough to expose
+cross-requirement impact.
+
+Do not reconstruct or recalculate it from the mixed Git diff after
+implementation starts.
+
+## Impact Analysis
+
+For every Requirement Delta Matrix entry, locate all affected implementation
+and evidence paths.
+
+Inspect where applicable:
+
+- domain entities;
+- value objects;
+- domain invariants;
+- domain services;
+- application services;
+- use cases;
+- repository interfaces;
+- persistence implementations;
+- transaction boundaries;
+- rollback behaviour;
+- concurrency handling;
+- database predicates;
+- HTTP routes;
+- handlers;
+- request contracts;
+- response contracts;
+- error mapping;
+- frontend gateways;
+- caches;
+- stale-response protection;
+- application state;
+- components;
+- dialogs;
+- overlays;
+- accessibility behaviour;
+- unit tests;
+- integration tests;
+- acceptance-level tests;
+- architecture documentation;
+- related older requirement files.
+
+Search for both:
+
+- the new terminology or rule;
+- the old terminology or rule being replaced.
+
+Do not assume impact is limited to files named after the newest requirement.
+
+## Implementation Scope
+
+Implement every semantic change in the frozen Requirement Delta Matrix.
+
+Handle all consequences, including:
+
+- new behaviour;
+- changed existing behaviour;
+- removed behaviour;
+- exceptions to existing invariants;
+- changed lifecycle rules;
+- changed validation rules;
+- changed transaction or concurrency behaviour;
+- changed API contracts;
+- changed error mapping;
+- changed frontend behaviour;
+- changed cache invalidation;
+- changed stale-state protection;
+- changed accessibility behaviour;
+- changed tests;
+- changed documentation.
+
+Preserve valid unaffected behaviour.
+
+Do not perform broad unrelated refactors.
+
+Fix the smallest architecturally correct scope.
+
+## Execution Phases
+
+### Phase 1 — Snapshot and Requirement Capture
+
+- capture the Initial Working Tree Snapshot;
+- capture the Initial Requirement Delta Snapshot;
+- read all changed and related requirements;
+- build and freeze the Requirement Delta Matrix;
+- identify contradictions and cross-requirement impact.
+
+Do not modify production code before this phase is complete.
+
+### Phase 2 — Existing Behaviour Mapping
+
+For every delta, identify:
+
+- current production paths;
+- current unit/integration tests;
+- current acceptance-level tests;
+- assertions that have become obsolete;
+- missing evidence;
+- pre-existing user changes that must be preserved.
+
+### Phase 3 — Production Implementation
+
+Implement all required behaviour across affected layers.
+
+Preserve architecture boundaries and repository conventions unless they
+conflict with authoritative requirements.
+
+### Phase 4 — Unit and Integration Test Authoring
+
+Add or revise tests for:
+
+- added behaviour;
+- modified behaviour;
+- removed behaviour;
+- preserved behaviour outside an exception;
+- negative cases;
+- persistence;
+- transactions;
+- rollback;
+- concurrency;
+- error mapping;
+- cache invalidation;
+- stale responses;
+- identity preservation;
+- field preservation;
+- dependency preservation.
+
+Tests enforcing superseded requirements must be revised rather than retained as
+false requirements.
+
+### Phase 5 — Acceptance-Level Test Authoring
+
+Add or revise tests using the highest practical existing user, API, or system
+workflow.
+
+Acceptance-level tests must prove observable outcomes.
+
+Do not use isolated domain tests, isolated buttons, shallow component tests, or
+mock-call-only assertions as acceptance-level evidence when a higher-level
+workflow exists.
+
+### Phase 6 — Documentation Reconciliation
+
+Update all affected requirement and architecture documentation so that:
+
+- obsolete absolute rules are removed or narrowed;
+- new exceptions are explicit;
+- related older requirements no longer contradict current behaviour;
+- deferred scope remains deferred;
+- documentation matches implementation;
+- requirement semantics are not rewritten merely to match code.
+
+### Phase 7 — Static Review
+
+Review for:
+
+- architecture-boundary violations;
+- obsolete behaviour still active;
+- new behaviour added while conflicting old logic remains;
+- weakened invariants outside the intended scope;
+- missing error propagation;
+- incomplete transaction boundaries;
+- incomplete rollback;
+- concurrency risks;
+- unsafe persistence predicates;
+- query cardinality and index implications;
+- stale-cache risks;
+- identity mutation;
+- unintended field mutation;
+- dependency corruption;
+- unsafe frontend type assertions;
+- accessibility gaps;
+- false-positive test patterns;
+- documentation contradictions;
+- unrelated changes.
+
+### Phase 8 — Validation
+
+Apply the configured VALIDATION_MODE.
+
+#### When VALIDATION_MODE is USER_LOCAL_VALIDATION
+
+Do not execute automated validation.
+
+Author all required test code.
+
+Prepare exact repository-supported validation commands for the user.
+
+Do not:
+
+- install dependencies;
+- download toolchains;
+- change toolchain versions;
+- alter dependency manifests for the environment;
+- run tests;
+- run builds;
+- run linters;
+- run typecheckers;
+- run formatters;
+- start services;
+- start databases;
+- start Docker;
+- run browser automation;
+- claim passing results.
+
+Use status:
+
+- Code Inspection:
+  `IMPLEMENTED BY CODE INSPECTION`
+
+- Unit/Integration:
+  `AUTHORED — NOT RUN — LOCAL VALIDATION REQUIRED`
+
+- Acceptance-Level:
+  `AUTHORED — NOT RUN — LOCAL VALIDATION REQUIRED`
+
+- Overall:
+  `IMPLEMENTED — LOCAL VALIDATION REQUIRED`
+
+#### When VALIDATION_MODE is AGENT_VALIDATION
+
+Run repository-supported targeted validation first.
+
+Do not run full validation while targeted validation is failing.
+
+After targeted validation passes, run repository-required full validation from:
+
+- AGENTS.md;
+- repository scripts;
+- architecture documentation;
+- package configuration.
+
+Report exact commands and actual results.
+
+Do not claim environment-dependent validation passed unless it was actually
+executed successfully.
+
+Do not weaken tests, assertions, lint rules, compiler checks, race checks,
+accessibility checks, or type safety to make validation pass.
+
+An Acceptance Criterion may be marked verified only when:
+
+1. production behaviour is confirmed by code inspection;
+2. relevant unit/integration tests were executed and passed;
+3. relevant acceptance-level tests were executed and passed.
+
+## Test Authoring Standard
+
+Every authored or revised test must:
+
+- have a clear scenario-based name;
+- identify the relevant AC or Delta ID where practical;
+- assert observable behaviour;
+- distinguish before and after state;
+- avoid snapshot-only evidence;
+- avoid mock-call-only evidence;
+- verify persistence where applicable;
+- verify rollback by reading state again;
+- use genuine concurrent execution for concurrency cases;
+- control response ordering for stale-response cases;
+- explicitly verify identity preservation;
+- explicitly verify fields that must remain unchanged;
+- verify dependency endpoints, not only relation count;
+- verify focus and keyboard behaviour for accessibility scenarios;
+- avoid unsafe type assertions;
+- avoid ambiguous fixtures.
+
+## Regression Requirement
+
+For every modified, removed, restricted, exceptional, or superseded old rule,
+provide at least one of:
+
+- a revised existing regression test;
+- a new regression test;
+- an explicit static finding that the obsolete rule was never implemented.
+
+Regression evidence must demonstrate:
+
+1. The new rule applies.
+2. Unaffected previous behaviour remains preserved.
+
+A new requirement is not fully implemented while conflicting old behaviour
+remains active.
+
+## Three-Level Confidence
+
+For every affected Acceptance Criterion, provide:
+
+### Code Inspection
+
+- production path;
+- exact symbol;
+- invariant or behaviour;
+- obsolete behaviour removed;
+- unaffected behaviour preserved.
+
+### Unit/Integration Test
+
+- exact test path;
+- exact test name;
+- assertions covered;
+- validation command;
+- actual status according to VALIDATION_MODE.
+
+### Acceptance-Level Test
+
+- exact test path;
+- exact scenario;
+- observable outcome;
+- validation command;
+- actual status according to VALIDATION_MODE.
+
+Do not fabricate execution results.
+
+## Checkpoint-and-Pause Policy
+
+If the complete implementation cannot be completed reliably because of:
+
+- execution limits;
+- context limits;
+- excessive remaining scope;
+- missing repository context;
+- unresolved requirement contradiction;
+- repeated implementation failure;
+- risk of losing valid work;
+
+then:
+
+1. Preserve all valid modifications.
+2. Inspect the current Git state.
+3. Return a checkpoint containing:
+   - Execution Configuration;
+   - Initial Working Tree Snapshot summary;
+   - frozen Initial Requirement Delta Snapshot;
+   - complete frozen Requirement Delta Matrix;
+   - current repository state;
+   - completed phases;
+   - implemented deltas;
+   - unfinished deltas;
+   - files changed;
+   - tests authored;
+   - tests executed, when applicable;
+   - first unresolved AC;
+   - unresolved issue;
+   - strongest diagnosis;
+   - exact next file, symbol, or delta;
+   - validation status;
+   - artifact required by DELIVERY_MODE.
+
+End exactly with:
+
+CONTINUATION_READY
+
+Do not claim completion in a checkpoint.
+
+## Delivery
+
+Apply the configured DELIVERY_MODE.
+
+### When DELIVERY_MODE is DIRECT_WORKTREE
+
+Do not create a ZIP.
+
+Changes remain directly in the current Git working tree.
+
+Return the actual results of:
+
+git status --short
+git diff --stat
+git diff --check
+
+### When DELIVERY_MODE is CHANGES_ONLY_ZIP
+
+Create a ZIP containing only the files required to apply the frozen requirement
+delta.
+
+Include:
+
+- changed requirement files from the initial snapshot;
+- production files added or modified by the implementation;
+- test files added or modified by the implementation;
+- documentation files added or modified by the implementation;
+- pre-existing non-requirement files only when further modified because the
+  frozen Requirement Delta Matrix required it.
+
+Exclude:
+
+- unchanged files;
+- untouched pre-existing non-requirement changes;
+- `.git`;
+- uploaded archives;
+- dependencies;
+- generated build output;
+- temporary directories;
+- temporary compatibility copies;
+- editor metadata;
+- unrelated files.
+
+Preserve repository-relative paths.
+
+For deleted files, include a deletion manifest containing repository-relative
+deleted paths.
+
+Before returning the ZIP:
+
+1. List its contents.
+2. Verify every path is repository-relative.
+3. Confirm all intended changed files are present.
+4. Confirm untouched pre-existing non-requirement changes are absent.
+5. Confirm excluded files are absent.
+
+## Final Report
+
+Return:
+
+### 1. Execution Configuration
+
+Report the actual:
+
+- EXECUTION_MODE;
+- REQUIREMENT_ROOTS;
+- VALIDATION_MODE;
+- DELIVERY_MODE.
+
+### 2. Initial Snapshot Summary
+
+Include:
+
+- initial changed requirement files;
+- staged, unstaged, untracked, renamed, and deleted requirement files;
+- pre-existing changes outside REQUIREMENT_ROOTS.
+
+### 3. Frozen Requirement Delta Matrix
+
+Include every semantic delta and final implementation status.
+
+### 4. Implementation Outcome
+
+Describe:
+
+- added behaviour;
+- modified behaviour;
+- removed behaviour;
+- preserved behaviour;
+- exceptions introduced;
+- intentionally deferred behaviour.
+
+### 5. Changed Files
+
+Group by:
+
+- requirement documentation;
+- domain;
+- application;
+- infrastructure and persistence;
+- transport and HTTP;
+- frontend infrastructure;
+- frontend presentation;
+- unit/integration tests;
+- acceptance-level tests;
+- architecture documentation.
+
+Distinguish:
+
+- initial requirement files;
+- implementation-created changes;
+- pre-existing files further modified by implementation.
+
+### 6. Cross-Requirement Impact
+
+Identify:
+
+- older requirements affected;
+- obsolete rules removed;
+- exception boundaries introduced;
+- older tests revised;
+- unaffected regression behaviour preserved.
+
+### 7. Acceptance Criteria Mapping
+
+For every affected AC, provide:
+
+- Requirement Delta ID;
+- production implementation;
+- unit/integration test;
+- acceptance-level test;
+- validation command;
+- actual validation status.
+
+### 8. Three-Level Confidence Matrix
+
+Report actual evidence according to VALIDATION_MODE.
+
+Do not claim verification without actual passing evidence.
+
+### 9. Validation Plan or Results
+
+When USER_LOCAL_VALIDATION:
+
+- provide exact local commands;
+- working directory;
+- purpose;
+- covered Delta IDs and ACs;
+- expected success criteria.
+
+When AGENT_VALIDATION:
+
+- provide exact commands;
+- actual results;
+- failures;
+- blockers.
+
+### 10. Static Review Findings
+
+Include:
+
+- obsolete-rule review;
+- architecture-boundary review;
+- transaction and concurrency review;
+- rollback review;
+- query and index review;
+- cache and stale-state review;
+- accessibility review;
+- false-positive test review;
+- documentation consistency review;
+- unrelated-change review.
+
+### 11. Remaining Risks and Assumptions
+
+Do not hide:
+
+- unresolved ambiguity;
+- preserved pre-existing user changes;
+- deferred validation;
+- environment-dependent behaviour;
+- manual validation requirements.
+
+### 12. Delivery Artifact
+
+Return the artifact required by DELIVERY_MODE.
+
+### 13. Final Verdict
+
+When VALIDATION_MODE is USER_LOCAL_VALIDATION, use exactly:
+
+IMPLEMENTED — LOCAL VALIDATION REQUIRED
+
+When VALIDATION_MODE is AGENT_VALIDATION, use one of:
+
+VERIFIED THROUGH AC-[number]
+
+or:
+
+NOT VERIFIED — FIRST GAP: AC-[number]
+
+Do not describe the requirement delta as fully verified unless every required
+Acceptance Criterion satisfies all three confidence levels.
