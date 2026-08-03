@@ -266,6 +266,47 @@ func TestExecutableUpdateRejectsMalformedLagWithoutCallingMutation_US6_AC3(t *te
 	}
 }
 
+func TestExecutableUpdateDistinguishesOmittedPercentageFromExplicitZero_US63_AC2_AC4(t *testing.T) {
+	t.Run("omission reaches application as preserve existing", func(t *testing.T) {
+		calls := 0
+		service := reopenServiceStub{reopen: func(context.Context, string, string) (*domain.Node, error) {
+			return nil, errors.New("unexpected reopen")
+		}, executable: func(_ context.Context, _, _ string, input application.WriteExecutableInput) (*domain.Node, error) {
+			calls++
+			if input.CapacityAllocationPercentage != nil {
+				t.Fatalf("omitted percentage=%v", *input.CapacityAllocationPercentage)
+			}
+			value := completedHTTPNode()
+			value.Executable.ActualStart = nil
+			value.Executable.ActualEnd = nil
+			value.Executable.CapacityAllocationPercentage = 20
+			return value, nil
+		}}
+		request := httptest.NewRequest(http.MethodPut, "/api/projects/project/wbs/task/executable", strings.NewReader(`{"lag":0}`))
+		response := httptest.NewRecorder()
+		reopenMux(service).ServeHTTP(response, request)
+		if response.Code != http.StatusOK || calls != 1 || !strings.Contains(response.Body.String(), `"capacityAllocationPercentage":20`) {
+			t.Fatalf("status=%d calls=%d body=%s", response.Code, calls, response.Body.String())
+		}
+	})
+	t.Run("explicit zero is rejected before mutation", func(t *testing.T) {
+		calls := 0
+		service := reopenServiceStub{reopen: func(context.Context, string, string) (*domain.Node, error) {
+			return nil, errors.New("unexpected reopen")
+		}, executable: func(context.Context, string, string, application.WriteExecutableInput) (*domain.Node, error) {
+			calls++
+			return nil, errors.New("unexpected mutation")
+		}}
+		request := httptest.NewRequest(http.MethodPut, "/api/projects/project/wbs/task/executable", strings.NewReader(`{"capacityAllocationPercentage":0,"lag":0}`))
+		response := httptest.NewRecorder()
+		reopenMux(service).ServeHTTP(response, request)
+		assertErrorCode(t, response, http.StatusUnprocessableEntity, "INVALID_TASK_CAPACITY_ALLOCATION")
+		if calls != 0 {
+			t.Fatalf("mutation calls=%d", calls)
+		}
+	})
+}
+
 func TestExecutablePreviewReturnsGeneratedDraftWithoutCallingConfirmedUpdate(t *testing.T) {
 	previewCalls, updateCalls := 0, 0
 	service := reopenServiceStub{

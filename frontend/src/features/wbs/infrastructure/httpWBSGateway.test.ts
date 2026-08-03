@@ -291,6 +291,7 @@ function taskResponse(
     position: 1,
     hasChildren: false,
     executable: {
+      capacityAllocationPercentage: 100,
       roleId: null,
       assigneeId: null,
       effortMinutes: 390,
@@ -336,6 +337,7 @@ describe("HTTP WBS gateway reopen command", () => {
         assigneeId: undefined,
         effortMinutes: 390,
         lagDays: 0,
+        capacityAllocationPercentage: 100,
         executionTimeline: { start: "2026-08-01", end: "2026-08-03" },
         commitmentTimeline: { start: "2026-08-01", end: "2026-08-05" },
         executionUnscheduledReason: undefined,

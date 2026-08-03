@@ -31,6 +31,7 @@ type createAcceptanceWBSRecord struct {
 	RoleID, AssigneeID                                                                   *string
 	EffortMinutes                                                                        *int
 	LagDays                                                                              int
+	CapacityAllocationPercentage                                                         int `gorm:"default:100"`
 	ExecutionStart, ExecutionEnd, CommitmentStart, CommitmentEnd, ActualStart, ActualEnd *time.Time
 	ExecutionUnscheduledReason, CommitmentUnscheduledReason                              *string
 	CreatedAt, UpdatedAt                                                                 time.Time
@@ -59,7 +60,7 @@ func (spy *createSchedulerSpy) InvalidatePortfolio(context.Context, []string) er
 	return errors.New("portfolio invalidation must not run for empty Task create")
 }
 
-func TestCreateTaskAcceptanceSkipsSchedulerWhenProjectAlreadyHasCompletedTask_US6_AC29_US4_AC23(t *testing.T) {
+func TestCreateTaskAcceptanceDefaultsCapacityPercentageAndSkipsUnneededScheduler_US63_AC1_US6_AC29_US4_AC23(t *testing.T) {
 	database, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
 	if err != nil {
 		t.Fatal(err)
@@ -136,8 +137,9 @@ func TestCreateTaskAcceptanceSkipsSchedulerWhenProjectAlreadyHasCompletedTask_US
 			ID         string `json:"id"`
 			Name       string `json:"name"`
 			Executable struct {
-				ExecutionTimeline  timelineItem `json:"executionTimeline"`
-				CommitmentTimeline timelineItem `json:"commitmentTimeline"`
+				ExecutionTimeline            timelineItem `json:"executionTimeline"`
+				CommitmentTimeline           timelineItem `json:"commitmentTimeline"`
+				CapacityAllocationPercentage int          `json:"capacityAllocationPercentage"`
 			} `json:"executable"`
 		} `json:"data"`
 	}
@@ -146,6 +148,9 @@ func TestCreateTaskAcceptanceSkipsSchedulerWhenProjectAlreadyHasCompletedTask_US
 	}
 	if payload.Data.ID != "new-task" || payload.Data.Name != "New Task" {
 		t.Fatalf("response data=%#v", payload.Data)
+	}
+	if payload.Data.Executable.CapacityAllocationPercentage != 100 {
+		t.Fatalf("confirmed percentage=%d, want 100", payload.Data.Executable.CapacityAllocationPercentage)
 	}
 	if payload.Data.Executable.ExecutionTimeline.Start != nil ||
 		payload.Data.Executable.ExecutionTimeline.End != nil ||
@@ -160,6 +165,9 @@ func TestCreateTaskAcceptanceSkipsSchedulerWhenProjectAlreadyHasCompletedTask_US
 	}
 	if stored.AssigneeID != nil || stored.EffortMinutes != nil || stored.ExecutionStart != nil || stored.CommitmentStart != nil {
 		t.Fatalf("stored new Task must remain empty and unscheduled: %#v", stored)
+	}
+	if stored.CapacityAllocationPercentage != 100 {
+		t.Fatalf("stored percentage=%d, want 100", stored.CapacityAllocationPercentage)
 	}
 
 	var completed createAcceptanceWBSRecord

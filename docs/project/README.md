@@ -20,6 +20,8 @@ This directory supplies the concrete decisions needed to apply that baseline:
   implementation decisions.
 - [`schedmind-context.md`](schedmind-context.md) summarizes product and domain
   context and points to authoritative requirements.
+- [`task-capacity-allocation-implementation-evidence.md`](task-capacity-allocation-implementation-evidence.md)
+  records US-6.3 and revised US-6.2 acceptance traceability.
 
 Project-specific rules may override a generic recommendation only when the
 exception is explicit, justified, and documented here. Mandatory dependency,

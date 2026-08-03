@@ -210,6 +210,15 @@ describe("WBSDetailDialog option loading", () => {
         name: "Execution timeline: Select start and end date",
       }),
     ).toBeTruthy();
+    const capacityAllocation = screen.getByRole("spinbutton", {
+      name: "Capacity Allocation (%)",
+    }) as HTMLInputElement;
+    expect(capacityAllocation.value).toBe("100");
+    expect(
+      screen.getByText(
+        "Maximum planned capacity per day. Remaining capacity may be used by other tasks.",
+      ),
+    ).toBeTruthy();
     expect(
       screen.getByRole("button", {
         name: "Commitment timeline: Select start and end date",
@@ -229,9 +238,17 @@ describe("WBSDetailDialog option loading", () => {
           name: "Backend API",
           effortHours: 6.5,
           lagDays: 2,
+          capacityAllocationPercentage: 100,
         }),
       ),
     );
+    vi.mocked(gateway.updateExecutable).mockClear();
+    fireEvent.change(capacityAllocation, { target: { value: "0" } });
+    fireEvent.submit(screen.getByLabelText("Name").closest("form")!);
+    expect(screen.getByRole("alert").textContent).toContain(
+      "whole number from 1 to 100",
+    );
+    expect(gateway.updateExecutable).not.toHaveBeenCalled();
   });
 
   it("US-6.1 AC-2 AC-27 validates Lag and exposes generated unscheduled state accessibly", async () => {
@@ -451,6 +468,7 @@ describe("WBSDetailDialog option loading", () => {
           assigneeId: "member",
           effortHours: 10,
           lagDays: 0,
+          capacityAllocationPercentage: 100,
         },
         expect.any(AbortSignal),
       ),
@@ -804,6 +822,13 @@ describe("WBSDetailDialog option loading", () => {
     expect(status.textContent).toContain(formatDateOnly("2026-08-01"));
 
     fireEvent.change(assignee, { target: { value: "member-2" } });
+    expect(
+      (
+        screen.getByRole("spinbutton", {
+          name: "Capacity Allocation (%)",
+        }) as HTMLInputElement
+      ).value,
+    ).toBe("100");
     expect(gateway.previewExecutableSchedule).not.toHaveBeenCalled();
     expect(status.textContent).toContain(formatDateOnly("2026-08-01"));
     fireEvent.blur(assignee);
@@ -817,6 +842,7 @@ describe("WBSDetailDialog option loading", () => {
           assigneeId: "member-2",
           effortHours: 8,
           lagDays: 0,
+          capacityAllocationPercentage: 100,
         },
         expect.any(AbortSignal),
       ),
@@ -970,6 +996,7 @@ describe("WBSDetailDialog option loading", () => {
           assigneeId: undefined,
           effortHours: 8,
           lagDays: 0,
+          capacityAllocationPercentage: 100,
         },
         expect.any(AbortSignal),
       ),

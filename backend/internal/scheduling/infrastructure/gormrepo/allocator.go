@@ -228,35 +228,53 @@ func (calendar *allocationCalendar) reconstructFixed(task taskModel, start, end 
 		return nil, fmt.Errorf("%w: fixed task %s has end before start", schedulingdomain.ErrDataIntegrity, task.ID)
 	}
 
-	remaining := big.NewRat(int64(*task.EffortMinutes), 1)
+	remaining := int64(*task.EffortMinutes)
 	allocations := make([]dailyAllocation, 0)
-	for date := start; !date.After(end) && remaining.Sign() > 0; date = date.AddDate(0, 0, 1) {
-		available, err := calendar.remaining(*task.AssigneeID, task.ProjectID, date)
-		if err != nil {
-			return nil, err
+	working := make([]time.Time, 0)
+	for date := start; !date.After(end); date = date.AddDate(0, 0, 1) {
+		if calendar.eligible(date) {
+			working = append(working, date)
 		}
-		if available.Sign() <= 0 {
-			continue
-		}
-		allocated := minRat(remaining, available)
-		allocation := calendar.add(task.ID, *task.AssigneeID, date, allocated, true)
-		allocations = append(allocations, allocation)
-		remaining.Sub(remaining, allocated)
 	}
-	if remaining.Sign() > 0 {
+	if task.ActualStart == nil && task.ActualEnd == nil && len(working) > 0 {
+		units := (remaining + 29) / 30
+		for index, date := range working {
+			shareUnits := units / int64(len(working))
+			if int64(index) < units%int64(len(working)) {
+				shareUnits++
+			}
+			minutes := shareUnits * 30
+			if minutes > remaining {
+				minutes = remaining
+			}
+			if minutes > 0 {
+				allocations = append(allocations, calendar.add(task.ID, *task.AssigneeID, date, big.NewRat(minutes, 1), true))
+				remaining -= minutes
+			}
+		}
+	}
+	if remaining > 0 {
 		if task.ActualStart != nil && task.ActualEnd != nil {
 			// Completion is immutable historical evidence, not a claim that the
 			// Task's planned Effort still fits today's capacity configuration.
 			// Keep any unresolved historical Effort on Actual End so the Task
 			// consumes no future capacity while the completed timeline remains
 			// usable by dependency and same-assignee readiness calculations.
-			allocation := calendar.add(task.ID, *task.AssigneeID, end, remaining, true)
+			allocation := calendar.add(task.ID, *task.AssigneeID, end, big.NewRat(remaining, 1), true)
 			allocations = append(allocations, allocation)
 			return allocations, nil
 		}
-		return nil, fmt.Errorf("%w: fixed task %s exceeds its locked/manual timeline capacity", schedulingdomain.ErrDataIntegrity, task.ID)
+		allocations = append(allocations, calendar.add(task.ID, *task.AssigneeID, start, big.NewRat(remaining, 1), true))
 	}
 	return allocations, nil
+}
+
+func (calendar *allocationCalendar) eligible(date time.Time) bool {
+	if schedulingdomain.IsWeekend(date) {
+		return false
+	}
+	_, holiday := calendar.state.holidays[schedulingdomain.DateKey(date)]
+	return !holiday
 }
 
 func (result *timelineResult) allocateTask(task taskModel) (taskSchedule, []string, error) {
@@ -379,7 +397,6 @@ func (calendar *allocationCalendar) simulateContiguous(
 	remaining := schedulingdomain.CloneRat(effort)
 	allocations := make([]dailyAllocation, 0)
 	displaced := make(map[string]struct{})
-	started := false
 	date := schedulingdomain.DateOnly(candidate)
 	for days := 0; days < maximumScheduleDays; days++ {
 		base, err := calendar.capacity(*task.AssigneeID, task.ProjectID, date)
@@ -405,17 +422,6 @@ func (calendar *allocationCalendar) simulateContiguous(
 		}
 		existing = calendar.dayExcluding(*task.AssigneeID, date, displaced)
 
-		if len(existing) > 0 && started {
-			nextCandidate := date
-			for _, allocation := range existing {
-				end := calendar.taskEnd(allocation.TaskID)
-				if end.After(nextCandidate) {
-					nextCandidate = end
-				}
-			}
-			return nil, nil, nextCandidate, false, nil
-		}
-
 		remainingCapacity := schedulingdomain.CloneRat(base)
 		for _, allocation := range existing {
 			remainingCapacity.Sub(remainingCapacity, allocation.Minutes)
@@ -424,9 +430,9 @@ func (calendar *allocationCalendar) simulateContiguous(
 			date = date.AddDate(0, 0, 1)
 			continue
 		}
-		allocated := minRat(remaining, remainingCapacity)
+		dailyLimit := taskDailyLimit(base, task.CapacityAllocationPercentage)
+		allocated := minRat(minRat(remaining, remainingCapacity), dailyLimit)
 		if allocated.Sign() > 0 {
-			started = true
 			allocations = append(allocations, dailyAllocation{
 				TaskID: task.ID, MemberID: *task.AssigneeID, Date: date, Minutes: schedulingdomain.CloneRat(allocated),
 			})
@@ -438,6 +444,28 @@ func (calendar *allocationCalendar) simulateContiguous(
 		date = date.AddDate(0, 0, 1)
 	}
 	return nil, nil, time.Time{}, false, nil
+}
+
+func taskDailyLimit(capacity *big.Rat, percentage int) *big.Rat {
+	if capacity.Sign() <= 0 {
+		return new(big.Rat)
+	}
+	if percentage < 1 || percentage > 100 {
+		percentage = 100
+	}
+	raw := new(big.Rat).Mul(capacity, big.NewRat(int64(percentage), 100))
+	// Capacity is expressed in minutes. Round half-up to the nearest 30 minutes.
+	units := new(big.Rat).Quo(raw, big.NewRat(30, 1))
+	quotient := new(big.Int).Quo(units.Num(), units.Denom())
+	remainder := new(big.Int).Rem(units.Num(), units.Denom())
+	if new(big.Int).Mul(remainder, big.NewInt(2)).Cmp(units.Denom()) >= 0 {
+		quotient.Add(quotient, big.NewInt(1))
+	}
+	limit := new(big.Rat).Mul(new(big.Rat).SetInt(quotient), big.NewRat(30, 1))
+	if limit.Sign() == 0 {
+		limit.SetInt64(30)
+	}
+	return minRat(limit, capacity)
 }
 
 func (calendar *allocationCalendar) commit(task taskModel, allocations []dailyAllocation) []dailyAllocation {
@@ -630,13 +658,25 @@ func (result *timelineResult) deriveAutomaticBlockers() {
 			if previous.End == nil {
 				continue
 			}
-			resourceDelayed := schedule.Start.After(*schedule.ManualCandidateDate)
-			if !resourceDelayed && schedule.Start.Equal(*schedule.ManualCandidateDate) {
-				resourceDelayed = previous.End.Equal(*schedule.Start) && previous.Allocations[len(previous.Allocations)-1].Sequence < schedule.Allocations[0].Sequence
+			if containsTaskID(state.manualBlockers[schedule.TaskID], previous.TaskID) {
+				continue
 			}
-			if resourceDelayed {
+			resourceDelayed := schedule.Start.After(*schedule.ManualCandidateDate)
+			if !resourceDelayed && state.isEffectiveBlocker(schedule.TaskID, previous.TaskID) {
+				resourceDelayed = true
+			}
+			if resourceDelayed && !previous.End.After(*schedule.Start) {
 				result.automaticBlocker[schedule.TaskID] = previous.TaskID
 			}
 		}
 	}
+}
+
+func containsTaskID(values []string, taskID string) bool {
+	for _, value := range values {
+		if value == taskID {
+			return true
+		}
+	}
+	return false
 }

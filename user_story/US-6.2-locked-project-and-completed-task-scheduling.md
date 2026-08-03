@@ -7,7 +7,9 @@
 > Locked Projects exist. It supersedes contradictory wording in US-1.2,
 > US-2.1, US-2.2, US-3.1, US-3.3, US-4.1, US-4.2, US-5.1, and US-6.1.
 > US-7.1 remains authoritative for the Home presentation surface and direct
-> dialog orchestration described by this story.
+> dialog orchestration described by this story. US-6.3 remains authoritative
+> for planned Task Capacity Allocation Percentage; this story is authoritative
+> for the rule that planned percentage never caps Actual Allocation.
 
 ## 1. User Story
 
@@ -33,8 +35,12 @@ predecessor sudah completed.
 Pada Project Open, Actual Date mengaktualkan Execution dan Commitment timeline.
 Pada Project Locked, Actual Date tetap dapat dicatat tetapi protected Execution
 dan Commitment baseline tidak berubah. Dalam kedua status tersebut, Actual
-Allocation tetap dihitung dan memengaruhi capacity yang tersedia bagi unfinished
-work pada Open Projects.
+Allocation dihitung hanya di dalam Actual Date. Distribusinya berusaha memakai
+BAU capacity yang belum dikonsumsi oleh Actual Allocation completed Task lain,
+melakukan rebalance dan backfill sebelum menciptakan historical overcapacity,
+lalu memengaruhi capacity yang tersedia bagi unfinished work pada Open Projects.
+Planned Execution, Commitment, manual, dan Locked baseline allocation tidak
+menjadi lawan head-to-head ketika Actual Allocation baru dibentuk.
 
 SchedMind mendukung shared assignee capacity dan cross-project dependency.
 Karena itu setiap scheduling-impacting mutation harus melakukan impact
@@ -57,12 +63,14 @@ membuka Project satu per satu dalam urutan yang mustahil.
 | Actual Date | Required inclusive range `Actual Start`–`Actual End`, entered together after Task selesai |
 | Completed Task | Executable WBS dengan complete Actual Date pair |
 | Unfinished Task | Executable WBS tanpa complete Actual Date pair |
-| Actual Allocation | Historical/analytical attribution of Task Effort to assignee working dates; bukan literal timestamp setiap jam kerja |
+| Actual Allocation | Historical/analytical attribution of Task Effort to eligible Actual Dates, with an Actual End fallback when the range has no working date; bukan literal timestamp setiap jam kerja |
 | Execution Allocation | Daily allocation used to derive Execution Start/End |
 | Commitment Allocation | Daily allocation used to derive Commitment Start/End |
-| Allocation baseline | Execution Start used as the planned baseline for Actual Allocation |
-| Capacity-debt window | Working dates from Allocation Start before Actual Start that may receive only remaining positive capacity |
-| Historical overcapacity | Actual Allocation pada suatu Date melebihi effective assignee capacity pada Date tersebut |
+| Actual Allocation window | Eligible Dates inside inclusive `Actual Start`–`Actual End`; Execution/Commitment dates are not part of this window |
+| Existing Actual load | Canonical Actual Allocation of other completed Tasks for the same Assignee and Date |
+| Available Actual capacity | Non-negative BAU Capacity remaining after Existing Actual load, normalized defensively to a `0.5`-hour quantum |
+| Historical overcapacity | Total Actual Allocation pada suatu Date melebihi Actual BAU Capacity pada Date tersebut |
+| Completion-order immutability | Existing completed Actual rows are not recomputed when another Task completes; the later command allocates around them |
 | Locked baseline | Persisted Execution/Commitment dates and allocations protected while Project Locked |
 | Scheduling-impacting mutation | Mutation that can change dates, allocations, dependency readiness, unscheduled state, priority order, or capacity available to another Task/Project |
 | Impacted Project | Project other than the mutation owner whose confirmed scheduling projection would change |
@@ -97,7 +105,7 @@ membuka Project satu per satu dalam urutan yang mustahil.
 - Forecast calculation and Forecast allocation.
 - Delivery Impact and Project Health changes.
 - Remaining-effort estimation or in-progress Actual Start-only lifecycle.
-- Overtime compensation or recovery-capacity debt.
+- Overtime compensation, recovery capacity, or carrying overcapacity as debt to another Date.
 - User-editable Actual Allocation rows.
 - Assignee-centric analytics page design; only the underlying consistent allocation projection is required now.
 - Reason/detail per impacted Project in warning UI; warning lists Project names only.
@@ -202,14 +210,14 @@ Before completion, normal Execution/Commitment scheduling remains authoritative:
 
 - same-assignee predecessor/successor with zero Lag may share predecessor End Date when positive remaining capacity exists;
 - different-assignee successor starts no earlier than the next working date after predecessor readiness;
-- these rules determine planned Execution/Commitment Start and therefore may determine whether a capacity-debt window exists;
+- these rules determine planned Execution/Commitment only and never extend the Actual Allocation window outside Actual Date;
 - these rules do not constrain Actual Date overlap after all predecessors are completed.
 
 ---
 
 ## 7. Actual Allocation
 
-### 7.1 Single Source, Two Read Models
+### 7.1 Canonical Projection and Head-to-Head Scope
 
 Execution Allocation, Commitment Allocation, and Actual Allocation are distinct
 daily projections. Actual Allocation is stored or deterministically
@@ -217,147 +225,246 @@ reconstructable as one canonical set of rows.
 
 The same Actual Allocation rows must support:
 
-1. **Task-centric view:** for Task X, which assignee Date received how many hours.
-2. **Assignee-centric view:** for assignee Y on Date D, which Tasks consumed capacity.
+1. **Task-centric view:** for Task X, which Assignee Date received how many hours.
+2. **Assignee-centric view:** for Assignee Y on Date D, which completed Tasks consumed Actual capacity.
 
 No separate calculation is allowed for the two points of view.
 
-For a completed Task, Actual Allocation is the sole capacity-consuming
-reservation used by subsequent Execution and Commitment recalculation.
-Execution and Commitment allocation rows remain available as planning/baseline
-projections for verification, but they are not subtracted again from capacity.
-This prevents double counting.
+When constructing or reconstructing Actual Allocation for one completed Task,
+only these rows reduce available capacity:
 
-### 7.2 Allocation Start
+- canonical Actual Allocation of **other completed Tasks**;
+- same Assignee;
+- same allocation Date.
 
-Actual Allocation uses Execution Start as its planning baseline because
-Commitment Start cannot be earlier than Execution Start and Commitment includes
-delivery buffer.
+The following are ignored for this head-to-head calculation:
 
-```text
-Allocation Start = min(existing/persisted Execution Start, Actual Start)
-```
+- unfinished automatic Execution/Commitment allocation;
+- unfinished manual allocation;
+- Locked baseline Execution/Commitment allocation;
+- Commitment-only reservations;
+- the Task's own old Actual rows while that same Task is being recalculated.
 
-If Execution Start is null:
+After completion succeeds, the new Actual rows become immutable existing load
+for later completion commands. Existing completed rows are not rebalanced when
+another Task completes. Therefore attribution may depend on confirmed completion
+order. This is the approved **completion-order immutability** model; reporting
+normalization or retrospective recomputation is deferred.
 
-```text
-Allocation Start = Actual Start
-```
+For unfinished scheduling after completion, Actual Allocation remains the sole
+capacity-consuming reservation for that completed Task. Its Execution and
+Commitment rows remain planning/baseline evidence and are not subtracted again.
 
-For Open Project, Execution Start is actualized according to Section 6 but the
-pre-completion Execution Start remains the baseline input required to construct
-Actual Allocation deterministically. For Locked Project, protected Execution
-Start remains unchanged and is used directly as the baseline.
+### 7.2 Actual Allocation Window and BAU Capacity
 
-### 7.3 Working Dates
-
-- Actual Date may include non-working dates.
-- Allocation rows may exist only on working dates according to the effective assignee calendar.
-- Weekend and Public Holiday remain non-working regardless of Capacity Override.
-- Actual Allocation uses **BAU Capacity**, defined as Resolved Daily Capacity before Member Buffer and Project Buffer:
+Actual Allocation never uses Execution Start, Commitment Start, Project Start,
+or any Date before Actual Start as an allocation baseline.
 
 ```text
-Actual BAU Capacity
-= 0 on weekend/Public Holiday
-= Capacity Override when available
-= otherwise Member Daily Capacity
-```
-
-- Member Buffer affects Execution Capacity only.
-- Member Buffer plus Project Buffer affect Commitment Capacity only.
-- Neither buffer reduces or increases Actual BAU Capacity.
-- Non-working Actual Start or Actual End remains stored as factual Actual Date.
-
-### 7.4 Capacity-Debt Window
-
-For working dates from Allocation Start up to but excluding Actual Start:
-
-- allocate earliest-first;
-- use only positive remaining capacity after immutable reservations: other completed Actual Allocations and Locked baseline reservations;
-- Open unfinished allocations are movable simulation outputs and do not prevent Actual Allocation from becoming the fixed anchor; they are recalculated afterward;
-- do not create overcapacity in the capacity-debt window against immutable reservations;
-- stop when remaining Effort becomes zero or Actual Start is reached.
-
-This allows an earlier planned Execution Start to retain its unused capacity
-contribution even when actual work started later.
-
-Example:
-
-```text
-Task A blocks Task B
-Task A and B assignee: Harry
-Daily capacity: 8h
-Task A: 4h on Date 1
-Task B Effort: 18h
-Task B Execution Start: Date 1
-Task B Actual Date: Date 2–3
-```
-
-Actual Allocation B:
-
-```text
-Date 1: 4h  (remaining capacity after Task A)
-Date 2: 8h
-Date 3: 6h
-```
-
-### 7.5 Allocation Within Actual Date
-
-After the capacity-debt window, allocate remaining Effort over working dates
-inside Actual Start–Actual End:
-
-1. Resolve remaining capacity on every working date in the Actual Date.
-2. Fill available capacity earliest-first while Effort remains.
-3. If Effort exceeds the total available capacity in the Actual Date, calculate the excess.
-4. Distribute excess evenly across all working dates in the Actual Date.
-5. Perform arithmetic in integer minutes.
-6. If even distribution leaves a minute remainder, assign one additional minute from the earliest working date forward until exhausted.
-7. Resulting allocation may exceed daily capacity and becomes historical overcapacity.
-
-Example with a different predecessor assignee:
-
-```text
-Task A assignee: Tirta
-Task B assignee: Harry
-Task B Execution Start: Date 2
-Task B Actual Date: Date 2–3
-Task B Effort: 18h
-Harry capacity: 8h/day
-```
-
-Actual Allocation B:
-
-```text
-Date 2: 9h
-Date 3: 9h
-```
-
-### 7.6 No Working Date in Actual Date
-
-If Actual Start–Actual End contains no working date:
-
-- first retain any valid capacity-debt-window allocation before Actual Start;
-- allocate all remaining Effort to the first working date after Actual End;
-- that allocation may exceed effective capacity;
-- Actual End remains the completion and dependency-ready date even though analytical allocation occurs later;
-- the later allocation does not mean the Task was unfinished after Actual End.
-
-### 7.7 Capacity Effect and No Carry-Over
-
-For unfinished scheduling on Date D:
-
-```text
-Remaining Capacity(D)
-  = max(0, Effective Capacity(D) - Actual Allocation(D))
+Actual Allocation Window
+= eligible Dates inside inclusive Actual Start–Actual End
 ```
 
 Rules:
 
-- historical overcapacity is valid;
-- overcapacity does not become negative-capacity debt on later dates;
-- no recovery capacity or overtime compensation exists;
-- the next working date uses its own normal effective capacity minus allocations on that date;
-- completed Actual Allocation must not produce `SCHEDULING_DATA_INTEGRITY_CONFLICT` merely because it exceeds capacity.
+- Actual Start and Actual End remain factual calendar dates and may be weekend or Public Holiday.
+- Normal Actual rows use working dates inside the Actual Date according to the effective Assignee calendar.
+- Weekend and Public Holiday are excluded from normal distribution.
+- Actual Allocation uses **BAU Capacity** before Member Buffer and Project Buffer:
+
+```text
+Actual BAU Capacity
+= 0 on weekend/Public Holiday
+= minimum active Capacity Override on the Date, when one or more exist
+= otherwise Member Daily Capacity
+```
+
+- Member Buffer and Project Buffer do not alter Actual BAU Capacity.
+- Planned Task Capacity Allocation Percentage from US-6.3 does not cap or scale Actual Allocation.
+- If the Actual Date contains no working date, all Effort is allocated on Actual End as zero-capacity historical overcapacity. No row is created before Actual Start or after Actual End.
+
+### 7.3 Precision and Conservation Invariants
+
+Effort and Actual Allocation use a `0.5`-hour quantum.
+
+Mandatory invariants:
+
+```text
+sum(Actual Allocation rows for Task) = Task Effort
+
+Actual Allocation row >= 0
+Actual Allocation row is a multiple of 0.5 hour
+```
+
+The normal domain flow already guarantees that Daily Capacity, Capacity
+Override, Effort, and Actual Allocation use `0.5`-hour increments. As defensive
+handling only, if legacy/corrupt data produces fractional Available Actual
+Capacity, usable capacity is floored to the nearest lower `0.5` hour. This floor
+is not a normal business scenario and does not authorize accepting invalid new
+capacity data.
+
+### 7.4 Balanced Forward Allocation with Progressive Recalculation
+
+Let the eligible Actual Dates be ordered `D1 ... Dn`. For each Date, calculate:
+
+```text
+Existing Actual Load(D)
+= sum Actual Allocation of other completed Tasks
+  for the same Assignee and Date
+
+Available Actual Capacity(D)
+= max(0, Actual BAU Capacity(D) - Existing Actual Load(D))
+```
+
+The first pass distributes Effort chronologically while keeping the remaining
+Effort as balanced as possible across the remaining Dates:
+
+1. Express Remaining Effort in `0.5`-hour units.
+2. Divide those units by the number of remaining eligible Dates.
+3. The current Date receives the rounded-up share when a remainder exists; this gives normal distribution remainder to earlier Dates.
+4. Allocate the smaller of that target and Available Actual Capacity on the current Date.
+5. Subtract the confirmed allocation and repeat the same calculation from the next Date using the new Remaining Effort and number of remaining Dates.
+6. A constrained Date therefore causes the remaining Effort to be divided again across every later eligible Date; shortfall is not merely added to the immediately following Date.
+
+Base example without existing load:
+
+```text
+Effort: 10h
+Actual Date: Date 1–3
+Result: 3.5h / 3.5h / 3h
+```
+
+Rebalanced example:
+
+```text
+BAU Capacity: 8h/day
+Existing Actual Load: 6h / 0h / 0h
+Available: 2h / 8h / 8h
+Effort: 10h
+```
+
+- Date 1 target is `3.5h`, but only `2h` is available.
+- Remaining `8h` is recalculated over Date 2–3 as `4h / 4h`.
+
+```text
+New Actual Allocation: 2h / 4h / 4h
+```
+
+Repeated constraint example:
+
+```text
+Existing Actual Load: 6h / 7h / 0h
+Available: 2h / 1h / 8h
+Effort: 10h
+New Actual Allocation: 2h / 1h / 7h
+```
+
+### 7.5 Backfill Before Historical Overcapacity
+
+If Remaining Effort is still positive after the forward pass, the system must
+not create new overcapacity while unused BAU capacity still exists anywhere in
+the Actual Allocation Window.
+
+Backfill rules:
+
+1. Recompute spare capacity on every eligible Actual Date after the forward pass.
+2. Fill spare capacity chronologically from the earliest eligible Date.
+3. Continue until Remaining Effort becomes zero or no spare capacity remains.
+4. Backfill never changes Existing Actual Load and never moves allocation outside Actual Date.
+
+Example:
+
+```text
+BAU Capacity: 8h/day
+Existing Actual Load: 0h / 8h / 8h
+Effort: 10h
+```
+
+The forward pass initially gives `3.5h / 0h / 0h`, leaving `6.5h`. Date 1 still
+has `4.5h` spare, so backfill increases Date 1 to `8h`. Only the remaining `2h`
+is unavoidable overcapacity.
+
+### 7.6 Unavoidable Overcapacity Equalization
+
+When Remaining Effort is still positive after backfill, it is unavoidable
+historical overcapacity. Allocate it in `0.5`-hour units to make **total
+historical overcapacity across Actual Dates as even as possible**.
+
+For each `0.5`-hour unit:
+
+1. Calculate current total overcapacity per Date:
+
+```text
+Current Overcapacity(D)
+= max(
+    0,
+    Existing Actual Load(D)
+      + New Actual Allocation(D)
+      - Actual BAU Capacity(D)
+  )
+```
+
+2. Choose the Date with the smallest Current Overcapacity.
+3. When several Dates tie, choose the latest Date.
+4. Add `0.5h` to New Actual Allocation on that Date.
+5. Repeat until Remaining Effort is zero.
+
+Example after the Section 7.5 backfill:
+
+```text
+Existing Actual Load: 0h / 8h / 8h
+Within-capacity New Allocation: 8h / 0h / 0h
+Unavoidable remainder: 2h
+```
+
+Equalized result:
+
+```text
+New Actual Allocation: 8.5h / 0.5h / 1h
+Final total load:       8.5h / 8.5h / 9h
+Final overcapacity:     0.5h / 0.5h / 1h
+```
+
+The extra `0.5h` goes to the latest tied Date. The Task total remains exactly
+`10h`.
+
+Second example:
+
+```text
+BAU Capacity: 8h/day
+Existing Actual Load: 6h / 7h / 8h
+Effort: 10h
+```
+
+Within-capacity allocation is `2h / 1h / 0h`; unavoidable remainder is `7h`.
+Equalization produces additional overcapacity `2h / 2.5h / 2.5h`, therefore:
+
+```text
+New Actual Allocation: 4h / 3.5h / 2.5h
+```
+
+Existing historical overcapacity is also considered. With Existing Actual Load
+`10h / 8h / 8h` and new Effort `3h`, the preferred new allocation is
+`0h / 1.5h / 1.5h`, producing final overcapacity `2h / 1.5h / 1.5h` instead of
+making the already-most-overcapacity Date worse.
+
+### 7.7 Capacity Effect and No Carry-Over
+
+For unfinished scheduling on Date D and a specific timeline:
+
+```text
+Remaining Capacity(D)
+= max(0, Final Timeline Capacity(D) - Actual Allocation(D))
+```
+
+Rules:
+
+- Actual Allocation may exceed Actual BAU, Execution, or Commitment capacity.
+- Historical overcapacity is valid and must not produce `SCHEDULING_DATA_INTEGRITY_CONFLICT` merely because it exceeds capacity.
+- Overcapacity does not become negative-capacity debt on later Dates.
+- No recovery capacity or overtime compensation exists.
+- The next working Date uses its own normal capacity minus Actual Allocation on that Date.
+- Saving Actual Date may recalculate unfinished Open work after Actual rows become fixed anchors.
 
 ### 7.8 Allocation Verification UI
 
@@ -368,18 +475,18 @@ with three groups:
 - Commitment Allocation;
 - Actual Allocation.
 
-Each row shows at minimum:
+Each Actual row shows at minimum:
 
 - Date;
 - allocated hours;
-- effective BAU capacity;
-- remaining BAU capacity or overcapacity for Actual rows; Execution/Commitment rows use their own timeline capacity.
+- Actual BAU Capacity;
+- Existing Actual Load considered when this allocation was created or the resulting total load;
+- remaining BAU capacity or historical overcapacity.
 
-Actual Allocation is displayed only when Actual Date is complete. The UI must
-not imply that analytical allocation dates are literal timestamps of work.
-
-The assignee-centric analytics page is deferred, but the data/projection must be
-queryable without recomputing different numbers.
+Execution/Commitment rows use their own timeline capacity. Actual Allocation is
+displayed only when Actual Date is complete. The UI must not imply that
+analytical allocation dates are literal timestamps of work or that planned Task
+Capacity Allocation Percentage was applied.
 
 ---
 
@@ -739,7 +846,8 @@ internal lock IDs, or per-Project scheduler internals.
 **Given** Actual Start or Actual End is weekend/holiday
 **When** complete Actual Date is saved
 **Then** factual dates are retained
-**And** allocation rows are created only on eligible working dates.
+**And** normal allocation rows use eligible working dates
+**And** the no-working-date Actual End fallback in AC-7 remains valid.
 
 ### AC-3 — Open completion actualizes Execution and Commitment
 
@@ -767,42 +875,47 @@ internal lock IDs, or per-Project scheduler internals.
 **Then** completion succeeds regardless of same/different assignee
 **And** dependency relation remains unchanged.
 
-### AC-7 — Actual Allocation uses Execution baseline
+### AC-7 — Actual Allocation uses Actual Date only
 
-**Then** Allocation Start is the earlier of pre-completion/persisted Execution Start and Actual Start
-**And** null Execution Start falls back to Actual Start
-**And** Commitment Start is not used as Actual Allocation baseline.
+**Then** allocation Dates are limited to eligible Dates inside Actual Start–Actual End
+**And** Execution Start, Commitment Start, and earlier planned Dates are ignored
+**And** if no working Date exists, all Effort is represented on Actual End as zero-capacity historical overcapacity.
 
-### AC-8 — Capacity-debt window uses remaining capacity only
+### AC-8 — Existing load is Actual-versus-Actual only
 
-**Given** Allocation Start is before Actual Start
-**Then** working dates before Actual Start receive earliest positive remaining capacity
-**And** no overcapacity is created in that pre-Actual window.
+**When** Actual Allocation is created or reconstructed
+**Then** available capacity is reduced only by canonical Actual Allocation of other completed Tasks for the same Assignee/Date
+**And** unfinished automatic, manual, Locked baseline, and Commitment allocations are ignored
+**And** the Task's own previous Actual rows are excluded during its recalculation.
 
-### AC-9 — Actual-Date capacity fills earliest-first
+### AC-9 — Balanced distribution and progressive recalculation
 
-**Given** remaining Effort fits within available capacity of working dates in Actual Date
-**Then** capacity is consumed earliest-first
-**And** later working dates receive only the remainder.
+**Given** Effort `10h` over three unconstrained working Dates
+**Then** allocation is `3.5h / 3.5h / 3h`.
 
-### AC-10 — Excess is distributed evenly
+**Given** BAU `8h/day` and Existing Actual Load `6h / 0h / 0h`
+**Then** allocation is `2h / 4h / 4h`
+**And** the remaining `8h` is divided again across Date 2–3 rather than carried only into Date 2.
 
-**Given** remaining Effort exceeds total available capacity in Actual Date
-**Then** excess is distributed evenly across all working dates in Actual Date
-**And** minute remainder is assigned from earliest date forward
-**And** historical overcapacity is valid.
+### AC-10 — Spare capacity is backfilled before overcapacity
 
-### AC-11 — No working date uses next working date
+**Given** unused BAU capacity remains on any Date in Actual Date after the forward pass
+**Then** system backfills that spare capacity before creating new historical overcapacity
+**And** no allocation is moved before Actual Start or after Actual End.
 
-**Given** Actual Date contains no working date
-**Then** remaining Effort is allocated to the first working date after Actual End
-**And** Actual End remains the completion/readiness date.
+### AC-11 — Unavoidable overcapacity is equalized
+
+**Given** Remaining Effort still exists after backfill
+**Then** each `0.5h` unit is placed on the Date with the smallest current total historical overcapacity
+**And** a tie is resolved in favour of the latest Date
+**And** total Task allocation remains exactly equal to Effort.
 
 ### AC-12 — No overcapacity carry-over
 
 **Given** Actual Allocation exceeds capacity on Date D
 **Then** remaining capacity on D is minimum zero
-**And** excess is not carried as debt to later dates.
+**And** excess is not carried as debt to later Dates
+**And** Existing Actual rows remain immutable when a later Task completes.
 
 ### AC-13 — Locked completion preserves baseline
 
@@ -956,13 +1069,18 @@ schedule-version change.
 | TC-2 | Actual Start after Actual End | Rejected |
 | TC-3 | Open Task Actual Start earlier than both planned Starts | Both Starts move earlier; Ends become Actual End |
 | TC-4 | Open Task Actual Start later than planned Starts | Planned Starts retained; Ends become Actual End |
-| TC-5 | Same-assignee example: A 4h Date 1, B 18h, Actual 2–3 | Actual Allocation B = 4h, 8h, 6h |
-| TC-6 | Different-assignee example: B 18h, Execution/Actual 2–3 | Actual Allocation B = 9h, 9h |
-| TC-7 | Actual Date includes weekend but has one working date | Allocation uses working date only |
-| TC-8 | Actual Date contains no working date | Remaining Effort allocated on next working date |
-| TC-9 | Actual excess uneven in minutes | Excess distributed evenly; remainder earliest-first |
+| TC-5 | Execution Start Date 1, Effort 14h, Actual Date 2–3 | Actual ignores Date 1 and allocates `7h / 7h` on Date 2–3 |
+| TC-6 | Effort 10h, Actual Date 1–3, no existing Actual load | Actual Allocation = `3.5h / 3.5h / 3h` |
+| TC-7 | Actual Date includes weekend but has one working date | Normal allocation uses the working date only |
+| TC-8 | Actual Date contains no working date | All Effort is represented on Actual End as zero-capacity historical overcapacity |
+| TC-9 | Existing Actual load `6 / 0 / 0`, BAU `8`, Effort `10` | Progressive recalculation produces `2 / 4 / 4` |
+| TC-9A | Existing Actual load `6 / 7 / 0`, BAU `8`, Effort `10` | Repeated recalculation produces `2 / 1 / 7` |
+| TC-9B | Existing Actual load `0 / 8 / 8`, BAU `8`, Effort `10` | Backfill then equalization produces `8.5 / 0.5 / 1` |
+| TC-9C | Existing Actual load `6 / 7 / 8`, BAU `8`, Effort `10` | Final new allocation is `4 / 3.5 / 2.5` |
+| TC-9D | Existing Actual load `10 / 8 / 8`, BAU `8`, Effort `3` | New allocation is `0 / 1.5 / 1.5` to level total overcapacity |
 | TC-10 | Historical overcapacity followed by next working day | No debt carry-over |
-| TC-10A | Member/Project Buffer differs from Daily Capacity | Actual uses BAU capacity; Execution/Commitment use buffered capacities |
+| TC-10A | Member/Project Buffer differs from Daily Capacity | Actual head-to-head uses BAU; unfinished timelines use their independently buffered capacities |
+| TC-10B | Task A completes before overlapping Task B | A rows remain immutable; B allocates around A; reversing completion order may reverse attribution |
 | TC-11 | Complete successor while predecessor unfinished | Rejected |
 | TC-12 | Completed predecessor and overlapping successor Actual Date | Accepted |
 | TC-13 | Locked Task receives Actual Date | Baseline unchanged; Actual Allocation stored |
@@ -1000,10 +1118,12 @@ schedule-version change.
 
 - Actual Date pair/range invariants.
 - Open timeline actualization.
-- Allocation Start and capacity-debt window.
-- Working-date-only allocation and no-working-date fallback.
-- Even excess distribution with deterministic minute remainder.
-- Historical overcapacity and no carry-over.
+- Actual-Date-only allocation window and no-working-date Actual End fallback.
+- Actual-versus-Actual existing-load scope and self-row exclusion on reconstruction.
+- `0.5`-hour balanced target, progressive remaining-date recalculation, and conservation of Effort.
+- Spare-capacity backfill before overcapacity.
+- Total-overcapacity equalization with latest-Date tie-breaker.
+- Completion-order immutability, historical overcapacity, and no carry-over.
 - Completed predecessor validation with allowed Actual overlap.
 - Lock eligibility, Locked mutation policy, and Project Name-only exception.
 - Impact classification and Locked exception for Actual Date.
@@ -1072,6 +1192,7 @@ This story requires reconciliation of:
 - US-4.2 clearing both Actual Start and Actual End;
 - US-5.1 completed predecessor validation and Actual overlap semantics;
 - US-6.1 trigger, completed allocation, transitive impact, and Locked anchors;
+- US-6.3 planned Task Capacity Allocation Percentage and its explicit non-application to Actual Allocation;
 - US-7.1 canonical Home WBS surface, direct shared dialogs, and removal of Project Structure;
 - architecture and product/domain context.
 
@@ -1087,11 +1208,13 @@ Forecast remains deferred and must not be inferred from Actual Allocation.
 - Actual End is always the completed dependency-ready anchor.
 - Planned same/different-assignee dependency rules apply to Execution/Commitment, not to historical Actual overlap.
 - Successor completion requires every predecessor already completed, but Actual ranges may overlap afterward.
-- Actual Allocation uses Execution Start as baseline, not Commitment Start.
+- Actual Allocation uses only eligible Dates inside Actual Start–Actual End; Execution/Commitment dates never extend its window.
 - Actual Allocation capacity is BAU Resolved Daily Capacity; Member and Project buffers apply only to Execution/Commitment.
-- Capacity before Actual Start uses remaining positive capacity only.
-- Capacity inside Actual Date fills earliest-first; excess is distributed evenly across actual working dates.
-- If Actual Date has no working date, remaining Effort is allocated on the next working date.
+- Only other completed Actual Allocation for the same Assignee/Date reduces capacity when new Actual rows are constructed; unfinished automatic/manual/Locked planned rows are ignored.
+- Normal allocation uses `0.5`-hour balanced shares, recalculates Remaining Effort over remaining Dates after each constrained Date, and backfills any spare capacity before overcapacity.
+- Unavoidable historical overcapacity is levelled by current total overcapacity; equal ties allocate the next `0.5h` to the latest Date.
+- Existing completed Actual rows are immutable, so attribution may depend on completion order.
+- If Actual Date has no working date, all Effort is represented on Actual End as zero-capacity historical overcapacity.
 - Historical overcapacity is valid and never carried as debt.
 - One canonical allocation projection supports Task-centric and future assignee-centric views and is the sole capacity-consuming reservation for a completed Task.
 - Current UI displays Execution, Commitment, and Actual allocation in Task details for verification.

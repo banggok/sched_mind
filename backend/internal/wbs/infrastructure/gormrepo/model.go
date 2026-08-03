@@ -9,6 +9,7 @@ type nodeModel struct {
 	RoleID, AssigneeID                                           *string
 	EffortMinutes                                                *int
 	LagDays                                                      int
+	CapacityAllocationPercentage                                 int `gorm:"default:100"`
 	ExecutionStart, ExecutionEnd, CommitmentStart, CommitmentEnd *time.Time
 	ActualStart, ActualEnd                                       *time.Time
 	ExecutionUnscheduledReason, CommitmentUnscheduledReason      *string

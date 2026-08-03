@@ -10,6 +10,14 @@
 
 > **Product decision update — US-6.2:** Actual Date range, Open timeline actualization, Actual Allocation, historical overcapacity, Locked Project immutability, generic cross-project impact warning/confirmation, capacity-setting impact, atomic bulk Project Reopen, transitive impacted-scope recalculation, and Priority validation around Locked Projects are owned by US-6.2 and supersede contradictory wording in this story.
 
+> **Product decision update — US-6.3:** Task Capacity Allocation Percentage allows
+> concurrent same-assignee planned allocation while preserving dependency
+> readiness, Project Priority, and visual WBS order. US-6.3 supersedes this
+> story's exclusive whole-Task/non-overlap rules in Sections 10.3, 11.2,
+> 11.5, 13.2–13.4, 14, 15, AC-18–AC-22, and related test cases wherever they
+> conflict. Capacity resolution, Lag, transactions, impact coordination, and
+> unaffected rules in this story remain authoritative.
+
 ## 1. User Story
 
 **Sebagai** Engineering Lead,
@@ -28,10 +36,10 @@ Task bukan entity terpisah. **Task adalah Executable WBS**, yaitu WBS leaf yang 
 
 Ketika Project menggunakan `Automatic Scheduling = ON`:
 
-- Assignee dan Effort menentukan konsumsi kapasitas.
+- Assignee, Effort, dan Task Capacity Allocation Percentage dari US-6.3 menentukan konsumsi planned capacity.
 - Project Priority lalu urutan WBS menentukan urutan Task ketika beberapa Task sama-sama eligible.
 - Manual dependency menentukan batas readiness yang tidak boleh dilanggar.
-- Scheduler membentuk paling banyak satu auto-dependency by assignee yang benar-benar menghalangi Task untuk mulai seawal mungkin.
+- Scheduler membentuk paling banyak satu safe auto-dependency by assignee hanya ketika completion satu Task benar-benar menjelaskan delay Start Task lain; valid same-day parallel allocation tidak boleh diserialkan.
 - Lag pada Task dapat menunda earliest start yang telah ditentukan scheduler.
 - Execution Start/End dihitung menggunakan Execution Capacity.
 - Commitment Start/End dihitung ulang menggunakan Commitment Capacity.
@@ -471,13 +479,16 @@ Current Project baseline menggunakan unique active Project Priority sehingga cro
 
 Jika invalid persisted state menghasilkan duplicate Project Priority atau duplicate WBS position, scheduler harus gagal dengan safe data-integrity error dan tidak mengarang tie-breaker.
 
-### 10.3 Non-preemptive Scheduling
+### 10.3 Priority-Preserving Concurrent Allocation
 
-- Task tidak boleh di-preempt.
-- Setelah Task mulai, Task terus menggunakan available capacity pada setiap eligible Date berikutnya sampai Effort selesai.
-- Scheduler tidak boleh mengalokasikan sebagian Task sebelum Task lain, menghentikannya, lalu melanjutkan sisa Task setelah Task lain.
-- Higher-priority Task yang belum mulai dapat ditempatkan sebelum lower-priority Task dan menggeser keseluruhan lower-priority Task.
-- Jika candidate Task tidak mempunyai priority lebih tinggi daripada Task berikutnya dan tidak muat sepenuhnya pada gap, candidate dijadwalkan setelah Task berikutnya selesai.
+US-6.3 supersedes the former exclusive whole-Task/non-preemptive queue.
+
+- Dependency-ready Tasks are still processed by Project Priority then visual WBS order.
+- A Task receives at most its Task Daily Limit and the Date's Remaining Timeline Capacity.
+- Later ordered Tasks may use the same Date when positive capacity remains.
+- Lower-priority work never reduces the allocation a higher-priority Task would receive under its own daily limit.
+- Recalculation may displace mutable future lower-priority rows, but completed Actual Allocation, Locked baseline, and fixed manual allocation remain immutable.
+- Valid same-assignee overlap caused by Task Capacity Allocation Percentage is not preemption and is not an integrity conflict.
 
 ---
 
@@ -495,21 +506,27 @@ Start Date = End Date
 
 ### 11.2 Allocation until Completion
 
-Untuk setiap timeline:
+Untuk setiap timeline, US-6.3 adds a per-Task daily ceiling after the final timeline capacity has been independently resolved and rounded:
 
 ```text
 Remaining Effort = Task Effort
 
-For each eligible Date from calculated start:
-  Allocated = min(Remaining Effort, Remaining Capacity on Date)
+For each eligible Date from calculated readiness:
+  Task Daily Limit = US-6.3 percentage limit for this timeline/Date
+  Allocated = min(
+    Remaining Effort,
+    Task Daily Limit,
+    Remaining Timeline Capacity on Date
+  )
   Remaining Effort -= Allocated
-  Remaining Capacity -= Allocated
+  Remaining Timeline Capacity -= Allocated
 
 Stop when Remaining Effort = 0
 ```
 
-Start Date adalah Date pertama dengan allocation positif.
-End Date adalah Date terakhir dengan allocation positif.
+A Task may receive zero on a Date and continue scanning. Later ordered Tasks may
+use capacity left by the current Task's daily limit. Start Date is the first Date
+with positive allocation; End Date is the last Date with positive allocation.
 
 ### 11.3 Same-assignee Remaining Capacity
 
@@ -619,49 +636,27 @@ Auto Dependency dijalankan ketika:
 
 Assignee set/change/clear memicu recalculation automatic ownership untuk affected assignee schedules.
 
-### 13.2 Meaning of “Task that blocks the earliest start”
+### 13.2 Capacity Delay under Parallel Allocation
 
-Scheduler tidak memilih seluruh Task milik Assignee dan tidak selalu memilih Task dengan End Date paling akhir.
+US-6.3 supersedes the assumption that all same-assignee Tasks form one serial
+queue. A Task that starts on its earliest eligible Date by sharing remaining
+capacity has no capacity-based auto blocker.
 
-Auto blocker adalah **satu Task sebelumnya pada confirmed Execution allocation yang benar-benar membuat blocked Task tidak dapat mulai lebih awal**.
+### 13.3 Safe Blocker Selection
 
-Rules:
+A capacity-based auto blocker may exist only when a specific prior same-assignee
+Task completion releases the first positive capacity for the delayed Task and a
+Finish-to-Start relation reproduces, rather than changes, the confirmed Start.
+A prior Task that continues after the delayed Task starts is not a valid blocker.
+If several completions qualify, US-6.3 owns the deterministic reverse-order
+selection rule.
 
-- Maksimal satu automatic blocker per Task.
-- Manual blockers dapat tetap lebih dari satu.
-- Task pertama pada assignee queue tidak mempunyai auto blocker jika Project anchor atau manual dependency saja yang menentukan start.
-- Auto dependency menggunakan Execution allocation, bukan Commitment allocation.
-- Commitment scheduler menggunakan effective dependency graph yang sama.
+### 13.4 Priority Displacement with Percentage
 
-### 13.3 Fit-based Selection
-
-Misal Task A dan B menggunakan Assignee sama, dan tersedia gap setelah A sebelum B.
-
-- Jika seluruh Effort Task C dapat diselesaikan secara contiguous di gap tanpa menggeser higher/equal-priority Task B, C ditempatkan di gap dan auto blocker C adalah A.
-- Jika C tidak muat di gap dan C tidak lebih tinggi prioritasnya daripada B, C ditempatkan setelah B dan auto blocker C adalah B.
-- Jika C lebih tinggi prioritasnya daripada B, C ditempatkan sebelum B, B digeser secara utuh, dan auto blocker C adalah Task yang tepat mendahuluinya setelah recalculation.
-
-### 13.4 Priority Displacement
-
-Task priority berasal dari:
-
-```text
-Project Priority → WBS order
-```
-
-Tidak ada Task Priority field baru.
-
-Jika Task C lebih tinggi daripada Task B:
-
-- C dapat menggeser B sebelum B mulai;
-- B dijadwalkan ulang secara utuh setelah C atau sesuai next valid slot;
-- Task yang sudah completed atau locked reservation tidak digeser;
-- dependency hard constraints tetap tidak boleh dilanggar.
-
-Jika C tidak lebih tinggi:
-
-- C tidak boleh memotong B;
-- bila tidak muat sebelum B, C dijadwalkan setelah B.
+Higher-priority ready work may displace mutable lower-priority future allocation.
+It does not need to move the lower Task as one contiguous block. Lower-priority
+work may remain on Dates where capacity is still available after all higher-
+priority daily limits and fixed reservations are applied.
 
 ### 13.5 Automatic Relation Reconciliation
 
@@ -710,28 +705,28 @@ When Assignee becomes empty:
 Execution scheduler harus:
 
 1. Load seluruh Active Portfolio input yang diperlukan.
-2. Treat Locked allocations as fixed reservations.
-3. Exclude Closed Projects.
-4. Exclude completed Tasks from unfinished recalculation while retaining Actual End readiness anchors and Actual Allocation capacity consumption.
+2. Treat Locked allocations and fixed manual allocation as fixed reservations.
+3. Exclude Closed Projects from mutable planned scheduling.
+4. Exclude completed Tasks from unfinished recalculation while retaining Actual End readiness anchors and Actual Allocation capacity consumption under revised US-6.2.
 5. Resolve manual dependency graph and reject cycle.
 6. Build ready set using Project anchors, dependency readiness, and Lag.
-7. For each assignee, select next ready Task by Project Priority then WBS order.
-8. Find earliest contiguous slot that respects existing higher-priority/fixed allocations.
-9. Allocate Effort by Date using Execution Capacity and remaining same-day capacity.
-10. Reconcile automatic dependency ownership.
+7. For each Assignee, order ready Tasks by Project Priority then visual WBS order.
+8. Resolve each Task Daily Limit from rounded Execution Capacity and US-6.3 percentage.
+9. Allocate each ordered Task across eligible Dates up to Remaining Effort, Task Daily Limit, and Remaining Execution Capacity; allow later ordered Tasks to use leftover capacity on the same Date.
+10. Reconcile only safe automatic dependency ownership under US-6.3.
 11. Repeat deterministically until graph/allocation stable.
-12. Persist Execution Start/End and required allocation projection atomically.
+12. Persist Execution Start/End and daily allocation projection atomically.
 
 Execution scheduler must not:
 
 - schedule Grouping WBS;
-- schedule Task before Project anchor;
-- violate dependency;
-- overlap running Tasks for one assignee;
-- preempt Task;
-- round Task Effort into whole days before allocation;
-- shift completed Tasks;
-- shift Locked Execution baseline.
+- schedule Task before Project anchor or dependency/Lag readiness;
+- exceed final Execution Capacity with mutable automatic rows;
+- let lower-priority work reduce a higher-priority Task below its own daily limit;
+- apply percentage before final timeline capacity rounding;
+- round Task Effort into whole days;
+- shift completed Tasks, Locked baselines, or fixed manual allocation;
+- invent a serial auto dependency for valid parallel allocation.
 
 ---
 
@@ -742,7 +737,7 @@ Commitment scheduler uses:
 - the same Task set;
 - the same effective dependency graph;
 - the same Project Priority and WBS order;
-- the same non-preemption and daily allocation rules;
+- the same priority-preserving concurrent allocation and Task Daily Limit rules from US-6.3;
 - Commitment Capacity, calculated and rounded independently from the raw resolved capacity.
 
 Commitment is recalculated independently. It is not calculated by adding a fixed number of days to Execution End.
@@ -1098,45 +1093,42 @@ For `8`, `30%`, and `20%`, Raw Commitment is `4.48` and rounded Commitment is `4
 **Given** duplicate invalid ordering data
 **Then** scheduling fails safely instead of using Task ID, Name, or Created At as an invented tie-breaker.
 
-### AC-18 — Non-preemptive Task
+### AC-18 — Concurrent Task Daily Limits
 
-**Given** Task has started in projected allocation
-**Then** another Task is not inserted between its partial allocations
-**And** Task continues on every eligible Date until complete.
+**Given** multiple ready Tasks share one Assignee
+**Then** each Task is capped by its own US-6.3 Task Daily Limit
+**And** later ordered Tasks may use positive remaining capacity on the same Date.
 
 ### AC-19 — Higher-priority displacement
 
-**Given** Task C is higher priority than not-yet-started Task B
-**And** both use one Assignee
-**When** C is introduced or reprioritised
-**Then** C may be placed before B
-**And** B shifts as a whole
-**And** neither Task is split around the other.
+**Given** higher-priority ready Task C is introduced before mutable lower-priority Task B
+**When** schedule is recalculated
+**Then** C receives capacity first up to its daily limit
+**And** B is moved only where required
+**And** fixed/completed/Locked allocations remain unchanged.
 
-### AC-20 — Lower-priority Task cannot split a scheduled Task
+### AC-20 — Lower-priority Task uses residual capacity only
 
-**Given** Task C is not higher priority than Task B
-**And** C cannot finish completely in the available gap before B
-**Then** C is scheduled after B
-**And** C is not partially allocated before B.
+**Given** higher-priority Task B has positive allocation on a Date
+**Then** lower-priority Task C may use only the remaining capacity after B and fixed reservations
+**And** C cannot reduce B below B's own daily-limit allocation.
 
-### AC-21 — Fit-based automatic blocker
+### AC-21 — Safe automatic blocker
 
-**Given** A and B use the same Assignee and a gap exists after A before B
-**When** C fits completely in the gap
-**Then** C is scheduled in the gap
-**And** only A becomes C's automatic blocker.
+**Given** a Task's Start is delayed by exhausted same-assignee capacity
+**When** one prior Task completion releases the first positive capacity
+**And** Finish-to-Start ownership reproduces the confirmed Start
+**Then** that Task may become the single automatic blocker.
 
-**When** C does not fit and cannot displace B
-**Then** C is scheduled after B
-**And** only B becomes C's automatic blocker.
+**When** candidate blocker continues after the delayed Task starts
+**Then** it is not selected.
 
 ### AC-22 — At most one auto dependency
 
 **When** scheduler reconciles an unfinished assigned Task
 **Then** Task has at most one automatic blocker
-**And** it is the Task that actually prevents an earlier Execution start
-**And** scheduler does not add all prior Tasks of the Assignee.
+**And** valid same-day parallel allocation creates no serial ownership
+**And** manual ownership remains preserved.
 
 ### AC-23 — Manual dependency preservation
 
@@ -1310,7 +1302,7 @@ For `8`, `30%`, and `20%`, Raw Commitment is `4.48` and rounded Commitment is `4
 | TC-13 | Fractional raw Execution capacity                  | Rounded once to nearest `0.5`; no whole-day rounding               |
 | TC-14 | Effort fits one Date                              | Start = End                                                       |
 | TC-15 | Effort spans Dates                                | First/last positive allocation define dates                       |
-| TC-16 | A/B/C with capacity `5`, effort `8`               | A Day1–2; B Day2–4; C Day4–5 with documented remaining capacity   |
+| TC-16 | A/B/C with percentage limits                     | Same-assignee Tasks may overlap; first/last positive rows define each timeline |
 | TC-17 | Same assignee, Lag 0, remaining capacity          | Successor starts predecessor End Date                             |
 | TC-18 | Different assignee, Lag 0                         | Successor starts next positive-capacity Date                      |
 | TC-19 | Friday End, Lag 1                                 | Monday Start when weekend zero                                    |
@@ -1319,11 +1311,11 @@ For `8`, `30%`, and `20%`, Raw Commitment is `4.48` and rounded Commitment is `4
 | TC-22 | Two ready Projects                                | Lower Project Priority number first                               |
 | TC-23 | Ready Tasks in same Project                       | Visual WBS order first                                            |
 | TC-24 | Duplicate ordering fixture                        | Safe data-integrity failure; no invented tie-break                |
-| TC-25 | Running Task and another candidate                | No preemption                                                     |
-| TC-26 | Higher-priority C before B                        | B shifts as whole                                                 |
-| TC-27 | Lower-priority C does not fit gap                 | C goes after B                                                    |
-| TC-28 | C fits between A and B                            | Auto blocker only A                                               |
-| TC-29 | C does not fit between A and B                    | Auto blocker only B                                               |
+| TC-25 | Higher Task leaves capacity under its percentage    | Later ordered Task uses same-Date residual capacity                |
+| TC-26 | Higher-priority C before B                        | C receives capacity first; mutable B shifts only where required     |
+| TC-27 | Lower-priority C shares residual capacity          | C uses only residual capacity and may overlap B                    |
+| TC-28 | C starts on earliest eligible Date using residual | No capacity-based auto blocker                                     |
+| TC-29 | C is delayed until B completion releases capacity | B is selected only when safe blocker conditions hold               |
 | TC-30 | First Task for assignee                           | No auto blocker if only anchor constrains                         |
 | TC-31 | Manual blocker determines later date              | No irrelevant auto blocker added                                  |
 | TC-32 | Manual relation survives reassignment             | Manual ownership retained                                         |
@@ -1343,7 +1335,7 @@ For `8`, `30%`, and `20%`, Raw Commitment is `4.48` and rounded Commitment is `4
 | TC-46 | Locked Project                                    | Baselines unchanged and reserved                                  |
 | TC-47 | Closed Project                                    | Excluded from allocation                                          |
 | TC-48 | Cross-project dependency                          | Both affected Projects updated                                    |
-| TC-49 | Shared assignee across Projects                   | Portfolio capacity remains non-overlapping                        |
+| TC-49 | Shared assignee across Projects                   | Mutable automatic total remains within capacity; percentage overlap is valid |
 | TC-50 | Commitment schedule                               | Independent allocation with lower capacity                        |
 | TC-51 | Project Buffer 100%                               | Execution may exist; Commitment unscheduled, no fabricated date   |
 | TC-52 | Scheduler failure after Task mutation starts      | Full rollback                                                     |
@@ -1538,8 +1530,8 @@ implementation-specific record.
 6. Portfolio input query is bounded by active scope and uses reviewed indexes.
 7. Cross-project graph and shared-assignee allocation are supported.
 8. Decimal business arithmetic is deterministic and not binary-float dependent.
-9. Daily allocation cannot overlap for one assignee.
-10. Non-preemption is enforced by production code and tests.
+9. Mutable automatic daily allocation never exceeds final timeline capacity; valid same-assignee Task rows may overlap under US-6.3.
+10. Priority-preserving Task Daily Limits, residual-capacity sharing, and safe auto-blocker reconciliation are enforced by production code and tests.
 11. Locked timelines and allocations cannot be overwritten; Locked Project has no mutable scheduler output.
 12. Completed records are historical anchors with Actual-End normalization, valid overcapacity, and no next-day debt; Closed Projects are excluded.
 13. Triggered mutation plus transitive impacted-scope scheduling is atomic.
@@ -1566,7 +1558,7 @@ Implementation must assess and update:
   - capacity formulas;
   - fixed-point precision;
   - priority and WBS ordering;
-  - non-preemption;
+  - Task Capacity Allocation Percentage and concurrent same-assignee allocation;
   - auto/manual dependency ownership;
   - transaction and concurrency strategy;
   - Locked immutable-anchor and Actual End exception treatment;
@@ -1604,9 +1596,9 @@ Implementation must assess and update:
 - Different-assignee successor with Lag `0` begins on the next positive-capacity Date.
 - Lag belongs to Task, defaults `0`, and is a non-negative integer calendar-day offset followed by capacity availability.
 - Friday plus Lag `1` starts Monday when weekend capacity is `0`.
-- Task allocation is contiguous and non-preemptive.
-- Higher-priority not-yet-started Task can shift lower-priority Task.
-- Lower/equal-priority Task that does not fit a gap is placed after the blocking Task.
+- Task Capacity Allocation Percentage is owned by US-6.3, defaults to `100`, and caps planned allocation only after final timeline capacity rounding.
+- Same-assignee Tasks may overlap on a Date; later ordered Tasks use only residual capacity.
+- Higher-priority ready work can displace mutable lower-priority future allocation without moving it as one indivisible block.
 - Task priority is Project Priority followed by visual WBS order.
 - No additional business tie-breaker is used.
 - Auto Dependency selects only the Task that actually prevents the earliest Execution start, not all previous Tasks and not always the latest End Date.

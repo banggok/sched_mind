@@ -60,6 +60,7 @@ export interface ExecutableInput {
   assigneeId?: string;
   effortHours?: number;
   lagDays: number;
+  capacityAllocationPercentage?: number;
   executionStart?: string;
   executionEnd?: string;
   commitmentStart?: string;
@@ -76,6 +77,7 @@ export interface SchedulePreviewInput {
   assigneeId?: string;
   effortHours: number;
   lagDays: number;
+  capacityAllocationPercentage?: number;
 }
 
 export interface AllocationRow {
@@ -84,6 +86,8 @@ export interface AllocationRow {
   capacityMinutes: number;
   remainingMinutes: number;
   overcapacityMinutes: number;
+  capacityAllocationPercentage: number;
+  taskDailyLimitMinutes: number;
 }
 
 export interface AllocationGroups {

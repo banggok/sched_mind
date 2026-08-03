@@ -151,7 +151,17 @@ func (r *Repository) UpdateExecutable(ctx context.Context, p, id string, input a
 			return err
 		}
 		n := toDomain(m, count > 0)
-		fields := domain.ExecutableFields{RoleID: input.RoleID, AssigneeID: input.AssigneeID, EffortMinutes: input.EffortMinutes, LagDays: input.LagDays, ExecutionTimeline: input.Execution, CommitmentTimeline: input.Commitment, ActualStart: n.Executable.ActualStart, ActualEnd: n.Executable.ActualEnd}
+		percentage := n.Executable.CapacityAllocationPercentage
+		if differentString(n.Executable.AssigneeID, input.AssigneeID) {
+			percentage = 100
+		}
+		if input.CapacityAllocationPercentage != nil {
+			percentage = *input.CapacityAllocationPercentage
+		}
+		if input.AssigneeID == nil {
+			percentage = 100
+		}
+		fields := domain.ExecutableFields{RoleID: input.RoleID, AssigneeID: input.AssigneeID, EffortMinutes: input.EffortMinutes, LagDays: input.LagDays, CapacityAllocationPercentage: percentage, ExecutionTimeline: input.Execution, CommitmentTimeline: input.Commitment, ActualStart: n.Executable.ActualStart, ActualEnd: n.Executable.ActualEnd}
 		if input.Name != nil {
 			if err := n.Rename(*input.Name, now); err != nil {
 				return err
@@ -160,7 +170,8 @@ func (r *Repository) UpdateExecutable(ctx context.Context, p, id string, input a
 		if err := validateMember(tx, fields); err != nil {
 			return err
 		}
-		oldAssignee, oldEffort, oldLag := n.Executable.AssigneeID, n.Executable.EffortMinutes, n.Executable.LagDays
+		oldAssignee, oldEffort, oldLag, oldPercentage := n.Executable.AssigneeID, n.Executable.EffortMinutes, n.Executable.LagDays, n.Executable.CapacityAllocationPercentage
+		oldExecution, oldCommitment := n.Executable.ExecutionTimeline, n.Executable.CommitmentTimeline
 		if err := n.UpdateExecutable(fields, project.AutomaticScheduling, project.Status == "open", now); err != nil {
 			return err
 		}
@@ -171,7 +182,12 @@ func (r *Repository) UpdateExecutable(ctx context.Context, p, id string, input a
 		if err := tx.Model(&nodeModel{}).Where("id = ?", id).Updates(updates).Error; err != nil {
 			return mapConflict(err)
 		}
-		if project.AutomaticScheduling && (differentString(oldAssignee, n.Executable.AssigneeID) || differentInt(oldEffort, n.Executable.EffortMinutes) || oldLag != n.Executable.LagDays) {
+		schedulingChanged := differentString(oldAssignee, n.Executable.AssigneeID) ||
+			differentInt(oldEffort, n.Executable.EffortMinutes) || oldLag != n.Executable.LagDays ||
+			oldPercentage != n.Executable.CapacityAllocationPercentage ||
+			differentTimeline(oldExecution, n.Executable.ExecutionTimeline) ||
+			differentTimeline(oldCommitment, n.Executable.CommitmentTimeline)
+		if schedulingChanged {
 			if err := schedule(txContext, p); err != nil {
 				return err
 			}
@@ -212,11 +228,16 @@ func (r *Repository) PreviewExecutableSchedule(ctx context.Context, p, id string
 			return err
 		}
 		n := toDomain(m, count > 0)
+		percentage := input.CapacityAllocationPercentage
+		if percentage == 0 {
+			percentage = 100
+		}
 		fields := domain.ExecutableFields{
-			RoleID:        input.RoleID,
-			AssigneeID:    input.AssigneeID,
-			EffortMinutes: input.EffortMinutes,
-			LagDays:       input.LagDays,
+			RoleID:                       input.RoleID,
+			AssigneeID:                   input.AssigneeID,
+			EffortMinutes:                input.EffortMinutes,
+			LagDays:                      input.LagDays,
+			CapacityAllocationPercentage: percentage,
 		}
 		if err := validateMember(tx, fields); err != nil {
 			return err
@@ -632,6 +653,7 @@ func clearExecutable(m *nodeModel) {
 	m.AssigneeID = nil
 	m.EffortMinutes = nil
 	m.LagDays = 0
+	m.CapacityAllocationPercentage = 100
 	m.ExecutionStart = nil
 	m.ExecutionEnd = nil
 	m.CommitmentStart = nil
@@ -646,6 +668,7 @@ func copyExecutable(dst *nodeModel, src nodeModel) {
 	dst.AssigneeID = src.AssigneeID
 	dst.EffortMinutes = src.EffortMinutes
 	dst.LagDays = src.LagDays
+	dst.CapacityAllocationPercentage = src.CapacityAllocationPercentage
 	dst.ExecutionStart = src.ExecutionStart
 	dst.ExecutionEnd = src.ExecutionEnd
 	dst.CommitmentStart = src.CommitmentStart
@@ -656,7 +679,7 @@ func copyExecutable(dst *nodeModel, src nodeModel) {
 	dst.ActualEnd = src.ActualEnd
 }
 func executableUpdates(m nodeModel, now time.Time) map[string]any {
-	return map[string]any{"role_id": m.RoleID, "assignee_id": m.AssigneeID, "effort_minutes": m.EffortMinutes, "lag_days": m.LagDays, "execution_start": m.ExecutionStart, "execution_end": m.ExecutionEnd, "commitment_start": m.CommitmentStart, "commitment_end": m.CommitmentEnd, "execution_unscheduled_reason": m.ExecutionUnscheduledReason, "commitment_unscheduled_reason": m.CommitmentUnscheduledReason, "actual_start": m.ActualStart, "actual_end": m.ActualEnd, "updated_at": now}
+	return map[string]any{"role_id": m.RoleID, "assignee_id": m.AssigneeID, "effort_minutes": m.EffortMinutes, "lag_days": m.LagDays, "capacity_allocation_percentage": m.CapacityAllocationPercentage, "execution_start": m.ExecutionStart, "execution_end": m.ExecutionEnd, "commitment_start": m.CommitmentStart, "commitment_end": m.CommitmentEnd, "execution_unscheduled_reason": m.ExecutionUnscheduledReason, "commitment_unscheduled_reason": m.CommitmentUnscheduledReason, "actual_start": m.ActualStart, "actual_end": m.ActualEnd, "updated_at": now}
 }
 func (r *Repository) convertDestination(tx *gorm.DB, p, conversionID string, dest *nodeModel, now time.Time) error {
 	name := dest.Name
@@ -824,6 +847,15 @@ func differentInt(a, b *int) bool {
 	}
 	return *a != *b
 }
+func differentTimeline(a, b domain.Timeline) bool {
+	return differentDate(a.Start, b.Start) || differentDate(a.End, b.End)
+}
+func differentDate(a, b *time.Time) bool {
+	if a == nil || b == nil {
+		return a != nil || b != nil
+	}
+	return !a.Equal(*b)
+}
 func fromDomain(n domain.Node) nodeModel {
 	m := nodeModel{ID: n.ID, ProjectID: n.ProjectID, ParentID: n.ParentID, ParentKey: parentKey(n.ParentID), Name: n.Name, NameKey: domain.NameKey(n.Name), Position: n.Position, CreatedAt: n.CreatedAt, UpdatedAt: n.UpdatedAt}
 	applyFields(&m, n.Executable)
@@ -834,6 +866,7 @@ func applyFields(m *nodeModel, f domain.ExecutableFields) {
 	m.AssigneeID = f.AssigneeID
 	m.EffortMinutes = f.EffortMinutes
 	m.LagDays = f.LagDays
+	m.CapacityAllocationPercentage = f.CapacityAllocationPercentage
 	m.ExecutionStart = f.ExecutionTimeline.Start
 	m.ExecutionEnd = f.ExecutionTimeline.End
 	m.CommitmentStart = f.CommitmentTimeline.Start
@@ -844,7 +877,7 @@ func applyFields(m *nodeModel, f domain.ExecutableFields) {
 	m.ActualEnd = f.ActualEnd
 }
 func toDomain(m nodeModel, children bool) domain.Node {
-	return domain.Node{ID: m.ID, ProjectID: m.ProjectID, ParentID: m.ParentID, Name: m.Name, Position: m.Position, HasChildren: children, Executable: domain.ExecutableFields{RoleID: m.RoleID, AssigneeID: m.AssigneeID, EffortMinutes: m.EffortMinutes, LagDays: m.LagDays, ExecutionTimeline: domain.Timeline{Start: m.ExecutionStart, End: m.ExecutionEnd}, CommitmentTimeline: domain.Timeline{Start: m.CommitmentStart, End: m.CommitmentEnd}, ExecutionUnscheduledReason: m.ExecutionUnscheduledReason, CommitmentUnscheduledReason: m.CommitmentUnscheduledReason, ActualStart: m.ActualStart, ActualEnd: m.ActualEnd}, Children: []domain.Node{}, CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt}
+	return domain.Node{ID: m.ID, ProjectID: m.ProjectID, ParentID: m.ParentID, Name: m.Name, Position: m.Position, HasChildren: children, Executable: domain.ExecutableFields{RoleID: m.RoleID, AssigneeID: m.AssigneeID, EffortMinutes: m.EffortMinutes, LagDays: m.LagDays, CapacityAllocationPercentage: m.CapacityAllocationPercentage, ExecutionTimeline: domain.Timeline{Start: m.ExecutionStart, End: m.ExecutionEnd}, CommitmentTimeline: domain.Timeline{Start: m.CommitmentStart, End: m.CommitmentEnd}, ExecutionUnscheduledReason: m.ExecutionUnscheduledReason, CommitmentUnscheduledReason: m.CommitmentUnscheduledReason, ActualStart: m.ActualStart, ActualEnd: m.ActualEnd}, Children: []domain.Node{}, CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt}
 }
 func buildTree(models []nodeModel) []domain.Node {
 	children := map[string][]nodeModel{}

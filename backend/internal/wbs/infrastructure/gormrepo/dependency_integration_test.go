@@ -22,14 +22,14 @@ func dependencyTestDB(t *testing.T) (*Repository, *gorm.DB) {
 	}
 	return New(db), db
 }
-func TestMoveConversionRetargetsDependencies(t *testing.T) {
+func TestMoveConversionRetargetsDependenciesAndPreservesPercentage_US63_AC24(t *testing.T) {
 	repo, db := dependencyTestDB(t)
 	now := time.Date(2026, 7, 27, 0, 0, 0, 0, time.UTC)
 	if err := db.Create(&projectModel{ID: "project", Status: "open"}).Error; err != nil {
 		t.Fatal(err)
 	}
 	effort := 60
-	nodes := []nodeModel{{ID: "blocker", ProjectID: "project", ParentKey: "", Name: "Blocker", NameKey: "blocker", Position: 1}, {ID: "destination", ProjectID: "project", ParentKey: "", Name: "Destination", NameKey: "destination", Position: 2, EffortMinutes: &effort}, {ID: "moving", ProjectID: "project", ParentKey: "", Name: "Moving", NameKey: "moving", Position: 3}}
+	nodes := []nodeModel{{ID: "blocker", ProjectID: "project", ParentKey: "", Name: "Blocker", NameKey: "blocker", Position: 1}, {ID: "destination", ProjectID: "project", ParentKey: "", Name: "Destination", NameKey: "destination", Position: 2, EffortMinutes: &effort, CapacityAllocationPercentage: 20}, {ID: "moving", ProjectID: "project", ParentKey: "", Name: "Moving", NameKey: "moving", Position: 3}}
 	if err := db.Create(&nodes).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -46,6 +46,16 @@ func TestMoveConversionRetargetsDependencies(t *testing.T) {
 	}
 	if link.BlockedTaskID != "converted" {
 		t.Fatalf("blocked task=%q", link.BlockedTaskID)
+	}
+	var group, converted nodeModel
+	if err := db.First(&group, "id = ?", "destination").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.First(&converted, "id = ?", "converted").Error; err != nil {
+		t.Fatal(err)
+	}
+	if group.CapacityAllocationPercentage != 100 || converted.CapacityAllocationPercentage != 20 {
+		t.Fatalf("group=%d converted=%d", group.CapacityAllocationPercentage, converted.CapacityAllocationPercentage)
 	}
 }
 func TestDeleteTaskCleansDependenciesAtomically(t *testing.T) {

@@ -25,6 +25,8 @@ type projectPersistenceChange struct {
 	EndDate   *time.Time
 }
 
+func completeTimeline(start, end *time.Time) bool { return start != nil && end != nil }
+
 func (repository *Repository) persist(
 	ctx context.Context,
 	database *gorm.DB,
@@ -90,6 +92,25 @@ func (repository *Repository) persist(
 		state.tasks[taskID] = task
 		dirtyTasks[taskID] = struct{}{}
 		dirtyProjects[task.ProjectID] = struct{}{}
+	}
+	// Open manual Tasks own authoritative dates but their fixed allocation rows
+	// still participate in the shared portfolio capacity projection.
+	for taskID, task := range state.tasks {
+		project := state.projects[task.ProjectID]
+		if _, leaf := state.leafOrder[taskID]; !leaf || project.Status != "open" || project.AutomaticScheduling || task.ActualStart != nil || task.ActualEnd != nil {
+			continue
+		}
+		executionComplete := completeTimeline(task.ExecutionStart, task.ExecutionEnd)
+		commitmentComplete := completeTimeline(task.CommitmentStart, task.CommitmentEnd)
+		if !executionComplete && !commitmentComplete {
+			continue
+		}
+		changed := !allocationRowsEquivalent(state.existingAllocations[schedulingdomain.Execution][taskID], generatedRows[schedulingdomain.Execution][taskID]) ||
+			!allocationRowsEquivalent(state.existingAllocations[schedulingdomain.Commitment][taskID], generatedRows[schedulingdomain.Commitment][taskID])
+		if changed {
+			dirtyTasks[taskID] = struct{}{}
+			dirtyProjects[task.ProjectID] = struct{}{}
+		}
 	}
 
 	projectChanges := make([]projectPersistenceChange, 0, len(dirtyProjects))
@@ -288,7 +309,8 @@ func buildTimelineAllocationRowsWithOvercapacity(state *portfolioState, result *
 		consumed.Add(consumed, allocation.Minutes)
 		used[key] = consumed
 		project := state.projects[task.ProjectID]
-		if allocation.Fixed || task.ActualStart != nil || task.ActualEnd != nil || project.Status != "open" || !project.AutomaticScheduling {
+		manualFixed := allocation.Fixed && project.Status == "open" && !project.AutomaticScheduling && task.ActualStart == nil && task.ActualEnd == nil
+		if !manualFixed && (allocation.Fixed || task.ActualStart != nil || task.ActualEnd != nil || project.Status != "open" || !project.AutomaticScheduling) {
 			continue
 		}
 		rows = append(rows, allocationModel{
