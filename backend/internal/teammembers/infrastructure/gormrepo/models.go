@@ -31,14 +31,21 @@ func (roleModel) TableName() string {
 	return "roles"
 }
 
-type executableLeafModel struct {
-	ID         string `gorm:"type:uuid;primaryKey"`
-	AssigneeID string `gorm:"type:uuid;index"`
+type assignmentProjectModel struct {
+	ID     string `gorm:"type:uuid;primaryKey"`
+	Status string `gorm:"not null"`
 }
 
-func (executableLeafModel) TableName() string {
-	return "executable_leaves"
+func (assignmentProjectModel) TableName() string { return "projects" }
+
+type assignmentWBSNodeModel struct {
+	ID         string `gorm:"type:uuid;primaryKey"`
+	ProjectID  string `gorm:"type:uuid;not null;index"`
+	ParentID   *string
+	AssigneeID *string `gorm:"type:uuid;index"`
 }
+
+func (assignmentWBSNodeModel) TableName() string { return "wbs_nodes" }
 
 type capacityOverrideModel struct {
 	ID           string         `gorm:"type:uuid;primaryKey"`

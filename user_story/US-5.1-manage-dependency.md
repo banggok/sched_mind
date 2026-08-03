@@ -1,5 +1,12 @@
 # US-5.1 — Manage Dependency
 
+> **Product decision update — US-6.4:** Dependency is manual-only. Scheduler-owned
+> automatic ownership, shared ownership, source projection, automatic-only
+> read-only behaviour, and `Keep as Manual Dependency` are removed. One persisted
+> endpoint pair is one explicit Manual Finish-to-Start dependency. US-6.4 owns
+> migration of existing ownership data and supersedes all contradictory sections,
+> acceptance criteria, API contracts, UI rules, and test cases in this story.
+
 > **Product decision update — US-7.1:** Home Portfolio Gantt is the canonical
 > active-Project WBS surface and displays one read-only arrow per effective
 > dependency endpoint pair when both Task bars are renderable. The standalone

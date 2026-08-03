@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	dependencydomain "github.com/banggok/sched_mind/backend/internal/dependencies/domain"
 	"github.com/banggok/sched_mind/backend/internal/wbs/application"
 	"github.com/banggok/sched_mind/backend/internal/wbs/domain"
 )
@@ -334,13 +333,6 @@ func TestExecutablePreviewReturnsGeneratedDraftWithoutCallingConfirmedUpdate(t *
 			value.Executable.LagDays = input.LagDays
 			return &application.SchedulePreview{
 				Task: value,
-				Dependencies: dependencydomain.Detail{
-					BlockedBy: []dependencydomain.Item{{
-						Dependency: dependencydomain.Dependency{ID: "automatic-1", BlockingTaskID: "task-1", BlockedTaskID: "task", AutomaticOwned: true},
-						Task:       dependencydomain.Task{ID: "task-1", Name: "Task 1", ProjectID: "project", ProjectName: "Alpha"},
-					}},
-					Blocks: []dependencydomain.Item{},
-				},
 			}, nil
 		},
 	}
@@ -357,7 +349,7 @@ func TestExecutablePreviewReturnsGeneratedDraftWithoutCallingConfirmedUpdate(t *
 	if response.Code != http.StatusOK || previewCalls != 1 || updateCalls != 0 {
 		t.Fatalf("status=%d preview=%d update=%d body=%s", response.Code, previewCalls, updateCalls, response.Body.String())
 	}
-	if !strings.Contains(response.Body.String(), `"executionTimeline"`) || !strings.Contains(response.Body.String(), `"lag":2`) || !strings.Contains(response.Body.String(), `"source":"automatic"`) || !strings.Contains(response.Body.String(), `"name":"Task 1"`) {
+	if !strings.Contains(response.Body.String(), `"executionTimeline"`) || !strings.Contains(response.Body.String(), `"lag":2`) {
 		t.Fatalf("preview response=%s", response.Body.String())
 	}
 }
@@ -383,8 +375,7 @@ func TestExecutablePreviewAllowsClearedAssigneeForDependencyReconciliation(t *te
 			value.Executable.ExecutionUnscheduledReason = &reason
 			value.Executable.CommitmentUnscheduledReason = &reason
 			return &application.SchedulePreview{
-				Task:         value,
-				Dependencies: dependencydomain.Detail{BlockedBy: []dependencydomain.Item{}, Blocks: []dependencydomain.Item{}},
+				Task: value,
 			}, nil
 		},
 	}
@@ -401,7 +392,7 @@ func TestExecutablePreviewAllowsClearedAssigneeForDependencyReconciliation(t *te
 	if response.Code != http.StatusOK || previewCalls != 1 {
 		t.Fatalf("status=%d preview=%d body=%s", response.Code, previewCalls, response.Body.String())
 	}
-	if !strings.Contains(response.Body.String(), reason) || !strings.Contains(response.Body.String(), `"blockedBy":[]`) {
+	if !strings.Contains(response.Body.String(), reason) {
 		t.Fatalf("cleared-assignee preview response=%s", response.Body.String())
 	}
 }

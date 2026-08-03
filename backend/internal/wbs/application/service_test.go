@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	dependencydomain "github.com/banggok/sched_mind/backend/internal/dependencies/domain"
 	"github.com/banggok/sched_mind/backend/internal/wbs/domain"
 )
 
@@ -207,7 +206,6 @@ func TestPreviewExecutableScheduleAllowsClearedAssigneeToReconcileDraft(t *testi
 				},
 				Children: []domain.Node{},
 			},
-			Dependencies: dependencydomain.Detail{BlockedBy: []dependencydomain.Item{}, Blocks: []dependencydomain.Item{}},
 		}, nil
 	}}
 	service := NewServiceWithDependencies(store, scheduler, func() time.Time { return now }, func() (string, error) { return "unused", nil })
@@ -226,9 +224,6 @@ func TestPreviewExecutableScheduleAllowsClearedAssigneeToReconcileDraft(t *testi
 	}
 	if value == nil || value.Task == nil || value.Task.Executable.AssigneeID != nil || value.Task.Executable.ExecutionTimeline.Start != nil || value.Task.Executable.ExecutionUnscheduledReason == nil || *value.Task.Executable.ExecutionUnscheduledReason != reason {
 		t.Fatalf("cleared-assignee preview=%#v", value)
-	}
-	if len(value.Dependencies.BlockedBy) != 0 || len(value.Dependencies.Blocks) != 0 {
-		t.Fatalf("cleared-assignee dependencies=%#v", value.Dependencies)
 	}
 }
 
@@ -264,18 +259,6 @@ func TestPreviewExecutableScheduleUsesDraftWithoutCallingConfirmedMutation(t *te
 				},
 				Children: []domain.Node{},
 			},
-			Dependencies: dependencydomain.Detail{
-				BlockedBy: []dependencydomain.Item{{
-					Dependency: dependencydomain.Dependency{
-						ID:             "automatic-1",
-						BlockingTaskID: "task-1",
-						BlockedTaskID:  id,
-						AutomaticOwned: true,
-					},
-					Task: dependencydomain.Task{ID: "task-1", Name: "Task 1"},
-				}},
-				Blocks: []dependencydomain.Item{},
-			},
 		}, nil
 	}}
 	service := NewServiceWithDependencies(store, scheduler, func() time.Time { return now }, func() (string, error) { return "unused", nil })
@@ -294,9 +277,6 @@ func TestPreviewExecutableScheduleUsesDraftWithoutCallingConfirmedMutation(t *te
 	}
 	if value == nil || value.Task == nil || value.Task.Executable.ExecutionTimeline.Start == nil || value.Task.Executable.ExecutionTimeline.End == nil {
 		t.Fatalf("preview value=%#v", value)
-	}
-	if len(value.Dependencies.BlockedBy) != 1 || value.Dependencies.BlockedBy[0].Dependency.ID != "automatic-1" {
-		t.Fatalf("preview dependencies=%#v", value.Dependencies)
 	}
 }
 

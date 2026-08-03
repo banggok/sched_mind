@@ -1,5 +1,11 @@
 # US-3.1 — Create Project
 
+> **Product decision update — US-6.4:** Auto Dependency by Assignee is removed
+> end-to-end. `Automatic Scheduling` remains the Project configuration for
+> generated Execution/Commitment dates and capacity allocation only; it never
+> creates dependency relations. This supersedes every Auto Dependency statement
+> in this story.
+
 > **Product decision update — US-6.1:** `Automatic Scheduling` is the only
 > Project configuration that activates generated Execution/Commitment dates and
 > Auto Dependency by Assignee. The former system field

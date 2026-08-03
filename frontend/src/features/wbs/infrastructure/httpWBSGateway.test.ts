@@ -187,7 +187,6 @@ describe("HTTP WBS gateway tree cache", () => {
     });
     expect(preview.task.executable.assigneeId).toBeUndefined();
     expect(preview.task.executable.executionTimeline).toEqual({});
-    expect(preview.dependencies).toEqual({ blockedBy: [], blocks: [] });
   });
 
   it("previews a scheduling draft without invalidating the confirmed WBS cache", async () => {
@@ -242,13 +241,6 @@ describe("HTTP WBS gateway tree cache", () => {
       start: "2026-08-01",
       end: "2026-08-03",
     });
-    expect(preview.dependencies.blockedBy).toEqual([
-      expect.objectContaining({
-        id: "automatic-1",
-        source: "automatic",
-        task: expect.objectContaining({ id: "task-1", name: "Task 1" }),
-      }),
-    ]);
     expect(confirmedChange).not.toHaveBeenCalled();
     unsubscribe?.();
   });

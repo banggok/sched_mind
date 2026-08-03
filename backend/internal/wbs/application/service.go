@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	dependencydomain "github.com/banggok/sched_mind/backend/internal/dependencies/domain"
 	"github.com/banggok/sched_mind/backend/internal/shared/identity"
 	"github.com/banggok/sched_mind/backend/internal/shared/schedulingimpact"
 	"github.com/banggok/sched_mind/backend/internal/wbs/domain"
@@ -30,8 +29,7 @@ type PreviewExecutableInput struct {
 }
 
 type SchedulePreview struct {
-	Task         *domain.Node
-	Dependencies dependencydomain.Detail
+	Task *domain.Node
 }
 
 type AllocationRow struct {

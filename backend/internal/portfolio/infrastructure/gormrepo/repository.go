@@ -49,8 +49,6 @@ type dependencyRow struct {
 	ID             string
 	BlockingTaskID string
 	BlockedTaskID  string
-	ManualOwned    bool
-	AutomaticOwned bool
 }
 
 type holidayRow struct {
@@ -129,7 +127,7 @@ func (repository *Repository) Portfolio(ctx context.Context, query application.P
 	var dependencies []dependencyRow
 	if err := repository.database.WithContext(ctx).
 		Table("task_dependencies AS dependency").
-		Select("dependency.id, dependency.blocking_task_id, dependency.blocked_task_id, dependency.manual_owned, dependency.automatic_owned").
+		Select("dependency.id, dependency.blocking_task_id, dependency.blocked_task_id").
 		Joins("JOIN wbs_nodes AS blocking ON blocking.id = dependency.blocking_task_id").
 		Joins("JOIN wbs_nodes AS blocked ON blocked.id = dependency.blocked_task_id").
 		Where("blocking.project_id IN ? AND blocked.project_id IN ?", selectedIDs, selectedIDs).
@@ -138,13 +136,7 @@ func (repository *Repository) Portfolio(ctx context.Context, query application.P
 		return nil, fmt.Errorf("query portfolio dependencies: %w", err)
 	}
 	for _, dependency := range dependencies {
-		source := "automatic"
-		if dependency.ManualOwned && dependency.AutomaticOwned {
-			source = "both"
-		} else if dependency.ManualOwned {
-			source = "manual"
-		}
-		portfolio.Dependencies = append(portfolio.Dependencies, domain.Dependency{ID: dependency.ID, BlockingTaskID: dependency.BlockingTaskID, BlockedTaskID: dependency.BlockedTaskID, Source: source})
+		portfolio.Dependencies = append(portfolio.Dependencies, domain.Dependency{ID: dependency.ID, BlockingTaskID: dependency.BlockingTaskID, BlockedTaskID: dependency.BlockedTaskID})
 	}
 	return portfolio, nil
 }

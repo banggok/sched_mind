@@ -164,7 +164,6 @@ function dependenciesGateway(): DependenciesGateway {
     }),
     create: vi.fn().mockResolvedValue(undefined),
     remove: vi.fn().mockResolvedValue(undefined),
-    keepAsManual: vi.fn().mockResolvedValue(undefined),
     invalidateTask: vi.fn(),
     invalidateAll: vi.fn(),
   };

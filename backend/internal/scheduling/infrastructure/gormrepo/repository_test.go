@@ -123,7 +123,7 @@ func TestDependencyAndLagReadinessRules_AC11_AC12_AC13_AC14_AC15(t *testing.T) {
 		seedMember(t, database, "member", "5", "0")
 		seedTask(t, database, schedulableTask("a", "project", 1, "member", 480, 0))
 		seedTask(t, database, schedulableTask("b", "project", 2, "member", 480, 0))
-		seedDependency(t, database, dependencyModel{ID: "a-b", BlockingTaskID: "a", BlockedTaskID: "b", ManualOwned: true})
+		seedDependency(t, database, dependencyModel{ID: "a-b", BlockingTaskID: "a", BlockedTaskID: "b"})
 
 		if err := repository.RecalculatePortfolio(context.Background(), nil); err != nil {
 			t.Fatal(err)
@@ -142,7 +142,7 @@ func TestDependencyAndLagReadinessRules_AC11_AC12_AC13_AC14_AC15(t *testing.T) {
 		seedMember(t, database, "member-b", "5", "0")
 		seedTask(t, database, schedulableTask("a", "project", 1, "member-a", 480, 0))
 		seedTask(t, database, schedulableTask("b", "project", 2, "member-b", 300, 0))
-		seedDependency(t, database, dependencyModel{ID: "a-b", BlockingTaskID: "a", BlockedTaskID: "b", ManualOwned: true})
+		seedDependency(t, database, dependencyModel{ID: "a-b", BlockingTaskID: "a", BlockedTaskID: "b"})
 
 		if err := repository.RecalculatePortfolio(context.Background(), nil); err != nil {
 			t.Fatal(err)
@@ -156,7 +156,7 @@ func TestDependencyAndLagReadinessRules_AC11_AC12_AC13_AC14_AC15(t *testing.T) {
 		seedMember(t, database, "member", "5", "0")
 		seedTask(t, database, schedulableTask("a", "project", 1, "member", 480, 0))
 		seedTask(t, database, schedulableTask("b", "project", 2, "member", 300, 1))
-		seedDependency(t, database, dependencyModel{ID: "a-b", BlockingTaskID: "a", BlockedTaskID: "b", ManualOwned: true})
+		seedDependency(t, database, dependencyModel{ID: "a-b", BlockingTaskID: "a", BlockedTaskID: "b"})
 
 		if err := repository.RecalculatePortfolio(context.Background(), nil); err != nil {
 			t.Fatal(err)
@@ -188,7 +188,7 @@ func TestPriorityPreservingConcurrentAllocationAndSafeBlockers_US63_AC13_AC16(t 
 		candidate := loadScheduledTask(t, database, "candidate")
 		assertDate(t, "candidate start", candidate.ExecutionStart, "2026-08-04")
 		assertDate(t, "candidate end", candidate.ExecutionEnd, "2026-08-04")
-		assertAutomaticBlocker(t, database, "fixed-a", "candidate")
+		assertNoDependency(t, database, "fixed-a", "candidate")
 	})
 
 	t.Run("task continues around a later fixed reservation without serializing behind it", func(t *testing.T) {
@@ -200,7 +200,7 @@ func TestPriorityPreservingConcurrentAllocationAndSafeBlockers_US63_AC13_AC16(t 
 		candidate := loadScheduledTask(t, database, "candidate")
 		assertDate(t, "candidate start", candidate.ExecutionStart, "2026-08-04")
 		assertDate(t, "candidate end", candidate.ExecutionEnd, "2026-08-06")
-		assertAutomaticBlocker(t, database, "fixed-a", "candidate")
+		assertNoDependency(t, database, "fixed-a", "candidate")
 	})
 
 	t.Run("newly-ready higher-priority task displaces only conflicting mutable future allocation", func(t *testing.T) {
@@ -213,7 +213,7 @@ func TestPriorityPreservingConcurrentAllocationAndSafeBlockers_US63_AC13_AC16(t 
 		seedTask(t, database, schedulableTask("candidate", "high", 1, "shared", 480, 0))
 		seedTask(t, database, schedulableTask("lower", "medium", 1, "shared", 600, 0))
 		seedTask(t, database, schedulableTask("blocker", "low", 1, "blocker-member", 300, 0))
-		seedDependency(t, database, dependencyModel{ID: "blocker-candidate", BlockingTaskID: "blocker", BlockedTaskID: "candidate", ManualOwned: true})
+		seedDependency(t, database, dependencyModel{ID: "blocker-candidate", BlockingTaskID: "blocker", BlockedTaskID: "candidate"})
 
 		if err := repository.RecalculatePortfolio(context.Background(), nil); err != nil {
 			t.Fatal(err)
@@ -243,73 +243,79 @@ func TestPriorityPreservingConcurrentAllocationAndSafeBlockers_US63_AC13_AC16(t 
 	})
 }
 
-func TestAutomaticOwnershipReconciliationPreservesManualGraph_AC22_AC23_AC24_AC25_AC26(t *testing.T) {
-	t.Run("manual endpoint remains manual when no capacity blocker is required", func(t *testing.T) {
-		repository, database := schedulerRepository(t)
-		seedProject(t, database, automaticProject("project", 1, "2026-08-03", 0))
-		seedMember(t, database, "member", "5", "0")
-		seedTask(t, database, schedulableTask("a", "project", 1, "member", 300, 0))
-		seedTask(t, database, schedulableTask("b", "project", 2, "member", 300, 0))
-		seedDependency(t, database, dependencyModel{ID: "a-b", BlockingTaskID: "a", BlockedTaskID: "b", ManualOwned: true})
+func TestManualAllocationRespectsProjectPriorityAcrossAutomaticProjects_US63_AC19(t *testing.T) {
+	tests := []struct {
+		name               string
+		automaticPriority  int
+		manualPriority     int
+		wantAutomaticEnd   string
+		wantAutomaticDaily []string
+	}{
+		{
+			name:               "lower-priority manual task overlaps without shifting automatic task",
+			automaticPriority:  1,
+			manualPriority:     2,
+			wantAutomaticEnd:   "2026-08-04",
+			wantAutomaticDaily: []string{"480.000000", "480.000000"},
+		},
+		{
+			name:               "higher-priority manual task consumes shared capacity before automatic task",
+			automaticPriority:  2,
+			manualPriority:     1,
+			wantAutomaticEnd:   "2026-08-05",
+			wantAutomaticDaily: []string{"240.000000", "240.000000", "480.000000"},
+		},
+	}
 
-		if err := repository.RecalculatePortfolio(context.Background(), nil); err != nil {
-			t.Fatal(err)
-		}
-		var rows []dependencyModel
-		if err := database.Where("blocking_task_id = ? AND blocked_task_id = ?", "a", "b").Find(&rows).Error; err != nil {
-			t.Fatal(err)
-		}
-		if len(rows) != 1 || !rows[0].ManualOwned || rows[0].AutomaticOwned {
-			t.Fatalf("endpoint ownership = %#v, want one manual-only relation", rows)
-		}
-	})
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			repository, database := schedulerRepository(t)
+			seedProject(t, database, automaticProject("automatic", tc.automaticPriority, "2026-08-03", 0))
+			manualProject := automaticProject("manual", tc.manualPriority, "2026-08-03", 0)
+			manualProject.AutomaticScheduling = false
+			seedProject(t, database, manualProject)
+			seedMember(t, database, "member", "8", "0")
 
-	t.Run("stale automatic ownership is removed without removing manual ownership", func(t *testing.T) {
-		repository, database := schedulerRepository(t)
-		seedProject(t, database, automaticProject("project", 1, "2026-08-03", 0))
-		seedMember(t, database, "member-a", "8", "0")
-		seedMember(t, database, "member-b", "8", "0")
-		seedTask(t, database, schedulableTask("a", "project", 1, "member-a", 60, 0))
-		seedTask(t, database, schedulableTask("b", "project", 2, "member-b", 60, 0))
-		seedDependency(t, database, dependencyModel{ID: "a-b", BlockingTaskID: "a", BlockedTaskID: "b", ManualOwned: true, AutomaticOwned: true})
+			automaticTask := schedulableTask("automatic-task", "automatic", 1, "member", 960, 0)
+			seedTask(t, database, automaticTask)
+			manualTask := schedulableTask("manual-task", "manual", 1, "member", 480, 0)
+			manualTask.ExecutionStart = datePointer(mustDate("2026-08-03"))
+			manualTask.ExecutionEnd = datePointer(mustDate("2026-08-04"))
+			manualTask.CommitmentStart = datePointer(mustDate("2026-08-03"))
+			manualTask.CommitmentEnd = datePointer(mustDate("2026-08-04"))
+			seedTask(t, database, manualTask)
 
-		if err := repository.RecalculatePortfolio(context.Background(), nil); err != nil {
-			t.Fatal(err)
-		}
-		var relation dependencyModel
-		if err := database.First(&relation, "id = ?", "a-b").Error; err != nil {
-			t.Fatal(err)
-		}
-		if !relation.ManualOwned || relation.AutomaticOwned {
-			t.Fatalf("ownership = manual:%v automatic:%v, want manual-only", relation.ManualOwned, relation.AutomaticOwned)
-		}
-	})
+			if err := repository.RecalculatePortfolio(context.Background(), []string{"manual"}); err != nil {
+				t.Fatal(err)
+			}
 
-	t.Run("clearing assignee removes automatic-only ownership and leaves safe unscheduled state", func(t *testing.T) {
-		repository, database := schedulerRepository(t)
-		seedProject(t, database, automaticProject("project", 1, "2026-08-03", 0))
-		seedMember(t, database, "member", "8", "0")
-		seedTask(t, database, schedulableTask("a", "project", 1, "member", 60, 0))
-		missingAssignee := schedulableTask("b", "project", 2, "member", 60, 0)
-		missingAssignee.AssigneeID = nil
-		seedTask(t, database, missingAssignee)
-		seedDependency(t, database, dependencyModel{ID: "a-b", BlockingTaskID: "a", BlockedTaskID: "b", AutomaticOwned: true})
+			storedAutomatic := loadScheduledTask(t, database, "automatic-task")
+			assertDate(t, "automatic start", storedAutomatic.ExecutionStart, "2026-08-03")
+			assertDate(t, "automatic end", storedAutomatic.ExecutionEnd, tc.wantAutomaticEnd)
+			automaticRows := loadAllocations(t, database, "automatic-task", "execution")
+			if len(automaticRows) != len(tc.wantAutomaticDaily) {
+				t.Fatalf("automatic allocations = %#v, want %d rows", automaticRows, len(tc.wantAutomaticDaily))
+			}
+			for index, expected := range tc.wantAutomaticDaily {
+				if automaticRows[index].AllocatedMinutes != expected {
+					t.Fatalf("automatic allocation[%d] = %s, want %s", index, automaticRows[index].AllocatedMinutes, expected)
+				}
+			}
 
-		if err := repository.RecalculatePortfolio(context.Background(), nil); err != nil {
-			t.Fatal(err)
-		}
-		var count int64
-		if err := database.Model(&dependencyModel{}).Where("id = ?", "a-b").Count(&count).Error; err != nil {
-			t.Fatal(err)
-		}
-		if count != 0 {
-			t.Fatalf("automatic-only relation count = %d, want 0", count)
-		}
-		b := loadScheduledTask(t, database, "b")
-		if b.ExecutionStart != nil || b.ExecutionUnscheduledReason == nil || *b.ExecutionUnscheduledReason != reasonMissingAssignee {
-			t.Fatalf("assignee-clear projection = %#v", b)
-		}
-	})
+			manualRows := loadAllocations(t, database, "manual-task", "execution")
+			if len(manualRows) != 2 || manualRows[0].AllocatedMinutes != "240.000000" || manualRows[1].AllocatedMinutes != "240.000000" {
+				t.Fatalf("manual allocations = %#v, want two immutable 240-minute rows", manualRows)
+			}
+			for index, row := range manualRows {
+				if row.RemainingCapacityMinutes != "0.000000" && tc.automaticPriority < tc.manualPriority {
+					t.Fatalf("lower-priority manual overlap remaining capacity = %s, want 0 without rejection", row.RemainingCapacityMinutes)
+				}
+				if tc.automaticPriority < tc.manualPriority && automaticRows[index].Sequence >= row.Sequence {
+					t.Fatalf("priority projection sequence automatic=%d manual=%d, want automatic first", automaticRows[index].Sequence, row.Sequence)
+				}
+			}
+		})
+	}
 }
 
 func TestEligibilityFixedReservationsAndClosedExclusion_AC4_AC30_AC31_AC32_AC34(t *testing.T) {
@@ -365,7 +371,7 @@ func TestEligibilityFixedReservationsAndClosedExclusion_AC4_AC30_AC31_AC32_AC34(
 		completed.ActualEnd = datePointer(mustDate("2026-08-07"))
 		seedTask(t, database, completed)
 		seedTask(t, database, schedulableTask("successor", "project", 2, "member-b", 300, 0))
-		seedDependency(t, database, dependencyModel{ID: "completed-successor", BlockingTaskID: "completed", BlockedTaskID: "successor", ManualOwned: true})
+		seedDependency(t, database, dependencyModel{ID: "completed-successor", BlockingTaskID: "completed", BlockedTaskID: "successor"})
 
 		if err := repository.RecalculatePortfolio(context.Background(), nil); err != nil {
 			t.Fatal(err)
@@ -696,21 +702,16 @@ func loadAllocations(t *testing.T, database *gorm.DB, taskID, timeline string) [
 	return rows
 }
 
-func assertAutomaticBlocker(t *testing.T, database *gorm.DB, blockingTaskID, blockedTaskID string) {
+func assertNoDependency(t *testing.T, database *gorm.DB, blockingTaskID, blockedTaskID string) {
 	t.Helper()
-	var relation dependencyModel
-	if err := database.Where("blocking_task_id = ? AND blocked_task_id = ?", blockingTaskID, blockedTaskID).First(&relation).Error; err != nil {
-		t.Fatal(err)
-	}
-	if !relation.AutomaticOwned {
-		t.Fatalf("relation %s -> %s is not automatic", blockingTaskID, blockedTaskID)
-	}
 	var count int64
-	if err := database.Model(&dependencyModel{}).Where("blocked_task_id = ? AND automatic_owned = ?", blockedTaskID, true).Count(&count).Error; err != nil {
+	if err := database.Model(&dependencyModel{}).
+		Where("blocking_task_id = ? AND blocked_task_id = ?", blockingTaskID, blockedTaskID).
+		Count(&count).Error; err != nil {
 		t.Fatal(err)
 	}
-	if count != 1 {
-		t.Fatalf("automatic blockers for %s = %d, want 1", blockedTaskID, count)
+	if count != 0 {
+		t.Fatalf("dependency %s -> %s count = %d, want 0", blockingTaskID, blockedTaskID, count)
 	}
 }
 

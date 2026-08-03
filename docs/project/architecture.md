@@ -1,5 +1,12 @@
 # Current Project Architecture
 
+> **US-6.4 architecture revision (2026-08-03):** Dependency rows are manual-only
+> Finish-to-Start prerequisites. Scheduler and preview read the manual graph but
+> never infer or mutate relations. Migration 000023 deletes automatic-only rows,
+> preserves manual/shared identity, drops ownership schema, and performs full
+> active-portfolio recalculation atomically. This supersedes ownership and
+> reconciliation text retained below as historical context.
+
 This document records technical decisions specific to this repository. It
 applies the reusable [architecture baseline](../architecture.md) and is not safe
 to copy unchanged into another project.
@@ -80,14 +87,17 @@ Member deletion soft-deletes the Member and all owned Capacity Overrides in one
 transaction. Direct Capacity Override deletion remains a hard delete. Default
 GORM scopes exclude deleted records; historical readers must opt in explicitly.
 Active Member name search uses a PostgreSQL partial prefix index; names remain
-non-unique and can also be reused after deletion. `executable_leaves` remains a
-provisional Member-assignment projection and has no Project/WBS ownership
-columns. US-3.1 introduces the Project root lifecycle without retrofitting that
-provisional table because the WBS model is explicitly out of scope. The future
-WBS implementation must replace or extend the projection so Member assignment
-checks can distinguish active Project work from Closed history.
+non-unique and can also be reused after deletion. Member deletion checks
+`wbs_nodes` joined to `projects`, rejecting an assigned executable leaf in an
+Open or Locked Project while allowing assignments that exist only in Closed
+history. The selective `wbs_nodes_assignee_id_idx`, Project primary key, and
+bounded leaf anti-join support this query; no additional index is required.
 
 ## Backend API conventions
+
+WBS `name` and normalized `name_key` support up to 200 Unicode characters in
+the domain/API contract and use `VARCHAR(200)` persistence columns. Existing
+sibling uniqueness and tree indexes remain unchanged.
 
 Business transports expose JSON APIs below `/api`. List endpoints accept backend
 search/filter and pagination as applicable and return `page`, `pageSize`, and
@@ -249,8 +259,11 @@ timeline capacity and rounds the Task Daily Limit to `0.5` hour with a minimum
 positive `0.5` hour. Dependency-ready Tasks remain ordered by Project Priority
 then visual WBS order, but same-assignee Tasks may receive positive allocation
 on the same Date. Later Tasks use only residual capacity; mutable automatic
-allocation never exceeds final timeline capacity. Fixed manual allocation may
-represent planned overcapacity and is honoured cross-Project.
+allocation remains priority-safe. Completed Actual Allocation and Locked
+baseline are absolute reservations. Fixed manual allocation is immutable but
+uses Project Priority for capacity precedence: higher-priority manual rows reduce
+lower-priority automatic capacity, while lower-priority manual rows may overlap
+higher-priority automatic rows without warning or later capacity debt.
 
 US-6.2 defines Actual Date, Actual Allocation, Locked Project, and generic cross-project impact coordination. Completion persists required Actual Start/Actual End together. Open completion moves each planned Start earlier only when Actual Start is earlier and always sets each End to Actual End. Actual Allocation ignores planned Task percentage and uses only eligible Dates inside Actual Start–Actual End. It competes only with other completed Actual Allocation for the same Assignee/Date, distributes Effort in `0.5`-hour balanced shares, recalculates remaining shares after constrained Dates, backfills spare BAU capacity, and then levels unavoidable total historical overcapacity with a latest-Date tie-breaker. Existing completed Actual rows remain immutable; planned automatic/manual/Locked rows are ignored for Actual head-to-head construction. Historical overcapacity never carries debt to later Dates. Locked Projects remain immutable scheduler outputs, but Actual Date may be saved and its Actual Allocation may recalculate transitively impacted Open Projects. Ordinary Task/dependency/priority/capacity mutations use grouped impact preview, confirmation, server revalidation, and Locked-impact blocking. Project Reopen expands an atomic transitive Locked closure to avoid mutual-lock dead ends.
 
@@ -627,6 +640,11 @@ synchronized. Dependency geometry is computed only for visible renderable
 endpoints. Home participates in the existing schedule projection clock or an
 equivalent shared version boundary; it must not introduce an independent cache
 version that can disagree with Project, WBS, or Dependency gateways.
+
+Home owns a viewport-bounded shell: the document does not scroll vertically on
+this route, while the synchronized Gantt body is the single vertical scroll
+owner. The timeline header remains fixed inside the workspace and non-Home pages
+retain ordinary document scrolling.
 
 Saved filters are a small global backend aggregate because authentication and
 user identity are absent. Persist ID, normalized case-insensitive unique Name,

@@ -18,6 +18,12 @@ future context are not permission to implement them.
 
 ## Current implemented scope
 
+> **Implemented dependency revision — 2026-08-03:** US-6.4 removes Auto
+> Dependency by Assignee. Dependencies are explicit manual Finish-to-Start
+> prerequisites; scheduling and preview never create, delete, or project
+> ownership. Migration atomically removes legacy ownership and recalculates Open
+> automatic schedules. This supersedes ownership wording retained below.
+
 > **Implemented scheduling revision — 2026-08-03:** US-6.3 Task Capacity
 > Allocation Percentage and the accompanying US-6.2 Actual Allocation revision
 > are implemented across WBS persistence/API/UI, concurrent planned scheduling,
@@ -78,7 +84,8 @@ referenced Role cannot be deleted. See US-1.1 for exact validation and API rules
 A Member represents an engineer available to future scheduling. It references a
 Role and owns base Daily Capacity and Buffer. Names are not unique. Member
 updates preserve identity so future assignments remain valid. Deletion is
-restricted by references described in US-1.2.
+restricted by active executable WBS assignments in Open or Locked Projects;
+Closed-only assignment history does not block deletion. See US-1.2.
 
 ### Daily, execution, and commitment capacity
 
@@ -155,9 +162,12 @@ unrelated Projects are not recalculated or version-updated. Dependency readiness
 is applied before Project Priority and depth-first WBS order. A Task's percentage
 is applied only after final Execution/Commitment capacity is independently
 resolved and rounded; later ordered Tasks may use remaining capacity on the same
-Date, so same-assignee planned allocations may overlap. Automatic allocation
-remains capacity-safe, while manual fixed allocation may represent planned
-overcapacity and is honoured by automatic Projects sharing the Assignee.
+Date, so same-assignee planned allocations may overlap. Automatic allocation remains priority-safe. Fixed manual allocation is
+immutable, but it reduces an unfinished automatic Task only when the manual
+Project has higher Project Priority. A lower-priority manual allocation may
+overlap a higher-priority automatic allocation without warning or later capacity
+debt. Completed Actual Allocation and Locked baselines remain absolute
+reservations regardless of priority.
 Completed Tasks use complete Actual Date, with Actual End as readiness anchor.
 Actual Allocation ignores planned percentage and uses only eligible Dates inside
 Actual Start–Actual End. It competes only with other completed Actual Allocation

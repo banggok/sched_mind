@@ -384,7 +384,7 @@ func writeError(w http.ResponseWriter, err error) {
 		status, code, message, field = 400, "PROJECT_BUFFER_INVALID", domain.ErrProjectBufferInvalid.Error(), "projectBuffer"
 	case errors.Is(err, schedulingdomain.ErrConcurrentConflict):
 		status, code, message = 409, "SCHEDULING_CONFLICT", "The schedule changed concurrently. Refresh and try again."
-	case errors.Is(err, schedulingdomain.ErrDataIntegrity), errors.Is(err, schedulingdomain.ErrNoConvergence):
+	case errors.Is(err, schedulingdomain.ErrDataIntegrity):
 		status, code, message = 409, "SCHEDULING_DATA_INTEGRITY_CONFLICT", "The portfolio schedule is inconsistent and was not changed."
 	}
 	httpjson.Write(w, status, errorResponse{code, message, field})

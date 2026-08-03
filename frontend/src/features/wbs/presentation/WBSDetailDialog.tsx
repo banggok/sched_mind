@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { DependenciesGateway } from "../../dependencies/application/dependenciesGateway";
-import type { DependencyDetail } from "../../dependencies/domain/dependency";
 import { TaskDependencies } from "../../dependencies/presentation/TaskDependencies";
 import type { Project } from "../../projects/domain/project";
 import type { RolesGateway } from "../../roles/application/rolesGateway";
@@ -89,8 +88,6 @@ export function WBSDetailDialog({
     useState(node.executable.commitmentUnscheduledReason ?? "");
   const [previewBusy, setPreviewBusy] = useState(false);
   const [previewError, setPreviewError] = useState("");
-  const [previewDependencies, setPreviewDependencies] =
-    useState<DependencyDetail>();
   const [hasCurrentSchedulePreview, setHasCurrentSchedulePreview] =
     useState(false);
   const [actualStart, setActualStart] = useState("");
@@ -151,12 +148,10 @@ export function WBSDetailDialog({
     previewingVersion.current = undefined;
     setPreviewBusy(false);
     setPreviewError("");
-    setPreviewDependencies(undefined);
     setHasCurrentSchedulePreview(false);
   }
 
   function clearDraftSchedule(reason: string) {
-    setPreviewDependencies(undefined);
     setHasCurrentSchedulePreview(false);
     setExecutionStart("");
     setExecutionEnd("");
@@ -239,7 +234,6 @@ export function WBSDetailDialog({
       setCommitmentUnscheduledReason(
         preview.task.executable.commitmentUnscheduledReason ?? "",
       );
-      setPreviewDependencies(preview.dependencies);
       lastPreviewedVersion.current = version;
       setHasCurrentSchedulePreview(true);
     } catch (reason: unknown) {
@@ -395,6 +389,7 @@ export function WBSDetailDialog({
           <FormField
             id="group-detail-name"
             name="name"
+            maxLength={200}
             label="Name"
             value={name}
             disabled={project.status !== "open" || busy}
@@ -440,6 +435,7 @@ export function WBSDetailDialog({
               <FormField
                 id="detail-name"
                 name="name"
+                maxLength={200}
                 label="Name"
                 value={name}
                 disabled={readOnly}
@@ -660,7 +656,6 @@ export function WBSDetailDialog({
                   taskId={node.id}
                   gateway={dependenciesGateway}
                   readOnly={readOnly}
-                  previewDetail={previewDependencies}
                 />
               </div>
             ) : null}

@@ -1,5 +1,9 @@
 # Automatic Scheduling Implementation Evidence
 
+> **US-6.4 supersession:** Ownership, Keep-as-Manual, reconciliation,
+> convergence, and dependency-preview references below are historical. The
+> current scheduler reads the manual graph once and performs no dependency DML.
+
 This document records the static implementation handoff for the frozen requirement delta introduced by `US-6.1` and the related revisions to `US-1.2`, `US-2.2`, `US-3.1`, `US-3.3`, `US-4.1`, and `US-5.1`.
 
 No automated validation was executed in the sandbox. Every command below is for local execution.

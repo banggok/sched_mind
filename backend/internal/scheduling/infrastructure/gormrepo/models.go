@@ -67,7 +67,6 @@ func (holidayDateModel) TableName() string { return "public_holiday_dates" }
 
 type dependencyModel struct {
 	ID, BlockingTaskID, BlockedTaskID string
-	ManualOwned, AutomaticOwned       bool
 	CreatedAt, UpdatedAt              time.Time
 }
 

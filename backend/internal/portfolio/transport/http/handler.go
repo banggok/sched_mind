@@ -79,7 +79,6 @@ type dependencyItem struct {
 	ID             string `json:"id"`
 	BlockingTaskID string `json:"blockingTaskId"`
 	BlockedTaskID  string `json:"blockedTaskId"`
-	Source         string `json:"source"`
 }
 type holidayItem struct {
 	Date        string `json:"date"`
@@ -219,7 +218,7 @@ func mapPortfolio(value domain.Portfolio) portfolioItem {
 	}
 	dependencies := make([]dependencyItem, 0, len(value.Dependencies))
 	for _, dependency := range value.Dependencies {
-		dependencies = append(dependencies, dependencyItem{ID: dependency.ID, BlockingTaskID: dependency.BlockingTaskID, BlockedTaskID: dependency.BlockedTaskID, Source: dependency.Source})
+		dependencies = append(dependencies, dependencyItem{ID: dependency.ID, BlockingTaskID: dependency.BlockingTaskID, BlockedTaskID: dependency.BlockedTaskID})
 	}
 	holidays := make([]holidayItem, 0, len(value.Holidays))
 	for _, holiday := range value.Holidays {

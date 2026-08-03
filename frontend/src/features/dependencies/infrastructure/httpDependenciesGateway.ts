@@ -90,13 +90,6 @@ export function createHTTPDependenciesGateway(
       });
       invalidateAllCaches(true);
     },
-    keepAsManual: async (dependencyId) => {
-      await request(
-        `/dependencies/${encodeURIComponent(dependencyId)}/keep-manual`,
-        { method: "POST" },
-      );
-      invalidateAllCaches(true);
-    },
     invalidateTask: (taskId) => {
       details.get(taskId)?.invalidate();
       details.delete(taskId);
@@ -123,20 +116,8 @@ function mapDetail(value: unknown): DependencyDetail {
 function mapRelation(value: unknown): DependencyRelation {
   if (!isRecord(value) || typeof value.id !== "string")
     throw new Error("Dependency response is invalid.");
-  if (
-    value.source !== "manual" &&
-    value.source !== "automatic" &&
-    value.source !== "both"
-  ) {
-    throw new Error("Dependency response is invalid.");
-  }
-  if (typeof value.manualRemovable !== "boolean") {
-    throw new Error("Dependency response is invalid.");
-  }
   return {
     id: value.id,
-    source: value.source,
-    manualRemovable: value.manualRemovable,
     task: mapTask(value.task),
   };
 }

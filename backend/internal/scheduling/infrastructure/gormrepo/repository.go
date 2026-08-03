@@ -72,40 +72,16 @@ func (repository *Repository) RecalculatePortfolio(ctx context.Context, requeste
 			return err
 		}
 
-		var execution *timelineResult
-		dependencyDirtyProjects := make(map[string]struct{})
-		converged := false
-		maximumIterations := len(state.tasks) + 1
-		for iteration := 0; iteration < maximumIterations; iteration++ {
-			execution, err = state.scheduleTimeline(schedulingdomain.Execution)
-			if err != nil {
-				return err
-			}
-			changed, dirtyProjects, err := repository.reconcileAutomaticOwnership(transaction, state, execution)
-			if err != nil {
-				return err
-			}
-			for projectID := range dirtyProjects {
-				dependencyDirtyProjects[projectID] = struct{}{}
-			}
-			state.refreshDependenciesFromExecution(execution)
-			if err := state.validateEffectiveGraph(); err != nil {
-				return err
-			}
-			if !changed {
-				converged = true
-				break
-			}
-		}
-		if !converged {
-			return schedulingdomain.ErrNoConvergence
+		execution, err := state.scheduleTimeline(schedulingdomain.Execution)
+		if err != nil {
+			return err
 		}
 
 		commitment, err := state.scheduleTimeline(schedulingdomain.Commitment)
 		if err != nil {
 			return err
 		}
-		if err := repository.persist(ctx, transaction, state, execution, commitment, dependencyDirtyProjects); err != nil {
+		if err := repository.persist(ctx, transaction, state, execution, commitment, nil); err != nil {
 			return err
 		}
 		return nil
@@ -277,23 +253,7 @@ func (state *portfolioState) classifyDependencies() {
 		if blockingProject.Status == "closed" || blockedProject.Status == "closed" {
 			continue
 		}
-		blockedIsRecalculated := blockedProject.Status == "open" && blockedProject.AutomaticScheduling && (blocked.ActualStart == nil || blocked.ActualEnd == nil)
-		if dependency.ManualOwned {
-			state.manualBlockers[dependency.BlockedTaskID] = appendUnique(state.manualBlockers[dependency.BlockedTaskID], dependency.BlockingTaskID)
-		}
-		if dependency.AutomaticOwned && !blockedIsRecalculated {
-			state.fixedBlockers[dependency.BlockedTaskID] = appendUnique(state.fixedBlockers[dependency.BlockedTaskID], dependency.BlockingTaskID)
-		}
-	}
-}
-
-func (state *portfolioState) refreshDependenciesFromExecution(result *timelineResult) {
-	state.classifyDependencies()
-	for blockedTaskID, blockingTaskID := range result.automaticBlocker {
-		if blockingTaskID == "" {
-			continue
-		}
-		state.fixedBlockers[blockedTaskID] = appendUnique(state.fixedBlockers[blockedTaskID], blockingTaskID)
+		state.manualBlockers[dependency.BlockedTaskID] = appendUnique(state.manualBlockers[dependency.BlockedTaskID], dependency.BlockingTaskID)
 	}
 }
 

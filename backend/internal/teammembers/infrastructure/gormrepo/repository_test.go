@@ -71,7 +71,11 @@ func TestDeleteRejectsActiveAssignmentProjection(t *testing.T) {
 	if err := database.Create(&member).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := database.Create(&executableLeafModel{ID: "task", AssigneeID: "member"}).Error; err != nil {
+	if err := database.Create(&assignmentProjectModel{ID: "project", Status: "open"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	memberID := "member"
+	if err := database.Create(&assignmentWBSNodeModel{ID: "task", ProjectID: "project", AssigneeID: &memberID}).Error; err != nil {
 		t.Fatal(err)
 	}
 
@@ -86,6 +90,28 @@ func TestDeleteRejectsActiveAssignmentProjection(t *testing.T) {
 	}
 	if active != 1 {
 		t.Fatal("active assignment rejection must retain member")
+	}
+}
+
+func TestDeleteAllowsAssignmentOnlyInClosedProject(t *testing.T) {
+	database := openTestDatabase(t)
+	now := time.Now().UTC()
+	if err := database.Create(&roleModel{ID: "role", Name: "Backend"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	member := teamMemberModel{ID: "member", Name: "Harry", RoleID: "role", DailyCapacity: "8.0", BufferPercentage: "20.0", CreatedAt: now, UpdatedAt: now}
+	if err := database.Create(&member).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Create(&assignmentProjectModel{ID: "closed-project", Status: "closed"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	memberID := member.ID
+	if err := database.Create(&assignmentWBSNodeModel{ID: "historical-task", ProjectID: "closed-project", AssigneeID: &memberID}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := New(database).DeleteIfNoActiveTask(context.Background(), member.ID); err != nil {
+		t.Fatal(err)
 	}
 }
 

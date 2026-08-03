@@ -279,15 +279,13 @@ function readDependency(value: unknown): PortfolioDependency {
     !isRecord(value) ||
     typeof value.id !== "string" ||
     typeof value.blockingTaskId !== "string" ||
-    typeof value.blockedTaskId !== "string" ||
-    !isDependencySource(value.source)
+    typeof value.blockedTaskId !== "string"
   )
     throw unexpectedResponse();
   return {
     id: value.id,
     blockingTaskId: value.blockingTaskId,
     blockedTaskId: value.blockedTaskId,
-    source: value.source,
   };
 }
 
@@ -389,10 +387,4 @@ function isProjection(value: unknown): value is PortfolioProjection {
 
 function isRowKind(value: unknown): value is PortfolioRow["kind"] {
   return value === "project" || value === "group" || value === "task";
-}
-
-function isDependencySource(
-  value: unknown,
-): value is PortfolioDependency["source"] {
-  return value === "manual" || value === "automatic" || value === "both";
 }

@@ -132,6 +132,109 @@ func TestAutomaticSchedulingCapacityAndUnscheduledAcceptance_AC1_AC4_AC5_AC6_AC7
 	assertDate(t, "lag without dependency skips weekend", lagged.ExecutionStart, "2026-08-10")
 }
 
+func TestManualAndAutomaticCrossProjectPriorityAcceptance_US63_AC19(t *testing.T) {
+	tests := []struct {
+		name               string
+		automaticPriority  int
+		manualPriority     int
+		wantAutomaticEnd   string
+		wantAutomaticDaily []string
+	}{
+		{
+			name:               "lower-priority manual overlap is accepted without shifting or warning",
+			automaticPriority:  1,
+			manualPriority:     2,
+			wantAutomaticEnd:   "2026-08-04",
+			wantAutomaticDaily: []string{"480.000000", "480.000000"},
+		},
+		{
+			name:               "higher-priority manual task shifts automatic work through shared allocation",
+			automaticPriority:  2,
+			manualPriority:     1,
+			wantAutomaticEnd:   "2026-08-05",
+			wantAutomaticDaily: []string{"240.000000", "240.000000", "480.000000"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			database := acceptanceDatabase(t)
+			now := time.Date(2026, 8, 1, 8, 0, 0, 0, time.UTC)
+			anchor := mustDate("2026-08-03")
+			manualEnd := mustDate("2026-08-04")
+			roleID, memberID := "role", "member"
+			if err := database.Create(&acceptanceRoleRecord{ID: roleID, Name: "Engineer"}).Error; err != nil {
+				t.Fatal(err)
+			}
+			if err := database.Create(&acceptanceMemberRecord{
+				ID: memberID, Name: "Rani", RoleID: roleID,
+				DailyCapacity: "8", BufferPercentage: "0", CreatedAt: now, UpdatedAt: now,
+			}).Error; err != nil {
+				t.Fatal(err)
+			}
+			projects := []acceptanceProjectRecord{
+				{ID: "automatic", Name: "Automatic", NameKey: "automatic", Status: "open", Priority: tc.automaticPriority, AutomaticScheduling: true, AutoCalculateDate: true, SchedulingStartDate: &anchor, ProjectBuffer: 0, CreatedAt: now, UpdatedAt: now},
+				{ID: "manual", Name: "Manual", NameKey: "manual", Status: "open", Priority: tc.manualPriority, AutomaticScheduling: false, AutoCalculateDate: true, SchedulingStartDate: &anchor, ProjectBuffer: 0, CreatedAt: now, UpdatedAt: now},
+			}
+			if err := database.Create(&projects).Error; err != nil {
+				t.Fatal(err)
+			}
+			automaticEffort, manualEffort := 960, 480
+			tasks := []acceptanceTaskRecord{
+				{ID: "automatic-task", ProjectID: "automatic", ParentKey: "", Name: "Automatic Task", NameKey: "automatic task", Position: 1, RoleID: &roleID, AssigneeID: &memberID, EffortMinutes: &automaticEffort, CapacityAllocationPercentage: 100, CreatedAt: now, UpdatedAt: now},
+				{ID: "manual-task", ProjectID: "manual", ParentKey: "", Name: "Manual Task", NameKey: "manual task", Position: 1, RoleID: &roleID, AssigneeID: &memberID, EffortMinutes: &manualEffort, CapacityAllocationPercentage: 100, ExecutionStart: &anchor, ExecutionEnd: &manualEnd, CommitmentStart: &anchor, CommitmentEnd: &manualEnd, CreatedAt: now, UpdatedAt: now},
+			}
+			if err := database.Create(&tasks).Error; err != nil {
+				t.Fatal(err)
+			}
+
+			scheduler := schedulingapplication.NewService(NewWithDependencies(
+				database,
+				func() time.Time { return now },
+				func() (string, error) { return "automatic", nil },
+			))
+			if err := scheduler.RecalculateActiveProjects(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+
+			automatic := loadAcceptanceTask(t, database, "automatic-task")
+			assertDate(t, "automatic start", automatic.ExecutionStart, "2026-08-03")
+			assertDate(t, "automatic end", automatic.ExecutionEnd, tc.wantAutomaticEnd)
+			rows := loadAcceptanceAllocations(t, database, "automatic-task", string(schedulingdomain.Execution))
+			if len(rows) != len(tc.wantAutomaticDaily) {
+				t.Fatalf("automatic allocations = %#v, want %d rows", rows, len(tc.wantAutomaticDaily))
+			}
+			for index, want := range tc.wantAutomaticDaily {
+				if rows[index].AllocatedMinutes != want {
+					t.Fatalf("automatic allocation[%d] = %s, want %s", index, rows[index].AllocatedMinutes, want)
+				}
+			}
+
+			wbsService := wbsapplication.NewServiceWithDependencies(
+				wbsgormrepo.New(database),
+				scheduler,
+				func() time.Time { return now },
+				func() (string, error) { return "unused", nil },
+			)
+			manualAllocations, err := wbsService.Allocations(context.Background(), "manual", "manual-task")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(manualAllocations.Execution) != 2 {
+				t.Fatalf("manual allocation detail = %#v, want two rows", manualAllocations.Execution)
+			}
+			for _, row := range manualAllocations.Execution {
+				if row.AllocatedMinutes != 240 {
+					t.Fatalf("manual allocated minutes = %d, want 240", row.AllocatedMinutes)
+				}
+				if row.OvercapacityMinutes != 0 {
+					t.Fatalf("manual overcapacity warning = %d, want none", row.OvercapacityMinutes)
+				}
+			}
+		})
+	}
+}
+
 func TestAutomaticSchedulingLifecycleAndPriorityAcceptance_AC29_AC30_AC31_AC32_AC35(t *testing.T) {
 	database := acceptanceDatabase(t)
 	now := time.Date(2026, 8, 1, 8, 0, 0, 0, time.UTC)
@@ -255,7 +358,7 @@ func TestAutomaticSchedulingOrderingAndAssigneeAcceptance_AC12_AC15_AC16_AC17_AC
 		if err := database.Create(&tasks).Error; err != nil {
 			t.Fatal(err)
 		}
-		if err := database.Create(&acceptanceDependencyRecord{ID: "manual", BlockingTaskID: "blocker", BlockedTaskID: "blocked", ManualOwned: true, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+		if err := database.Create(&acceptanceDependencyRecord{ID: "manual", BlockingTaskID: "blocker", BlockedTaskID: "blocked", CreatedAt: now, UpdatedAt: now}).Error; err != nil {
 			t.Fatal(err)
 		}
 		scheduler := schedulingapplication.NewService(NewWithDependencies(database, func() time.Time { return now }, func() (string, error) { return "automatic", nil }))
@@ -298,14 +401,10 @@ func TestAutomaticSchedulingOrderingAndAssigneeAcceptance_AC12_AC15_AC16_AC17_AC
 		if err := database.Create(&tasks).Error; err != nil {
 			t.Fatal(err)
 		}
-		if err := database.Create(&acceptanceDependencyRecord{ID: "manual", BlockingTaskID: "blocker", BlockedTaskID: "candidate", ManualOwned: true, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+		if err := database.Create(&acceptanceDependencyRecord{ID: "manual", BlockingTaskID: "blocker", BlockedTaskID: "candidate", CreatedAt: now, UpdatedAt: now}).Error; err != nil {
 			t.Fatal(err)
 		}
-		automaticID := 0
-		scheduler := schedulingapplication.NewService(NewWithDependencies(database, func() time.Time { return now }, func() (string, error) {
-			automaticID++
-			return fmt.Sprintf("automatic-%d", automaticID), nil
-		}))
+		scheduler := schedulingapplication.NewService(NewWithDependencies(database, func() time.Time { return now }, func() (string, error) { return "unused", nil }))
 		if err := scheduler.RecalculateActiveProjects(context.Background()); err != nil {
 			t.Fatal(err)
 		}
@@ -314,7 +413,7 @@ func TestAutomaticSchedulingOrderingAndAssigneeAcceptance_AC12_AC15_AC16_AC17_AC
 		assertDate(t, "newly ready candidate", candidate.ExecutionStart, "2026-08-04")
 		assertDate(t, "lower preserves pre-readiness allocation", lower.ExecutionStart, "2026-08-03")
 		var automaticCount int64
-		if err := database.Model(&acceptanceDependencyRecord{}).Where("blocking_task_id = ? AND blocked_task_id = ? AND automatic_owned = ?", "candidate", "lower", true).Count(&automaticCount).Error; err != nil {
+		if err := database.Model(&acceptanceDependencyRecord{}).Where("blocking_task_id = ? AND blocked_task_id = ?", "candidate", "lower").Count(&automaticCount).Error; err != nil {
 			t.Fatal(err)
 		}
 		if automaticCount != 0 {
@@ -359,9 +458,12 @@ func TestAutomaticSchedulingOrderingAndAssigneeAcceptance_AC12_AC15_AC16_AC17_AC
 		}
 		assertDate(t, "WBS first task", loadAcceptanceTask(t, database, "a").ExecutionStart, "2026-08-03")
 		assertDate(t, "WBS second task", loadAcceptanceTask(t, database, "b").ExecutionStart, "2026-08-04")
-		initial := loadAcceptanceDependency(t, database, "a", "b")
-		if initial.ManualOwned || !initial.AutomaticOwned {
-			t.Fatalf("initial automatic relation=%#v", initial)
+		var initialCount int64
+		if err := database.Model(&acceptanceDependencyRecord{}).Where("blocking_task_id = ? AND blocked_task_id = ?", "a", "b").Count(&initialCount).Error; err != nil {
+			t.Fatal(err)
+		}
+		if initialCount != 0 {
+			t.Fatalf("resource-derived dependency count=%d, want 0", initialCount)
 		}
 
 		service := wbsapplication.NewServiceWithDependencies(wbsgormrepo.New(database), scheduler, func() time.Time { return now.Add(time.Hour) }, func() (string, error) { return "unused", nil })
@@ -574,8 +676,6 @@ type acceptanceDependencyRecord struct {
 	ID             string `gorm:"primaryKey"`
 	BlockingTaskID string
 	BlockedTaskID  string
-	ManualOwned    bool
-	AutomaticOwned bool
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
 }
@@ -747,7 +847,7 @@ func TestAutomaticSchedulingWorkflowGeneratesDatesOwnershipAndLag_AC2_AC9_AC11_A
 	if err != nil {
 		t.Fatal(err)
 	}
-	if shared == nil || !shared.ManualOwned || shared.AutomaticOwned {
+	if shared == nil {
 		t.Fatalf("manual create result=%#v, want manual-only relation", shared)
 	}
 	var endpointCount int64
@@ -779,8 +879,8 @@ func TestAutomaticSchedulingWorkflowGeneratesDatesOwnershipAndLag_AC2_AC9_AC11_A
 	assertDate(t, "lagged low task start", afterLag.ExecutionStart, "2026-08-04")
 	assertDate(t, "lagged low task end", afterLag.ExecutionEnd, "2026-08-04")
 	afterRelation := loadAcceptanceDependency(t, database, "high-task", "low-task")
-	if afterRelation.ID != shared.ID || !afterRelation.ManualOwned || afterRelation.AutomaticOwned {
-		t.Fatalf("ownership after Lag=%#v, want same manual relation after stale automatic ownership is removed", afterRelation)
+	if afterRelation.ID != shared.ID {
+		t.Fatalf("dependency after Lag=%#v, want same manual relation", afterRelation)
 	}
 	endpointCount = 0
 	if err := database.Model(&acceptanceDependencyRecord{}).

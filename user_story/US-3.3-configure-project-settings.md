@@ -1,5 +1,12 @@
 # US-3.3 — Configure Project Settings
 
+> **Product decision update — US-6.4:** Automatic Scheduling no longer activates
+> Auto Dependency by Assignee. The setting controls generated
+> Execution/Commitment timelines and capacity allocation only. No automatic
+> dependency toggle, ownership, reconciliation, or preserved automatic state
+> exists after the US-6.4 migration. This supersedes contradictory wording in
+> this story.
+
 > **Product decision update — US-6.2:** Locked Project Settings are fully
 > read-only. Project Name rename remains allowed as the non-scheduling
 > Project-field exception owned by US-3.1; it does not make Settings editable.

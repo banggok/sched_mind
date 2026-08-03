@@ -1,5 +1,4 @@
 export type DependencyDirection = "blockedBy" | "blocks";
-export type DependencySource = "manual" | "automatic" | "both";
 
 export interface DependencyTask {
   id: string;
@@ -13,8 +12,6 @@ export interface DependencyTask {
 
 export interface DependencyRelation {
   id: string;
-  source: DependencySource;
-  manualRemovable: boolean;
   task: DependencyTask;
 }
 

@@ -37,7 +37,6 @@ export interface PortfolioDependency {
   id: string;
   blockingTaskId: string;
   blockedTaskId: string;
-  source: "manual" | "automatic" | "both";
 }
 
 export interface PortfolioHoliday {

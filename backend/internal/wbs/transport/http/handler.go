@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"time"
 
-	dependencydomain "github.com/banggok/sched_mind/backend/internal/dependencies/domain"
 	schedulingdomain "github.com/banggok/sched_mind/backend/internal/scheduling/domain"
 	"github.com/banggok/sched_mind/backend/internal/shared/httpjson"
 	"github.com/banggok/sched_mind/backend/internal/shared/schedulingimpact"
@@ -96,28 +95,8 @@ type item struct {
 	Executable  executableItem `json:"executable"`
 	Children    []item         `json:"children"`
 }
-type schedulePreviewTaskItem struct {
-	ID            string  `json:"id"`
-	Name          string  `json:"name"`
-	ProjectID     string  `json:"projectId"`
-	ProjectName   string  `json:"projectName"`
-	HierarchyPath string  `json:"hierarchyPath"`
-	Completed     bool    `json:"completed"`
-	ExpectedStart *string `json:"expectedStart"`
-}
-type schedulePreviewRelationItem struct {
-	ID              string                  `json:"id"`
-	Source          string                  `json:"source"`
-	ManualRemovable bool                    `json:"manualRemovable"`
-	Task            schedulePreviewTaskItem `json:"task"`
-}
-type schedulePreviewDependencyDetail struct {
-	BlockedBy []schedulePreviewRelationItem `json:"blockedBy"`
-	Blocks    []schedulePreviewRelationItem `json:"blocks"`
-}
 type schedulePreviewItem struct {
-	Task         item                            `json:"task"`
-	Dependencies schedulePreviewDependencyDetail `json:"dependencies"`
+	Task item `json:"task"`
 }
 type allocationRowItem struct {
 	Date                         string `json:"date"`
@@ -285,42 +264,8 @@ func (h *Handler) previewExecutable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpjson.Write(w, http.StatusOK, response{schedulePreviewItem{
-		Task:         mapNode(*value.Task),
-		Dependencies: mapSchedulePreviewDependencies(value.Dependencies),
+		Task: mapNode(*value.Task),
 	}})
-}
-
-func mapSchedulePreviewDependencies(value dependencydomain.Detail) schedulePreviewDependencyDetail {
-	return schedulePreviewDependencyDetail{
-		BlockedBy: mapSchedulePreviewRelations(value.BlockedBy),
-		Blocks:    mapSchedulePreviewRelations(value.Blocks),
-	}
-}
-
-func mapSchedulePreviewRelations(values []dependencydomain.Item) []schedulePreviewRelationItem {
-	items := make([]schedulePreviewRelationItem, 0, len(values))
-	for _, value := range values {
-		var expectedStart *string
-		if value.Task.ExpectedStart != nil {
-			formatted := value.Task.ExpectedStart.Format("2006-01-02")
-			expectedStart = &formatted
-		}
-		items = append(items, schedulePreviewRelationItem{
-			ID:              value.Dependency.ID,
-			Source:          string(value.Dependency.Source()),
-			ManualRemovable: value.Dependency.ManualRemovable(),
-			Task: schedulePreviewTaskItem{
-				ID:            value.Task.ID,
-				Name:          value.Task.Name,
-				ProjectID:     value.Task.ProjectID,
-				ProjectName:   value.Task.ProjectName,
-				HierarchyPath: value.Task.HierarchyPath,
-				Completed:     value.Task.ActualStart != nil && value.Task.ActualEnd != nil,
-				ExpectedStart: expectedStart,
-			},
-		})
-	}
-	return items
 }
 
 func (h *Handler) complete(w http.ResponseWriter, r *http.Request) {
@@ -556,7 +501,7 @@ func writeError(w http.ResponseWriter, err error) {
 		status, code = 400, "WBS_EXECUTABLE_INVALID"
 	case errors.Is(err, schedulingdomain.ErrConcurrentConflict):
 		status, code = 409, "SCHEDULING_CONFLICT"
-	case errors.Is(err, schedulingdomain.ErrDataIntegrity), errors.Is(err, schedulingdomain.ErrNoConvergence):
+	case errors.Is(err, schedulingdomain.ErrDataIntegrity):
 		status, code = 409, "SCHEDULING_DATA_INTEGRITY_CONFLICT"
 	}
 	message := err.Error()

@@ -1,8 +1,4 @@
 import { schedulingImpactFetch } from "../../../shared/infrastructure/schedulingImpactFetch";
-import type {
-  DependencyDetail,
-  DependencyRelation,
-} from "../../dependencies/domain/dependency";
 import {
   WBSOperationError,
   type AllocationGroups,
@@ -226,12 +222,11 @@ function mapSchedulePreview(
   projectId: string,
   id: string,
 ): SchedulePreview {
-  if (!isRecord(value) || !("task" in value) || !("dependencies" in value)) {
+  if (!isRecord(value) || !("task" in value)) {
     throw new Error(invalidResponseMessage);
   }
   return {
     task: mapPreviewNode(value.task, projectId, id),
-    dependencies: mapPreviewDependencies(value.dependencies),
   };
 }
 
@@ -250,54 +245,6 @@ function mapPreviewNode(
     throw new Error(invalidResponseMessage);
   }
   return preview;
-}
-
-function mapPreviewDependencies(value: unknown): DependencyDetail {
-  if (
-    !isRecord(value) ||
-    !Array.isArray(value.blockedBy) ||
-    !Array.isArray(value.blocks)
-  ) {
-    throw new Error(invalidResponseMessage);
-  }
-  return {
-    blockedBy: value.blockedBy.map(mapPreviewRelation),
-    blocks: value.blocks.map(mapPreviewRelation),
-  };
-}
-
-function mapPreviewRelation(value: unknown): DependencyRelation {
-  if (
-    !isRecord(value) ||
-    typeof value.id !== "string" ||
-    (value.source !== "manual" &&
-      value.source !== "automatic" &&
-      value.source !== "both") ||
-    typeof value.manualRemovable !== "boolean" ||
-    !isRecord(value.task) ||
-    typeof value.task.id !== "string" ||
-    typeof value.task.name !== "string" ||
-    typeof value.task.projectId !== "string" ||
-    typeof value.task.projectName !== "string" ||
-    typeof value.task.hierarchyPath !== "string" ||
-    typeof value.task.completed !== "boolean"
-  ) {
-    throw new Error(invalidResponseMessage);
-  }
-  return {
-    id: value.id,
-    source: value.source,
-    manualRemovable: value.manualRemovable,
-    task: {
-      id: value.task.id,
-      name: value.task.name,
-      projectId: value.task.projectId,
-      projectName: value.task.projectName,
-      hierarchyPath: value.task.hierarchyPath,
-      completed: value.task.completed,
-      expectedStart: optionalString(value.task.expectedStart),
-    },
-  };
 }
 
 function mapReopenedNode(

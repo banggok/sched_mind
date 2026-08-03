@@ -132,7 +132,9 @@ func run(config *configuration) (runError error) {
 	if err := rolepostgres.Migrate(database); err != nil {
 		return fmt.Errorf("migrate database: %w", err)
 	}
-	if err := teammemberpostgres.Migrate(database); err != nil {
+	schedulingRepository := schedulinggormrepo.New(database)
+	schedulingService := schedulingapplication.NewService(schedulingRepository)
+	if err := teammemberpostgres.MigrateWithPostStep(database, schedulingService.RecalculateActiveProjects); err != nil {
 		return fmt.Errorf("migrate team member database: %w", err)
 	}
 
@@ -144,8 +146,6 @@ func run(config *configuration) (runError error) {
 	if config.location == nil {
 		return errors.New("application timezone is nil")
 	}
-	schedulingRepository := schedulinggormrepo.New(database)
-	schedulingService := schedulingapplication.NewService(schedulingRepository)
 	teamMemberService := teammemberapplication.NewServiceWithScheduler(teamMemberRepository, schedulingService)
 	publicHolidayService := publicholidayapplication.NewServiceWithScheduler(
 		publicHolidayRepository,

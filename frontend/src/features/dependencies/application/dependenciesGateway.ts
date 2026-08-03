@@ -26,7 +26,6 @@ export interface DependenciesGateway {
   ): Promise<DependencyCandidatePage>;
   create(blockingTaskId: string, blockedTaskId: string): Promise<void>;
   remove(dependencyId: string): Promise<void>;
-  keepAsManual(dependencyId: string): Promise<void>;
   invalidateTask(taskId: string): void;
   invalidateAll(): void;
 }

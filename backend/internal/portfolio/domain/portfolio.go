@@ -90,7 +90,6 @@ type Dependency struct {
 	ID             string
 	BlockingTaskID string
 	BlockedTaskID  string
-	Source         string
 }
 
 type Holiday struct {

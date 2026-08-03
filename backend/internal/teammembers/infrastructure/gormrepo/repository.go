@@ -160,8 +160,13 @@ func (repository *Repository) DeleteIfNoActiveTask(ctx context.Context, id strin
 			return fmt.Errorf("lock team member for delete: %w", err)
 		}
 		var activeAssignments int64
-		if err := tx.Model(&executableLeafModel{}).
-			Where("assignee_id = ?", id).Count(&activeAssignments).Error; err != nil {
+		if err := tx.Table("wbs_nodes AS task").
+			Joins("JOIN projects AS project ON project.id = task.project_id").
+			Where("task.assignee_id = ?", id).
+			Where("project.status <> ?", "closed").
+			Where("NOT EXISTS (?)", tx.Table("wbs_nodes AS child").Select("1").
+				Where("child.project_id = task.project_id AND child.parent_id = task.id")).
+			Count(&activeAssignments).Error; err != nil {
 			return fmt.Errorf("count active task assignments: %w", err)
 		}
 		if activeAssignments > 0 {

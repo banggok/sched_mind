@@ -7,7 +7,7 @@ var (
 	ErrParentNotFound             = errors.New("parent WBS was not found")
 	ErrProjectNotFound            = errors.New("project was not found")
 	ErrNameRequired               = errors.New("WBS name is required")
-	ErrNameTooLong                = errors.New("WBS name must be 100 characters or fewer")
+	ErrNameTooLong                = errors.New("WBS name must be 200 characters or fewer")
 	ErrNameExists                 = errors.New("a sibling WBS with this name already exists")
 	ErrHasChildren                = errors.New("move or delete this WBS's children first")
 	ErrCycle                      = errors.New("WBS cannot be moved under itself or its descendant")

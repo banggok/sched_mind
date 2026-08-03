@@ -10,7 +10,8 @@ func MigrateTestSchema(database *gorm.DB) error {
 		return transaction.AutoMigrate(
 			&roleModel{},
 			&teamMemberModel{},
-			&executableLeafModel{},
+			&assignmentProjectModel{},
+			&assignmentWBSNodeModel{},
 			&capacityOverrideModel{},
 		)
 	})
@@ -21,9 +22,10 @@ func CreateRoleForTest(database *gorm.DB, id, name string) error {
 }
 
 func AssignTaskForTest(database *gorm.DB, id, memberID string) error {
-	return database.Create(
-		&executableLeafModel{ID: id, AssigneeID: memberID},
-	).Error
+	if err := database.FirstOrCreate(&assignmentProjectModel{ID: "assignment-project", Status: "open"}, "id = ?", "assignment-project").Error; err != nil {
+		return err
+	}
+	return database.Create(&assignmentWBSNodeModel{ID: id, ProjectID: "assignment-project", AssigneeID: &memberID}).Error
 }
 
 func CreateOverrideForTest(database *gorm.DB, id, memberID string) error {
