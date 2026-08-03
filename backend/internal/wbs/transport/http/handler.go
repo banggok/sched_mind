@@ -40,21 +40,23 @@ type writeRequest struct {
 	ConfirmConversion bool    `json:"confirmConversion"`
 }
 type executableRequest struct {
-	Name            *string         `json:"name"`
-	RoleID          *string         `json:"roleId"`
-	AssigneeID      *string         `json:"assigneeId"`
-	EffortHours     *float64        `json:"effortHours"`
-	LagDays         json.RawMessage `json:"lag"`
-	ExecutionStart  *string         `json:"executionStart"`
-	ExecutionEnd    *string         `json:"executionEnd"`
-	CommitmentStart *string         `json:"commitmentStart"`
-	CommitmentEnd   *string         `json:"commitmentEnd"`
+	Name                         *string         `json:"name"`
+	RoleID                       *string         `json:"roleId"`
+	AssigneeID                   *string         `json:"assigneeId"`
+	EffortHours                  *float64        `json:"effortHours"`
+	LagDays                      json.RawMessage `json:"lag"`
+	CapacityAllocationPercentage json.RawMessage `json:"capacityAllocationPercentage"`
+	ExecutionStart               *string         `json:"executionStart"`
+	ExecutionEnd                 *string         `json:"executionEnd"`
+	CommitmentStart              *string         `json:"commitmentStart"`
+	CommitmentEnd                *string         `json:"commitmentEnd"`
 }
 type previewExecutableRequest struct {
-	RoleID      *string         `json:"roleId"`
-	AssigneeID  *string         `json:"assigneeId"`
-	EffortHours *float64        `json:"effortHours"`
-	LagDays     json.RawMessage `json:"lag"`
+	RoleID                       *string         `json:"roleId"`
+	AssigneeID                   *string         `json:"assigneeId"`
+	EffortHours                  *float64        `json:"effortHours"`
+	LagDays                      json.RawMessage `json:"lag"`
+	CapacityAllocationPercentage json.RawMessage `json:"capacityAllocationPercentage"`
 }
 
 type commandRequest struct {
@@ -72,16 +74,17 @@ type timelineItem struct {
 	End   *string `json:"end,omitempty"`
 }
 type executableItem struct {
-	RoleID                      *string      `json:"roleId,omitempty"`
-	AssigneeID                  *string      `json:"assigneeId,omitempty"`
-	EffortMinutes               *int         `json:"effortMinutes,omitempty"`
-	LagDays                     int          `json:"lag"`
-	ExecutionTimeline           timelineItem `json:"executionTimeline"`
-	CommitmentTimeline          timelineItem `json:"commitmentTimeline"`
-	ExecutionUnscheduledReason  *string      `json:"executionUnscheduledReason,omitempty"`
-	CommitmentUnscheduledReason *string      `json:"commitmentUnscheduledReason,omitempty"`
-	ActualStart                 *string      `json:"actualStart,omitempty"`
-	ActualEnd                   *string      `json:"actualEnd,omitempty"`
+	RoleID                       *string      `json:"roleId,omitempty"`
+	AssigneeID                   *string      `json:"assigneeId,omitempty"`
+	EffortMinutes                *int         `json:"effortMinutes,omitempty"`
+	LagDays                      int          `json:"lag"`
+	CapacityAllocationPercentage int          `json:"capacityAllocationPercentage"`
+	ExecutionTimeline            timelineItem `json:"executionTimeline"`
+	CommitmentTimeline           timelineItem `json:"commitmentTimeline"`
+	ExecutionUnscheduledReason   *string      `json:"executionUnscheduledReason,omitempty"`
+	CommitmentUnscheduledReason  *string      `json:"commitmentUnscheduledReason,omitempty"`
+	ActualStart                  *string      `json:"actualStart,omitempty"`
+	ActualEnd                    *string      `json:"actualEnd,omitempty"`
 }
 type item struct {
 	ID          string         `json:"id"`
@@ -117,11 +120,13 @@ type schedulePreviewItem struct {
 	Dependencies schedulePreviewDependencyDetail `json:"dependencies"`
 }
 type allocationRowItem struct {
-	Date                string `json:"date"`
-	AllocatedMinutes    int    `json:"allocatedMinutes"`
-	CapacityMinutes     int    `json:"capacityMinutes"`
-	RemainingMinutes    int    `json:"remainingMinutes"`
-	OvercapacityMinutes int    `json:"overcapacityMinutes"`
+	Date                         string `json:"date"`
+	AllocatedMinutes             int    `json:"allocatedMinutes"`
+	CapacityMinutes              int    `json:"capacityMinutes"`
+	RemainingMinutes             int    `json:"remainingMinutes"`
+	OvercapacityMinutes          int    `json:"overcapacityMinutes"`
+	CapacityAllocationPercentage int    `json:"capacityAllocationPercentage"`
+	TaskDailyLimitMinutes        int    `json:"taskDailyLimitMinutes"`
 }
 type allocationGroupsItem struct {
 	Execution  []allocationRowItem `json:"execution"`
@@ -235,7 +240,11 @@ func (h *Handler) executable(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	v, e := h.service.UpdateExecutable(r.Context(), r.PathValue("projectId"), r.PathValue("wbsId"), application.WriteExecutableInput{Name: p.Name, RoleID: p.RoleID, AssigneeID: p.AssigneeID, EffortMinutes: minutes, LagDays: lagDays, Execution: execution, Commitment: commitment})
+	percentage, ok := parseCapacityAllocation(w, p.CapacityAllocationPercentage, true)
+	if !ok {
+		return
+	}
+	v, e := h.service.UpdateExecutable(r.Context(), r.PathValue("projectId"), r.PathValue("wbsId"), application.WriteExecutableInput{Name: p.Name, RoleID: p.RoleID, AssigneeID: p.AssigneeID, EffortMinutes: minutes, LagDays: lagDays, CapacityAllocationPercentage: percentage, Execution: execution, Commitment: commitment})
 	if e != nil {
 		writeError(w, e)
 		return
@@ -255,15 +264,20 @@ func (h *Handler) previewExecutable(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	percentage, ok := parseCapacityAllocation(w, p.CapacityAllocationPercentage, false)
+	if !ok {
+		return
+	}
 	value, err := h.service.PreviewExecutableSchedule(
 		r.Context(),
 		r.PathValue("projectId"),
 		r.PathValue("wbsId"),
 		application.PreviewExecutableInput{
-			RoleID:        p.RoleID,
-			AssigneeID:    p.AssigneeID,
-			EffortMinutes: minutes,
-			LagDays:       lagDays,
+			RoleID:                       p.RoleID,
+			AssigneeID:                   p.AssigneeID,
+			EffortMinutes:                minutes,
+			LagDays:                      lagDays,
+			CapacityAllocationPercentage: *percentage,
 		},
 	)
 	if err != nil {
@@ -430,6 +444,22 @@ func parseLag(w http.ResponseWriter, raw json.RawMessage) (int, bool) {
 	return value, true
 }
 
+func parseCapacityAllocation(w http.ResponseWriter, raw json.RawMessage, optional bool) (*int, bool) {
+	if len(raw) == 0 {
+		if optional {
+			return nil, true
+		}
+		value := 100
+		return &value, true
+	}
+	var value int
+	if string(raw) == "null" || json.Unmarshal(raw, &value) != nil || value < 1 || value > 100 {
+		httpjson.Write(w, 422, errorResponse{"INVALID_TASK_CAPACITY_ALLOCATION", domain.ErrCapacityAllocationInvalid.Error(), "capacityAllocationPercentage"})
+		return nil, false
+	}
+	return &value, true
+}
+
 func timeline(w http.ResponseWriter, start, end *string) (domain.Timeline, bool) {
 	parse := func(v *string) (*time.Time, error) {
 		if v == nil {
@@ -520,6 +550,8 @@ func writeError(w http.ResponseWriter, err error) {
 		status, code = 409, "WBS_MOVE_NOT_ALLOWED"
 	case errors.Is(err, domain.ErrLagInvalid):
 		status, code = 400, "INVALID_LAG"
+	case errors.Is(err, domain.ErrCapacityAllocationInvalid):
+		status, code = 422, "INVALID_TASK_CAPACITY_ALLOCATION"
 	case errors.Is(err, domain.ErrEffortInvalid) || errors.Is(err, domain.ErrTimelinePair) || errors.Is(err, domain.ErrTimelineOrder):
 		status, code = 400, "WBS_EXECUTABLE_INVALID"
 	case errors.Is(err, schedulingdomain.ErrConcurrentConflict):
@@ -546,11 +578,13 @@ func mapAllocationRows(values []application.AllocationRow) []allocationRowItem {
 	items := make([]allocationRowItem, 0, len(values))
 	for _, value := range values {
 		items = append(items, allocationRowItem{
-			Date:                value.Date.Format("2006-01-02"),
-			AllocatedMinutes:    value.AllocatedMinutes,
-			CapacityMinutes:     value.CapacityMinutes,
-			RemainingMinutes:    value.RemainingMinutes,
-			OvercapacityMinutes: value.OvercapacityMinutes,
+			Date:                         value.Date.Format("2006-01-02"),
+			AllocatedMinutes:             value.AllocatedMinutes,
+			CapacityMinutes:              value.CapacityMinutes,
+			RemainingMinutes:             value.RemainingMinutes,
+			OvercapacityMinutes:          value.OvercapacityMinutes,
+			CapacityAllocationPercentage: value.CapacityAllocationPercentage,
+			TaskDailyLimitMinutes:        value.TaskDailyLimitMinutes,
 		})
 	}
 	return items
@@ -569,16 +603,17 @@ func mapReopenNode(value domain.Node) map[string]any {
 		"position":    value.Position,
 		"hasChildren": value.HasChildren,
 		"executable": map[string]any{
-			"roleId":                      value.Executable.RoleID,
-			"assigneeId":                  value.Executable.AssigneeID,
-			"effortMinutes":               value.Executable.EffortMinutes,
-			"lag":                         value.Executable.LagDays,
-			"executionTimeline":           timelineItem{Start: date(value.Executable.ExecutionTimeline.Start), End: date(value.Executable.ExecutionTimeline.End)},
-			"commitmentTimeline":          timelineItem{Start: date(value.Executable.CommitmentTimeline.Start), End: date(value.Executable.CommitmentTimeline.End)},
-			"executionUnscheduledReason":  value.Executable.ExecutionUnscheduledReason,
-			"commitmentUnscheduledReason": value.Executable.CommitmentUnscheduledReason,
-			"actualStart":                 date(value.Executable.ActualStart),
-			"actualEnd":                   date(value.Executable.ActualEnd),
+			"roleId":                       value.Executable.RoleID,
+			"assigneeId":                   value.Executable.AssigneeID,
+			"effortMinutes":                value.Executable.EffortMinutes,
+			"lag":                          value.Executable.LagDays,
+			"capacityAllocationPercentage": value.Executable.CapacityAllocationPercentage,
+			"executionTimeline":            timelineItem{Start: date(value.Executable.ExecutionTimeline.Start), End: date(value.Executable.ExecutionTimeline.End)},
+			"commitmentTimeline":           timelineItem{Start: date(value.Executable.CommitmentTimeline.Start), End: date(value.Executable.CommitmentTimeline.End)},
+			"executionUnscheduledReason":   value.Executable.ExecutionUnscheduledReason,
+			"commitmentUnscheduledReason":  value.Executable.CommitmentUnscheduledReason,
+			"actualStart":                  date(value.Executable.ActualStart),
+			"actualEnd":                    date(value.Executable.ActualEnd),
 		},
 		"children": children,
 	}
@@ -589,7 +624,7 @@ func mapNode(value domain.Node) item {
 	for _, child := range value.Children {
 		children = append(children, mapNode(child))
 	}
-	return item{ID: value.ID, ProjectID: value.ProjectID, ParentID: value.ParentID, Name: value.Name, Position: value.Position, HasChildren: value.HasChildren, Executable: executableItem{RoleID: value.Executable.RoleID, AssigneeID: value.Executable.AssigneeID, EffortMinutes: value.Executable.EffortMinutes, LagDays: value.Executable.LagDays, ExecutionTimeline: timelineItem{Start: date(value.Executable.ExecutionTimeline.Start), End: date(value.Executable.ExecutionTimeline.End)}, CommitmentTimeline: timelineItem{Start: date(value.Executable.CommitmentTimeline.Start), End: date(value.Executable.CommitmentTimeline.End)}, ExecutionUnscheduledReason: value.Executable.ExecutionUnscheduledReason, CommitmentUnscheduledReason: value.Executable.CommitmentUnscheduledReason, ActualStart: date(value.Executable.ActualStart), ActualEnd: date(value.Executable.ActualEnd)}, Children: children}
+	return item{ID: value.ID, ProjectID: value.ProjectID, ParentID: value.ParentID, Name: value.Name, Position: value.Position, HasChildren: value.HasChildren, Executable: executableItem{RoleID: value.Executable.RoleID, AssigneeID: value.Executable.AssigneeID, EffortMinutes: value.Executable.EffortMinutes, LagDays: value.Executable.LagDays, CapacityAllocationPercentage: value.Executable.CapacityAllocationPercentage, ExecutionTimeline: timelineItem{Start: date(value.Executable.ExecutionTimeline.Start), End: date(value.Executable.ExecutionTimeline.End)}, CommitmentTimeline: timelineItem{Start: date(value.Executable.CommitmentTimeline.Start), End: date(value.Executable.CommitmentTimeline.End)}, ExecutionUnscheduledReason: value.Executable.ExecutionUnscheduledReason, CommitmentUnscheduledReason: value.Executable.CommitmentUnscheduledReason, ActualStart: date(value.Executable.ActualStart), ActualEnd: date(value.Executable.ActualEnd)}, Children: children}
 }
 func date(value *time.Time) *string {
 	if value == nil {

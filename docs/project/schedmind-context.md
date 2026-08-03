@@ -18,6 +18,13 @@ future context are not permission to implement them.
 
 ## Current implemented scope
 
+> **Implemented scheduling revision — 2026-08-03:** US-6.3 Task Capacity
+> Allocation Percentage and the accompanying US-6.2 Actual Allocation revision
+> are implemented across WBS persistence/API/UI, concurrent planned scheduling,
+> manual fixed allocation, Actual-Date-only allocation, migration, and automated
+> evidence. Detailed traceability is maintained in
+> [`task-capacity-allocation-implementation-evidence.md`](task-capacity-allocation-implementation-evidence.md).
+
 The current product manages:
 
 - Roles used to classify Members and Tasks;
@@ -44,6 +51,7 @@ Detailed rules are owned by:
 - [US-5.1 Manage Dependency](../../user_story/US-5.1-manage-dependency.md)
 - [US-6.1 Automatic Scheduling](../../user_story/US-6.1-automatic-scheduling.md)
 - [US-6.2 Locked Project and Completed Task Scheduling](../../user_story/US-6.2-locked-project-and-completed-task-scheduling.md)
+- [US-6.3 Task Capacity Allocation Percentage](../../user_story/US-6.3-task-capacity-allocation.md)
 - [US-7.1 Home Portfolio Gantt Workspace](../../user_story/US-7.1-home-portfolio-gantt.md)
 
 The primary product actor in these stories is the Engineering Lead.
@@ -128,13 +136,36 @@ US-3.3 and US-6.1.
 
 ### WBS, dependency ownership, and scheduling
 
-Executable Tasks own Assignee, Effort, and non-negative integer Lag. Execution
-and Commitment dates are generated independently when Automatic Scheduling is
-ON and are treated as retained manual values when it is OFF. Dependency endpoint
-pairs are stored once and may be manual-owned, automatic-owned, or both. Removing
-manual ownership never removes scheduler-required automatic ownership.
+Executable Tasks own Assignee, Effort, non-negative integer Lag, and Task
+Capacity Allocation Percentage. The percentage is a persisted integer `1–100`
+with default `100`; it is a maximum planned allocation per Date, not a guaranteed
+reservation or priority. Existing Executable WBS records must be migrated to
+`100`, explicit `0` is invalid, legacy create omission becomes `100`, and update
+omission preserves the existing value. Changing/clearing Assignee resets the
+draft/default according to US-6.3. Execution and Commitment dates are generated
+independently when Automatic Scheduling is ON and are treated as retained manual
+values when it is OFF. Dependency endpoint pairs are stored once and may be
+manual-owned, automatic-owned, or both. Removing manual ownership never removes
+scheduler-required automatic ownership.
 
-The concrete scheduler supports shared capacity and cross-project dependency, but each mutation recalculates only its transitive impacted scheduling scope. Open unfinished Tasks may change; Locked Projects are immutable outputs and unrelated Projects are not recalculated or version-updated. Dependency readiness is applied before Project Priority and depth-first WBS order. Execution and Commitment allocation remain whole-Task scheduling projections. Completed Tasks use complete Actual Date, with Actual End as readiness anchor. Actual Allocation uses working dates and BAU Resolved Daily Capacity before buffers, may represent historical overcapacity, and never carries excess debt to later Dates.
+The concrete scheduler supports shared capacity and cross-project dependency,
+but each mutation recalculates only its transitive impacted scheduling scope.
+Open unfinished Tasks may change; Locked Projects are immutable outputs and
+unrelated Projects are not recalculated or version-updated. Dependency readiness
+is applied before Project Priority and depth-first WBS order. A Task's percentage
+is applied only after final Execution/Commitment capacity is independently
+resolved and rounded; later ordered Tasks may use remaining capacity on the same
+Date, so same-assignee planned allocations may overlap. Automatic allocation
+remains capacity-safe, while manual fixed allocation may represent planned
+overcapacity and is honoured by automatic Projects sharing the Assignee.
+Completed Tasks use complete Actual Date, with Actual End as readiness anchor.
+Actual Allocation ignores planned percentage and uses only eligible Dates inside
+Actual Start–Actual End. It competes only with other completed Actual Allocation
+for the same Assignee/Date, distributes in `0.5h` balanced shares, recalculates
+remaining shares after constrained Dates, backfills spare BAU capacity, then
+levels unavoidable total overcapacity with a latest-Date tie-breaker. Existing
+completed Actual rows remain immutable, and overcapacity never becomes debt on
+later Dates.
 For an Open unfinished Task, scheduling-field blur can run the same concrete
 scheduler as a rollback-only draft preview so generated dates are visible before
 Save; changing Assignee recalculates dates and dependency ownership, while
@@ -146,7 +177,13 @@ US-4.3 defines the approved View Group and Edit Project summary behaviour. Proje
 Edit Project composes this summary after Project fields using the existing shared wide Dialog variant. Add Project remains summary-free. If the Project WBS tree is not already fresh in cache, only the summary region loads or retries; Project form draft and Save/Cancel remain independent. Existing Project `startDate`/`endDate` are not substitutes for the separate recursive timeline summaries.
 
 
-Actual Allocation is a canonical daily attribution projection with two read directions: Task-centric (which Dates/capacity an assignee spent for one Task) and assignee-centric (which Tasks consumed one assignee's capacity on a Date). Current scope exposes Task-centric Execution/Commitment/Actual allocation for verification; assignee analytics UI is deferred. Historical Actual ranges may overlap dependency ranges after every predecessor is already completed.
+Actual Allocation is a canonical daily attribution projection with two read
+directions: Task-centric (which Dates/capacity an assignee spent for one Task)
+and assignee-centric (which Tasks consumed one assignee's capacity on a Date).
+Current scope exposes Task-centric Execution/Commitment/Actual allocation for
+verification; assignee analytics UI is deferred. Historical Actual ranges may
+overlap dependency ranges after every predecessor is already completed. Planned
+Task percentage is displayed for verification but never caps Actual Allocation.
 
 Forecast coordination remains separate and Locked Project Forecast behavior is deferred. Actual Date on Open Project actualizes planned dates and creates Actual Allocation; Actual Date on Locked Project preserves protected baseline while its allocation may recalculate impacted Open Projects. Reopen Task clears both Actual fields and is allowed only while Project Open. US-7.1 now owns the approved Home Portfolio Gantt target. Freeze-date behavior, Delivery Impact calculation, Project Health, historical Gantt, and reporting remain deferred unless an authoritative story states otherwise.
 

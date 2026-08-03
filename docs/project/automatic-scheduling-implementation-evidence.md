@@ -4,6 +4,15 @@ This document records the static implementation handoff for the frozen requireme
 
 No automated validation was executed in the sandbox. Every command below is for local execution.
 
+> **Requirement supersession notice — 2026-08-03:** US-6.3 introduces Task
+> Capacity Allocation Percentage and concurrent same-assignee planned allocation,
+> and US-6.2 now uses Actual-Date-only, Actual-versus-Actual balanced/rebalanced Actual Allocation instead of the Execution-baseline/capacity-debt algorithm.
+> The tables below remain the historical US-6.1 baseline and must be interpreted
+> through US-6.3 supersession. Current US-6.3 and revised US-6.2 evidence is
+> recorded in
+> [`task-capacity-allocation-implementation-evidence.md`](task-capacity-allocation-implementation-evidence.md);
+> obsolete serial/non-preemptive test names in this file are not current evidence.
+
 > **Capacity rounding clarification — 2026-07-30:** the current explicit user instruction supersedes the earlier wording in the frozen RD-01 snapshot. Execution Capacity is rounded once after Member Buffer. Commitment Capacity is calculated independently from Resolved Daily Capacity after Member Buffer and Project Buffer, then rounded once. Both final capacities use the nearest `0.5` hour.
 >
 > **WBS create-trigger clarification — 2026-07-31:** a Name-only root or child create is not a scheduling-relevant mutation. It persists an empty Task without invoking portfolio recalculation. Create remains a trigger only when it also performs executable-to-group structural conversion and moves executable state or dependency endpoints.

@@ -20,6 +20,13 @@
 > allocation for verification. Any other WBS/Task mutation requires explicit
 > Project Reopen to Open.
 
+> **Product decision update — US-6.3:** Executable WBS owns persisted `Capacity
+> Allocation (%)` with default `100` and valid integer range `1–100`. US-6.3
+> owns percentage semantics, migration, planned allocation, and scheduler
+> interaction. This story owns Task-form integration and structural conversion:
+> percentage moves with executable data to a conversion child, while a newly
+> executable WBS defaults to `100`.
+
 ## User Story
 
 **As an** Engineering Lead
@@ -48,7 +55,8 @@ duplicating mutation rules.
 - Create, rename, move and delete WBS
 - Unlimited hierarchy
 - Automatic conversion between Grouping and Executable WBS
-- Manage executable attributes owned by this story: Role, Assignee, Effort, Manual Execution Timeline, Manual Commitment Timeline, Actual Start, Actual End
+- Manage executable attributes owned by this story: Role, Assignee, Effort, Capacity Allocation Percentage integration, Manual Execution Timeline, Manual Commitment Timeline, Actual Start, Actual End
+- Integrate Task Capacity Allocation Percentage from US-6.3 without duplicating its scheduling or migration rules
 - Integrate with Dependency from US-5.1 and Lag/generated dates from US-6.1 without duplicating their business rules
 - Validation, Persistence, API and UI
 
@@ -58,6 +66,7 @@ duplicating mutation rules.
 - Forecast Scheduler
 - Dependency editor and graph rules; owned by US-5.1
 - Lag validation and calculation; owned by US-6.1
+- Task Capacity Allocation Percentage calculation and migration; owned by US-6.3
 - Recursive Group and whole-Project timeline/effort-completion summary; owned by US-4.3
 
 ---
@@ -153,7 +162,7 @@ WBS commands.
 16. Deleting the last child converts the parent to Executable.
 17. With Automatic Scheduling ON, deleting an unfinished Name-only or Role-only leaf with no dependency succeeds without concrete portfolio recalculation and leaves all remaining Task state unchanged. Deleting a Task that has scheduling input, generated projection, or dependency endpoints still invokes affected-scope recalculation.
 18. With Automatic Scheduling OFF, successful deletion preserves remaining manual dates.
-19. Executable WBS supports Role, Assignee, Effort, Manual Execution Timeline, Manual Commitment Timeline, Actual Start, and Actual End.
+19. Executable WBS supports Role, Assignee, Effort, Capacity Allocation Percentage, Manual Execution Timeline, Manual Commitment Timeline, Actual Start, and Actual End.
 20. Grouping WBS cannot own or edit executable fields; View Group may display
     the read-only recursive descendant summary defined by US-4.3.
 21. Manual timeline is editable only when Automatic Scheduling is OFF.
@@ -193,7 +202,7 @@ WBS commands.
 - Delete a Name-only unfinished leaf from a Project that also contains a completed Task and verify deletion succeeds without scheduler invocation or changes to remaining Task state.
 - Delete a Task with scheduling input, generated projection, or dependency endpoints while Automatic Scheduling is ON and verify affected Execution/Commitment dates are recalculated.
 - Delete with Automatic Scheduling OFF and verify remaining manual dates are unchanged.
-- Edit executable attributes.
+- Edit executable attributes, including Capacity Allocation Percentage.
 - Enter complete Actual Date and verify allocation.
 
 ### Validation
@@ -243,9 +252,11 @@ WBS commands.
 ## Scheduling Ownership
 
 US-4.1 owns WBS mutation, validation, persistence, and trigger coordination.
-US-6.1 owns concrete Execution/Commitment scheduling, daily allocation, Lag, and
-Auto Dependency. US-4.1 must call the concrete scheduler when available and may
-not claim completion from a no-op adapter after US-6.1 is implemented.
+US-6.1 owns concrete Execution/Commitment scheduling, capacity resolution, Lag,
+and shared scheduler orchestration. US-6.3 owns Task Capacity Allocation
+Percentage, concurrent planned allocation, manual fixed allocation, and revised
+safe Auto Dependency behaviour. US-4.1 must call the concrete scheduler when
+available and may not claim completion from a no-op adapter.
 
 ---
 
@@ -265,8 +276,8 @@ not claim completion from a no-op adapter after US-6.1 is implemented.
 - Manual timeline only when Automatic Scheduling is OFF and Project Open.
 - Locked Project rejects every WBS/Task planning and structural mutation. Actual Date entry is the only Task mutation exception; protected timeline stays unchanged while Actual Allocation may recalculate impacted Open Projects.
 - For an Open unfinished Task with Automatic Scheduling ON, leaving Role,
-  Assignee, Effort, or Lag requests the rollback-only schedule preview defined
-  by US-6.1 when Role, valid Effort, and valid Lag are present. Assignee may be
+  Assignee, Effort, Lag, or Capacity Allocation Percentage requests the rollback-only schedule preview defined
+  by US-6.1/US-6.3 when Role, valid Effort, valid Lag, and valid percentage are present. Assignee may be
   selected or explicitly cleared; clearing it still previews automatic-
   dependency reconciliation and the missing-Assignee unscheduled result. Save
   remains the only confirmed Task mutation.
@@ -287,8 +298,9 @@ not claim completion from a no-op adapter after US-6.1 is implemented.
 ### Dependency and Lag
 
 Dependency business rules and editor are owned by US-5.1. Lag persistence,
-validation, UI field, and calculation are owned by US-6.1. US-4.1 must preserve
-both fields during structural conversion and atomic Task mutation but must not
+validation, UI field, and calculation are owned by US-6.1. Task Capacity
+Allocation Percentage is owned by US-6.3. US-4.1 must preserve Lag and
+percentage during structural conversion and atomic Task mutation but must not
 duplicate their domain rules.
 
 ### Manual Timeline
@@ -301,6 +313,7 @@ duplicate their domain rules.
   not a hard validation.
 - Manual dates are editable only for an Open Project with Automatic Scheduling
   OFF.
+- US-6.3 derives fixed manual allocation from these authoritative dates and permits planned overcapacity; cross-Project automatic scheduling must honour that fixed allocation without changing the manual range.
 - The Task form uses shared calendar behaviour. Execution and Commitment each
   use one date-range picker; Actual Date uses one date-range picker requiring both Actual Start and Actual End. These
   calendars share holiday/weekend marking, viewport-aware placement, scroll
@@ -348,7 +361,7 @@ With Automatic Scheduling ON, creating a root or child using only Name does
 not invoke the concrete portfolio scheduler and leaves generated dates empty.
 Create invokes the scheduler only when it also converts an existing Executable
 WBS and moves executable data or dependency endpoints. Sibling reorder, move,
-Assignee change, Effort change, Lag change, and other established structural
+Assignee change, Effort change, Lag change, Capacity Allocation Percentage change, and other established structural
 conversions continue to invoke the concrete portfolio scheduler from US-6.1.
 Delete invokes scheduling only when the removed Task has scheduling input,
 generated projection, or dependency endpoints. Deleting a Name-only or
@@ -412,9 +425,12 @@ The summary does not weaken the rule that Grouping WBS cannot own executable att
 
 ### Capacity Allocation
 
-US-4.1 stores only Effort minutes and date-only manual boundaries. Per-working-
-date allocation projections and all capacity consumption belong to US-6.1 and
-must not be reimplemented inside the WBS feature.
+US-4.1 persists the executable Task field and integrates its form, lifecycle,
+conversion, and atomic mutation behaviour. US-6.3 owns default `100`, integer
+`1–100`, Assignee reset, migration, percentage rounding, concurrent planned
+allocation, manual fixed allocation, and Actual Allocation non-interaction.
+Per-Date projections and capacity consumption must not be reimplemented inside
+the WBS feature.
 
 ### Home WBS Presentation
 

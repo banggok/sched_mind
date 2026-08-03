@@ -24,6 +24,7 @@ type taskModel struct {
 	AssigneeID                     *string
 	EffortMinutes                  *int
 	LagDays                        int
+	CapacityAllocationPercentage   int `gorm:"default:100"`
 	ExecutionStart                 *time.Time
 	ExecutionEnd                   *time.Time
 	CommitmentStart                *time.Time

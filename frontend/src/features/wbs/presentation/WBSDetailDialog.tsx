@@ -67,6 +67,9 @@ export function WBSDetailDialog({
       : "",
   );
   const [lag, setLag] = useState(String(node.executable.lagDays));
+  const [capacityAllocationPercentage, setCapacityAllocationPercentage] =
+    useState(String(node.executable.capacityAllocationPercentage ?? 100));
+  const [capacityAllocationError, setCapacityAllocationError] = useState("");
   const [executionStart, setExecutionStart] = useState(
     node.executable.executionTimeline.start ?? "",
   );
@@ -187,7 +190,10 @@ export function WBSDetailDialog({
       !Number.isFinite(effortHours) ||
       effortHours < 0.5 ||
       !Number.isInteger(effortHours * 2) ||
-      !lagValid
+      !lagValid ||
+      !/^\d+$/.test(capacityAllocationPercentage) ||
+      Number(capacityAllocationPercentage) < 1 ||
+      Number(capacityAllocationPercentage) > 100
     ) {
       clearDraftSchedule(
         "Complete Role, Effort, and valid Lag to preview the schedule.",
@@ -200,6 +206,7 @@ export function WBSDetailDialog({
       assigneeId: assignee || undefined,
       effortHours,
       lagDays: Number(lag),
+      capacityAllocationPercentage: Number(capacityAllocationPercentage),
     };
     const controller = new AbortController();
     previewController.current?.abort();
@@ -273,6 +280,17 @@ export function WBSDetailDialog({
       setError("Lag must be a non-negative whole number of days.");
       return;
     }
+    if (
+      !/^\d+$/.test(capacityAllocationPercentage) ||
+      Number(capacityAllocationPercentage) < 1 ||
+      Number(capacityAllocationPercentage) > 100
+    ) {
+      setCapacityAllocationError(
+        "Capacity Allocation (%) must be a whole number from 1 to 100.",
+      );
+      return;
+    }
+    setCapacityAllocationError("");
     const lagDays = Number(lag);
     setEffort(normalizedEffort);
     previewController.current?.abort();
@@ -288,6 +306,7 @@ export function WBSDetailDialog({
         assigneeId: assignee || undefined,
         effortHours,
         lagDays,
+        capacityAllocationPercentage: Number(capacityAllocationPercentage),
         executionStart: manual ? executionStart || undefined : undefined,
         executionEnd: manual ? executionEnd || undefined : undefined,
         commitmentStart: manual ? commitmentStart || undefined : undefined,
@@ -445,8 +464,10 @@ export function WBSDetailDialog({
                     if (
                       members.find((m) => m.id === assignee)?.role.id !==
                       e.target.value
-                    )
+                    ) {
                       setAssignee("");
+                      setCapacityAllocationPercentage("100");
+                    }
                   }}
                   onBlur={() => void previewSchedule()}
                 >
@@ -473,6 +494,7 @@ export function WBSDetailDialog({
                   onChange={(e) => {
                     markScheduleDraftChanged();
                     setAssignee(e.target.value);
+                    setCapacityAllocationPercentage("100");
                     const m = members.find((v) => v.id === e.target.value);
                     if (m) setRole(m.role.id);
                   }}
@@ -508,6 +530,29 @@ export function WBSDetailDialog({
                   void previewSchedule({ effort: normalized });
                 }}
               />
+              <div>
+                <FormField
+                  id="detail-capacity-allocation"
+                  name="capacityAllocationPercentage"
+                  label="Capacity Allocation (%)"
+                  type="number"
+                  min={1}
+                  max={100}
+                  step={1}
+                  value={capacityAllocationPercentage}
+                  disabled={readOnly}
+                  error={capacityAllocationError}
+                  help="Maximum planned capacity per day. Remaining capacity may be used by other tasks."
+                  onChange={(event) => {
+                    if (/^\d*$/.test(event.target.value)) {
+                      markScheduleDraftChanged();
+                      setCapacityAllocationError("");
+                      setCapacityAllocationPercentage(event.target.value);
+                    }
+                  }}
+                  onBlur={() => void previewSchedule()}
+                />
+              </div>
               <div>
                 <FormField
                   id="detail-lag"
@@ -688,6 +733,7 @@ export function WBSDetailDialog({
             projectId={project.id}
             taskId={node.id}
             completed={completed}
+            manual={!project.automaticScheduling}
             gateway={gateway}
           />
           {reopenOpen ? (
@@ -755,11 +801,13 @@ function CapacityAllocationSection({
   projectId,
   taskId,
   completed,
+  manual,
   gateway,
 }: {
   projectId: string;
   taskId: string;
   completed: boolean;
+  manual: boolean;
   gateway: WBSGateway;
 }) {
   const [open, setOpen] = useState(false);
@@ -815,10 +863,12 @@ function CapacityAllocationSection({
               <AllocationTable
                 title="Execution Allocation"
                 rows={groups.execution}
+                plannedOvercapacity={manual}
               />
               <AllocationTable
                 title="Commitment Allocation"
                 rows={groups.commitment}
+                plannedOvercapacity={manual}
               />
               {completed ? (
                 <AllocationTable
@@ -839,10 +889,12 @@ function AllocationTable({
   title,
   rows,
   actual = false,
+  plannedOvercapacity = false,
 }: {
   title: string;
   rows: AllocationRow[];
   actual?: boolean;
+  plannedOvercapacity?: boolean;
 }) {
   return (
     <section
@@ -864,8 +916,15 @@ function AllocationTable({
                 <th className="py-2 pr-4">Date</th>
                 <th className="py-2 pr-4">Allocated</th>
                 <th className="py-2 pr-4">Capacity</th>
+                {!actual ? (
+                  <th className="py-2 pr-4">Percentage / daily limit</th>
+                ) : null}
                 <th className="py-2">
-                  {actual ? "Remaining / overcapacity" : "Remaining"}
+                  {actual
+                    ? "Remaining / historical overcapacity"
+                    : plannedOvercapacity
+                      ? "Remaining / planned overcapacity"
+                      : "Remaining"}
                 </th>
               </tr>
             </thead>
@@ -882,9 +941,15 @@ function AllocationTable({
                   <td className="py-2 pr-4">
                     {formatMinutes(row.capacityMinutes)}
                   </td>
+                  {!actual ? (
+                    <td className="py-2 pr-4">
+                      {row.capacityAllocationPercentage}% /{" "}
+                      {formatMinutes(row.taskDailyLimitMinutes)}
+                    </td>
+                  ) : null}
                   <td className="py-2">
                     {row.overcapacityMinutes > 0
-                      ? `${formatMinutes(row.overcapacityMinutes)} overcapacity`
+                      ? `${formatMinutes(row.overcapacityMinutes)} ${actual ? "historical" : "planned"} overcapacity`
                       : `${formatMinutes(row.remainingMinutes)} remaining`}
                   </td>
                 </tr>

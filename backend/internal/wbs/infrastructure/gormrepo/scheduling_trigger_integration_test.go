@@ -44,7 +44,14 @@ func (schedulePreviewAllocationRecord) TableName() string {
 
 func TestUpdateExecutableAndSchedulerShareTransactionRollback_AC27_AC28_AC35(t *testing.T) {
 	repository, database := reopenTestDB(t)
+	if err := database.AutoMigrate(&memberModel{}); err != nil {
+		t.Fatal(err)
+	}
 	now := time.Date(2026, 8, 1, 8, 0, 0, 0, time.UTC)
+	roleID, assigneeID := "role", "member"
+	if err := database.Create(&memberModel{ID: assigneeID, RoleID: roleID}).Error; err != nil {
+		t.Fatal(err)
+	}
 	if err := database.Create(&reopenProjectRecord{
 		ID: "project", Name: "Alpha", NameKey: "alpha", Status: "open", AutomaticScheduling: true,
 	}).Error; err != nil {
@@ -52,17 +59,18 @@ func TestUpdateExecutableAndSchedulerShareTransactionRollback_AC27_AC28_AC35(t *
 	}
 	if err := database.Create(&nodeModel{
 		ID: "task", ProjectID: "project", ParentKey: "", Name: "Task", NameKey: "task",
-		Position: 1, CreatedAt: now, UpdatedAt: now,
+		Position: 1, RoleID: &roleID, AssigneeID: &assigneeID, CreatedAt: now, UpdatedAt: now,
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
 
 	schedulerFailure := errors.New("scheduler persistence failed")
+	percentage := 20
 	_, err := repository.UpdateExecutable(
 		context.Background(),
 		"project",
 		"task",
-		application.WriteExecutableInput{LagDays: 2},
+		application.WriteExecutableInput{RoleID: &roleID, AssigneeID: &assigneeID, LagDays: 2, CapacityAllocationPercentage: &percentage},
 		now.Add(time.Hour),
 		func(ctx context.Context, projectID string) error {
 			if !sharedpersistence.ScheduleMutationSerialized(ctx) {
@@ -76,7 +84,7 @@ func TestUpdateExecutableAndSchedulerShareTransactionRollback_AC27_AC28_AC35(t *
 			if err := transaction.First(&pending, "id = ?", "task").Error; err != nil {
 				t.Fatal(err)
 			}
-			if pending.LagDays != 2 {
+			if pending.LagDays != 2 || pending.CapacityAllocationPercentage != 20 {
 				t.Fatalf("scheduler did not observe pending Lag: %#v", pending)
 			}
 			generatedStart := time.Date(2026, 8, 5, 0, 0, 0, 0, time.UTC)
@@ -94,12 +102,12 @@ func TestUpdateExecutableAndSchedulerShareTransactionRollback_AC27_AC28_AC35(t *
 	if err := database.First(&stored, "id = ?", "task").Error; err != nil {
 		t.Fatal(err)
 	}
-	if stored.LagDays != 0 || stored.ExecutionStart != nil || stored.UpdatedAt != now {
+	if stored.LagDays != 0 || stored.CapacityAllocationPercentage != 100 || stored.ExecutionStart != nil || stored.UpdatedAt != now {
 		t.Fatalf("state after rollback=%#v, want original Task", stored)
 	}
 }
 
-func TestUpdateExecutableAutomaticOffPreservesManualTimelineWithoutScheduler_AC3_AC27(t *testing.T) {
+func TestUpdateExecutableAutomaticOffPreservesManualTimelineAndRebuildsFixedAllocation_US63_AC18_AC19(t *testing.T) {
 	repository, database := reopenTestDB(t)
 	now := time.Date(2026, 8, 1, 8, 0, 0, 0, time.UTC)
 	if err := database.Create(&reopenProjectRecord{
@@ -138,8 +146,8 @@ func TestUpdateExecutableAutomaticOffPreservesManualTimelineWithoutScheduler_AC3
 	if err != nil {
 		t.Fatal(err)
 	}
-	if calls != 0 {
-		t.Fatalf("scheduler calls=%d, want 0 while Automatic Scheduling is OFF", calls)
+	if calls != 1 {
+		t.Fatalf("scheduler calls=%d, want fixed-allocation portfolio recalculation", calls)
 	}
 	if updated == nil || updated.Executable.LagDays != 1 {
 		t.Fatalf("updated Task=%#v", updated)
@@ -153,6 +161,50 @@ func TestUpdateExecutableAutomaticOffPreservesManualTimelineWithoutScheduler_AC3
 	}
 	if stored.CommitmentStart == nil || !stored.CommitmentStart.Equal(start) || stored.CommitmentEnd == nil || !stored.CommitmentEnd.Equal(end) {
 		t.Fatalf("manual Commitment timeline changed: %#v", stored)
+	}
+}
+
+func TestUpdateExecutablePreservesOmittedPercentageAndResetsOnAssigneeChange_US63_AC4_AC5(t *testing.T) {
+	repository, database := reopenTestDB(t)
+	if err := database.AutoMigrate(&memberModel{}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 8, 1, 8, 0, 0, 0, time.UTC)
+	if err := database.Create(&reopenProjectRecord{ID: "project", Name: "Alpha", NameKey: "alpha", Status: "open", AutomaticScheduling: true}).Error; err != nil {
+		t.Fatal(err)
+	}
+	roleID, firstID, secondID := "role", "first", "second"
+	for _, member := range []memberModel{{ID: firstID, RoleID: roleID}, {ID: secondID, RoleID: roleID}} {
+		if err := database.Create(&member).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	effort, percentage := 480, 20
+	if err := database.Create(&nodeModel{ID: "task", ProjectID: "project", ParentKey: "", Name: "Task", NameKey: "task", Position: 1, RoleID: &roleID, AssigneeID: &firstID, EffortMinutes: &effort, CapacityAllocationPercentage: percentage, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+		t.Fatal(err)
+	}
+	noopSchedule := func(context.Context, string) error { return nil }
+	value, err := repository.UpdateExecutable(context.Background(), "project", "task", application.WriteExecutableInput{RoleID: &roleID, AssigneeID: &firstID, EffortMinutes: &effort}, now.Add(time.Hour), noopSchedule)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value.Executable.CapacityAllocationPercentage != 20 {
+		t.Fatalf("omitted update percentage=%d", value.Executable.CapacityAllocationPercentage)
+	}
+	value, err = repository.UpdateExecutable(context.Background(), "project", "task", application.WriteExecutableInput{RoleID: &roleID, AssigneeID: &secondID, EffortMinutes: &effort}, now.Add(2*time.Hour), noopSchedule)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value.Executable.CapacityAllocationPercentage != 100 {
+		t.Fatalf("changed-assignee percentage=%d", value.Executable.CapacityAllocationPercentage)
+	}
+	explicit := 20
+	value, err = repository.UpdateExecutable(context.Background(), "project", "task", application.WriteExecutableInput{RoleID: &roleID, AssigneeID: nil, EffortMinutes: &effort, CapacityAllocationPercentage: &explicit}, now.Add(3*time.Hour), noopSchedule)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value.Executable.CapacityAllocationPercentage != 100 {
+		t.Fatalf("cleared-assignee percentage=%d", value.Executable.CapacityAllocationPercentage)
 	}
 }
 

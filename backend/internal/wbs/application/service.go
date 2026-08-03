@@ -14,17 +14,19 @@ import (
 )
 
 type WriteExecutableInput struct {
-	Name                  *string
-	RoleID, AssigneeID    *string
-	EffortMinutes         *int
-	LagDays               int
-	Execution, Commitment domain.Timeline
+	Name                         *string
+	RoleID, AssigneeID           *string
+	EffortMinutes                *int
+	LagDays                      int
+	CapacityAllocationPercentage *int
+	Execution, Commitment        domain.Timeline
 }
 
 type PreviewExecutableInput struct {
-	RoleID, AssigneeID *string
-	EffortMinutes      *int
-	LagDays            int
+	RoleID, AssigneeID           *string
+	EffortMinutes                *int
+	LagDays                      int
+	CapacityAllocationPercentage int
 }
 
 type SchedulePreview struct {
@@ -33,11 +35,13 @@ type SchedulePreview struct {
 }
 
 type AllocationRow struct {
-	Date                time.Time
-	AllocatedMinutes    int
-	CapacityMinutes     int
-	RemainingMinutes    int
-	OvercapacityMinutes int
+	Date                         time.Time
+	AllocatedMinutes             int
+	CapacityMinutes              int
+	RemainingMinutes             int
+	OvercapacityMinutes          int
+	CapacityAllocationPercentage int
+	TaskDailyLimitMinutes        int
 }
 
 type AllocationGroups struct {
@@ -47,6 +51,9 @@ type AllocationGroups struct {
 }
 
 func (input PreviewExecutableInput) Validate() error {
+	if input.CapacityAllocationPercentage < 0 || input.CapacityAllocationPercentage > 100 {
+		return domain.ErrCapacityAllocationInvalid
+	}
 	if input.LagDays < 0 {
 		return domain.ErrLagInvalid
 	}

@@ -200,7 +200,9 @@ function mapAllocationRow(value: unknown): AllocationRow {
     !isNonNegativeInteger(value.allocatedMinutes) ||
     !isNonNegativeInteger(value.capacityMinutes) ||
     !isNonNegativeInteger(value.remainingMinutes) ||
-    !isNonNegativeInteger(value.overcapacityMinutes)
+    !isNonNegativeInteger(value.overcapacityMinutes) ||
+    !isNonNegativeInteger(value.capacityAllocationPercentage) ||
+    !isNonNegativeInteger(value.taskDailyLimitMinutes)
   ) {
     throw new Error(invalidResponseMessage);
   }
@@ -210,6 +212,8 @@ function mapAllocationRow(value: unknown): AllocationRow {
     capacityMinutes: value.capacityMinutes,
     remainingMinutes: value.remainingMinutes,
     overcapacityMinutes: value.overcapacityMinutes,
+    capacityAllocationPercentage: value.capacityAllocationPercentage,
+    taskDailyLimitMinutes: value.taskDailyLimitMinutes,
   };
 }
 
@@ -360,6 +364,8 @@ function mapExecutable(value: Record<string, unknown>): WBSNode["executable"] {
     assigneeId: optionalString(value.assigneeId),
     effortMinutes: optionalNumber(value.effortMinutes),
     lagDays: optionalNonNegativeInteger(value.lag) ?? 0,
+    capacityAllocationPercentage:
+      optionalPositivePercentage(value.capacityAllocationPercentage) ?? 100,
     executionTimeline: mapTimeline(value.executionTimeline),
     commitmentTimeline: mapTimeline(value.commitmentTimeline),
     executionUnscheduledReason: optionalString(
@@ -371,6 +377,15 @@ function mapExecutable(value: Record<string, unknown>): WBSNode["executable"] {
     actualStart: optionalString(value.actualStart),
     actualEnd: optionalString(value.actualEnd),
   };
+}
+
+function optionalPositivePercentage(value: unknown): number | undefined {
+  return typeof value === "number" &&
+    Number.isInteger(value) &&
+    value >= 1 &&
+    value <= 100
+    ? value
+    : undefined;
 }
 
 function mapTimeline(value: Record<string, unknown>): {

@@ -10,6 +10,7 @@ export interface WBSNode {
     assigneeId?: string;
     effortMinutes?: number;
     lagDays: number;
+    capacityAllocationPercentage?: number;
     executionTimeline: { start?: string; end?: string };
     commitmentTimeline: { start?: string; end?: string };
     executionUnscheduledReason?: string;

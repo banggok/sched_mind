@@ -60,7 +60,7 @@ type actualAllocationValue struct {
 func replaceActualAllocations(
 	tx *gorm.DB,
 	task nodeModel,
-	baselineExecutionStart *time.Time,
+	_ *time.Time,
 	actualStart time.Time,
 	actualEnd time.Time,
 ) ([]actualAllocationValue, error) {
@@ -74,13 +74,6 @@ func replaceActualAllocations(
 	calendar, err := loadActualAllocationCalendar(tx, *task.AssigneeID, task.ID)
 	if err != nil {
 		return nil, err
-	}
-	allocationStart := schedulingdomain.DateOnly(actualStart)
-	if baselineExecutionStart != nil {
-		baseline := schedulingdomain.DateOnly(*baselineExecutionStart)
-		if baseline.Before(allocationStart) {
-			allocationStart = baseline
-		}
 	}
 	actualStart = schedulingdomain.DateOnly(actualStart)
 	actualEnd = schedulingdomain.DateOnly(actualEnd)
@@ -99,19 +92,6 @@ func replaceActualAllocations(
 		allocated[key] += minutes
 	}
 
-	for day := allocationStart; day.Before(actualStart) && remaining > 0; day = day.AddDate(0, 0, 1) {
-		if !calendar.working(day) {
-			continue
-		}
-		available := calendar.remaining(day)
-		if available <= 0 {
-			continue
-		}
-		take := minInt(remaining, available)
-		appendAllocation(day, take)
-		remaining -= take
-	}
-
 	actualWorkingDates := make([]time.Time, 0)
 	for day := actualStart; !day.After(actualEnd); day = day.AddDate(0, 0, 1) {
 		if calendar.working(day) {
@@ -119,34 +99,51 @@ func replaceActualAllocations(
 		}
 	}
 	if remaining > 0 && len(actualWorkingDates) > 0 {
+		// Forward allocation uses half-hour units and recalculates the balanced
+		// share after every constrained date.
+		for index, day := range actualWorkingDates {
+			if remaining == 0 {
+				break
+			}
+			remainingDates := len(actualWorkingDates) - index
+			target := ((remaining+29)/30 + remainingDates - 1) / remainingDates * 30
+			available := calendar.remaining(day) / 30 * 30
+			take := minInt(remaining, minInt(target, available))
+			appendAllocation(day, take)
+			remaining -= take
+		}
+		// Use every remaining in-window spare unit before creating overcapacity.
 		for _, day := range actualWorkingDates {
 			if remaining == 0 {
 				break
 			}
-			available := calendar.remaining(day)
-			take := minInt(remaining, available)
+			spare := calendar.remaining(day) - allocated[schedulingdomain.DateKey(day)]
+			spare = spare / 30 * 30
+			take := minInt(remaining, spare)
 			appendAllocation(day, take)
 			remaining -= take
 		}
-		if remaining > 0 {
-			perDate := remaining / len(actualWorkingDates)
-			remainder := remaining % len(actualWorkingDates)
+		// Equalize total historical overcapacity, preferring the latest tied date.
+		for remaining > 0 {
+			selected := len(actualWorkingDates) - 1
+			selectedOver := int(^uint(0) >> 1)
 			for index, day := range actualWorkingDates {
-				extra := perDate
-				if index < remainder {
-					extra++
+				key := schedulingdomain.DateKey(day)
+				over := calendar.immutable[key] + allocated[key] - calendar.capacity(day)
+				if over < 0 {
+					over = 0
 				}
-				appendAllocation(day, extra)
+				if over <= selectedOver {
+					selected, selectedOver = index, over
+				}
 			}
-			remaining = 0
+			take := minInt(30, remaining)
+			appendAllocation(actualWorkingDates[selected], take)
+			remaining -= take
 		}
 	}
 	if remaining > 0 && len(actualWorkingDates) == 0 {
-		day := actualEnd.AddDate(0, 0, 1)
-		for !calendar.working(day) {
-			day = day.AddDate(0, 0, 1)
-		}
-		appendAllocation(day, remaining)
+		appendAllocation(actualEnd, remaining)
 		remaining = 0
 	}
 
@@ -229,13 +226,11 @@ func loadActualAllocationCalendar(tx *gorm.DB, memberID, taskID string) (*actual
 		       CAST(SUM(CAST(allocation.allocated_minutes AS NUMERIC)) AS INTEGER) AS minutes
 		FROM task_schedule_allocations AS allocation
 		JOIN wbs_nodes AS task ON task.id = allocation.task_id
-		JOIN projects AS project ON project.id = task.project_id
 		WHERE allocation.assignee_id = ?
 		  AND allocation.task_id <> ?
-		  AND (
-		        allocation.timeline = 'actual'
-		        OR (allocation.timeline = 'execution' AND project.status = 'locked' AND task.actual_start IS NULL AND task.actual_end IS NULL)
-		      )
+		  AND allocation.timeline = 'actual'
+		  AND task.actual_start IS NOT NULL
+		  AND task.actual_end IS NOT NULL
 		GROUP BY allocation.allocation_date`
 	if err := tx.Raw(query, memberID, taskID).Scan(&immutableRows).Error; err != nil {
 		return nil, fmt.Errorf("load immutable actual allocation reservations: %w", err)
@@ -279,7 +274,8 @@ func (calendar *actualCalendar) resolvedHours(date time.Time) *big.Rat {
 
 func (calendar *actualCalendar) capacity(date time.Time) int {
 	minutes := schedulingdomain.BAUCapacityMinutes(calendar.resolvedHours(date))
-	return int(new(big.Int).Quo(minutes.Num(), minutes.Denom()).Int64())
+	value := int(new(big.Int).Quo(minutes.Num(), minutes.Denom()).Int64())
+	return value / 30 * 30
 }
 
 func (calendar *actualCalendar) remaining(date time.Time) int {
@@ -318,7 +314,7 @@ func (r *Repository) Allocations(ctx context.Context, projectID, taskID string) 
 		return nil, err
 	}
 	var project projectModel
-	if err := r.db.WithContext(ctx).Select("id, project_buffer").First(&project, "id = ?", projectID).Error; err != nil {
+	if err := r.db.WithContext(ctx).Select("id, project_buffer, automatic_scheduling").First(&project, "id = ?", projectID).Error; err != nil {
 		return nil, fmt.Errorf("load allocation project: %w", err)
 	}
 	var rows []actualAllocationModel
@@ -347,13 +343,21 @@ func (r *Repository) Allocations(ctx context.Context, projectID, taskID string) 
 			if err != nil {
 				return nil, fmt.Errorf("read remaining capacity: %w", err)
 			}
+			if !project.AutomaticScheduling {
+				dailyLimit := roundedPercentageMinutes(capacity, task.CapacityAllocationPercentage)
+				if allocated > dailyLimit {
+					overcapacity = allocated - dailyLimit
+				}
+			}
 		}
 		row := application.AllocationRow{
-			Date:                schedulingdomain.DateOnly(persisted.AllocationDate),
-			AllocatedMinutes:    allocated,
-			CapacityMinutes:     capacity,
-			RemainingMinutes:    remaining,
-			OvercapacityMinutes: overcapacity,
+			Date:                         schedulingdomain.DateOnly(persisted.AllocationDate),
+			AllocatedMinutes:             allocated,
+			CapacityMinutes:              capacity,
+			RemainingMinutes:             remaining,
+			OvercapacityMinutes:          overcapacity,
+			CapacityAllocationPercentage: task.CapacityAllocationPercentage,
+			TaskDailyLimitMinutes:        roundedPercentageMinutes(capacity, task.CapacityAllocationPercentage),
 		}
 		switch timeline {
 		case schedulingdomain.Execution:
@@ -367,6 +371,20 @@ func (r *Repository) Allocations(ctx context.Context, projectID, taskID string) 
 		}
 	}
 	return groups, nil
+}
+
+func roundedPercentageMinutes(capacity, percentage int) int {
+	if capacity <= 0 {
+		return 0
+	}
+	value := ((capacity*percentage + 1500) / 3000) * 30
+	if value < 30 {
+		value = 30
+	}
+	if value > capacity {
+		value = capacity
+	}
+	return value
 }
 
 func allocationCapacity(calendar *actualCalendar, projectBuffer int, date time.Time, timeline schedulingdomain.Timeline) (int, error) {

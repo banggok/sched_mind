@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/big"
 	"sync"
 	"testing"
 	"time"
@@ -177,8 +178,8 @@ func TestDependencyAndLagReadinessRules_AC11_AC12_AC13_AC14_AC15(t *testing.T) {
 	})
 }
 
-func TestNonPreemptiveFitAndPriorityDisplacement_AC16_AC18_AC19_AC20_AC21_AC22(t *testing.T) {
-	t.Run("lower-priority task that fits uses the gap and identifies the preceding blocker", func(t *testing.T) {
+func TestPriorityPreservingConcurrentAllocationAndSafeBlockers_US63_AC13_AC16(t *testing.T) {
+	t.Run("task uses the first available date and identifies the completion that released capacity", func(t *testing.T) {
 		repository, database := schedulerRepository(t)
 		seedGapFixture(t, database, 240)
 		if err := repository.RecalculatePortfolio(context.Background(), nil); err != nil {
@@ -190,18 +191,19 @@ func TestNonPreemptiveFitAndPriorityDisplacement_AC16_AC18_AC19_AC20_AC21_AC22(t
 		assertAutomaticBlocker(t, database, "fixed-a", "candidate")
 	})
 
-	t.Run("lower-priority task that does not fit moves after the next reservation", func(t *testing.T) {
+	t.Run("task continues around a later fixed reservation without serializing behind it", func(t *testing.T) {
 		repository, database := schedulerRepository(t)
 		seedGapFixture(t, database, 480)
 		if err := repository.RecalculatePortfolio(context.Background(), nil); err != nil {
 			t.Fatal(err)
 		}
 		candidate := loadScheduledTask(t, database, "candidate")
-		assertDate(t, "candidate start", candidate.ExecutionStart, "2026-08-06")
-		assertAutomaticBlocker(t, database, "fixed-b", "candidate")
+		assertDate(t, "candidate start", candidate.ExecutionStart, "2026-08-04")
+		assertDate(t, "candidate end", candidate.ExecutionEnd, "2026-08-06")
+		assertAutomaticBlocker(t, database, "fixed-a", "candidate")
 	})
 
-	t.Run("newly-ready higher-priority task displaces the whole lower-priority task", func(t *testing.T) {
+	t.Run("newly-ready higher-priority task displaces only conflicting mutable future allocation", func(t *testing.T) {
 		repository, database := schedulerRepository(t)
 		seedProject(t, database, automaticProject("high", 1, "2026-08-03", 0))
 		seedProject(t, database, automaticProject("medium", 2, "2026-08-03", 0))
@@ -219,20 +221,30 @@ func TestNonPreemptiveFitAndPriorityDisplacement_AC16_AC18_AC19_AC20_AC21_AC22(t
 		candidate := loadScheduledTask(t, database, "candidate")
 		lower := loadScheduledTask(t, database, "lower")
 		assertDate(t, "candidate start", candidate.ExecutionStart, "2026-08-04")
-		if lower.ExecutionStart == nil || candidate.ExecutionEnd == nil || lower.ExecutionStart.Before(*candidate.ExecutionEnd) {
-			t.Fatalf("lower-priority task started at %v before displaced candidate ended at %v", lower.ExecutionStart, candidate.ExecutionEnd)
+		assertDate(t, "lower keeps earlier allocation", lower.ExecutionStart, "2026-08-03")
+		candidateRows := loadAllocations(t, database, "candidate", "execution")
+		dailyTotals := map[string]*big.Rat{}
+		for _, row := range append(candidateRows, loadAllocations(t, database, "lower", "execution")...) {
+			key := schedulingdomain.DateKey(row.AllocationDate)
+			minutes, err := schedulingdomain.ParseDecimal(row.AllocatedMinutes)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if dailyTotals[key] == nil {
+				dailyTotals[key] = new(big.Rat)
+			}
+			dailyTotals[key].Add(dailyTotals[key], minutes)
 		}
-		for _, row := range loadAllocations(t, database, "lower", "execution") {
-			if row.AllocationDate.Before(*candidate.ExecutionEnd) {
-				t.Fatalf("lower-priority task retained preempted allocation on %s", schedulingdomain.DateKey(row.AllocationDate))
+		for date, total := range dailyTotals {
+			if total.Cmp(big.NewRat(300, 1)) > 0 {
+				t.Fatalf("automatic total on %s = %s", date, total.RatString())
 			}
 		}
-		assertAutomaticBlocker(t, database, "candidate", "lower")
 	})
 }
 
 func TestAutomaticOwnershipReconciliationPreservesManualGraph_AC22_AC23_AC24_AC25_AC26(t *testing.T) {
-	t.Run("manual endpoint becomes shared and appears once", func(t *testing.T) {
+	t.Run("manual endpoint remains manual when no capacity blocker is required", func(t *testing.T) {
 		repository, database := schedulerRepository(t)
 		seedProject(t, database, automaticProject("project", 1, "2026-08-03", 0))
 		seedMember(t, database, "member", "5", "0")
@@ -247,8 +259,8 @@ func TestAutomaticOwnershipReconciliationPreservesManualGraph_AC22_AC23_AC24_AC2
 		if err := database.Where("blocking_task_id = ? AND blocked_task_id = ?", "a", "b").Find(&rows).Error; err != nil {
 			t.Fatal(err)
 		}
-		if len(rows) != 1 || !rows[0].ManualOwned || !rows[0].AutomaticOwned {
-			t.Fatalf("endpoint ownership = %#v, want one shared relation", rows)
+		if len(rows) != 1 || !rows[0].ManualOwned || rows[0].AutomaticOwned {
+			t.Fatalf("endpoint ownership = %#v, want one manual-only relation", rows)
 		}
 	})
 
@@ -388,7 +400,7 @@ func TestEligibilityFixedReservationsAndClosedExclusion_AC4_AC30_AC31_AC32_AC34(
 		assertDate(t, "new task starts after completed Actual End", loadScheduledTask(t, database, "new-task").ExecutionStart, "2026-08-04")
 	})
 
-	t.Run("locked timeline still rejects effort that exceeds fixed capacity", func(t *testing.T) {
+	t.Run("locked overcapacity remains an immutable fixed baseline", func(t *testing.T) {
 		repository, database := schedulerRepository(t)
 		project := automaticProject("locked", 1, "2026-08-03", 0)
 		project.Status = "locked"
@@ -402,10 +414,12 @@ func TestEligibilityFixedReservationsAndClosedExclusion_AC4_AC30_AC31_AC32_AC34(
 		locked.CommitmentEnd = datePointer(mustDate("2026-08-03"))
 		seedTask(t, database, locked)
 
-		err := repository.RecalculatePortfolio(context.Background(), nil)
-		if !errors.Is(err, schedulingdomain.ErrDataIntegrity) {
-			t.Fatalf("error = %v, want ErrDataIntegrity", err)
+		if err := repository.RecalculatePortfolio(context.Background(), nil); err != nil {
+			t.Fatal(err)
 		}
+		stored := loadScheduledTask(t, database, "locked-task")
+		assertDate(t, "locked start", stored.ExecutionStart, "2026-08-03")
+		assertDate(t, "locked end", stored.ExecutionEnd, "2026-08-03")
 	})
 
 	t.Run("locked dates reserve capacity while closed project is excluded", func(t *testing.T) {

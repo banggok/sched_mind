@@ -239,16 +239,20 @@ unscheduled projection, or dependency endpoints; scheduling failure rolls back
 the deletion.
 
 The scheduler loads the transitive impacted scheduling scope, validates unique Priority and WBS ordering, resolves manual and retained automatic dependency edges, and allocates Execution and Commitment independently. Open unfinished Tasks are mutable outputs; Locked Projects are immutable anchors; unrelated Projects are not recalculated or version-updated. Capacity arithmetic uses
-`math/big.Rat`: weekend/Public Holiday resolves to zero, otherwise Capacity
-Override replaces Member Daily Capacity, Member Buffer produces raw Execution
-Capacity and rounds it to the nearest `0.5` hour. Commitment Capacity is
-calculated independently after both Member Buffer and Project Buffer, then
-rounded to the nearest `0.5` hour. Allocation is
-inclusive-date, whole-Task, contiguous, and non-preemptive. Same-assignee
-successors may consume remaining capacity on the predecessor End Date;
-different-assignee successors begin on the next positive-capacity date.
+`math/big.Rat`: weekend/Public Holiday resolves to zero, otherwise the minimum
+active Capacity Override replaces Member Daily Capacity, Member Buffer produces
+raw Execution Capacity and rounds it to the nearest `0.5` hour. Commitment
+Capacity is calculated independently after both Member Buffer and Project
+Buffer, then rounded to the nearest `0.5` hour. US-6.3 then applies persisted
+Task Capacity Allocation Percentage (`1–100`, default `100`) to each final
+timeline capacity and rounds the Task Daily Limit to `0.5` hour with a minimum
+positive `0.5` hour. Dependency-ready Tasks remain ordered by Project Priority
+then visual WBS order, but same-assignee Tasks may receive positive allocation
+on the same Date. Later Tasks use only residual capacity; mutable automatic
+allocation never exceeds final timeline capacity. Fixed manual allocation may
+represent planned overcapacity and is honoured cross-Project.
 
-US-6.2 defines Actual Date, Actual Allocation, Locked Project, and generic cross-project impact coordination. Completion persists required Actual Start/Actual End together. Open completion moves each planned Start earlier only when Actual Start is earlier and always sets each End to Actual End. Actual Allocation uses Execution Start as baseline and BAU Resolved Daily Capacity before Member/Project buffers, allocates only on working dates, uses positive remaining capacity before Actual Start, distributes historical excess deterministically across Actual working dates, falls forward to the next working date when the Actual range has none, and never carries overcapacity debt. Locked Projects remain immutable scheduler outputs, but Actual Date may be saved and its Actual Allocation may recalculate transitively impacted Open Projects. Ordinary Task/dependency/priority/capacity mutations use grouped impact preview, confirmation, server revalidation, and Locked-impact blocking. Project Reopen expands an atomic transitive Locked closure to avoid mutual-lock dead ends.
+US-6.2 defines Actual Date, Actual Allocation, Locked Project, and generic cross-project impact coordination. Completion persists required Actual Start/Actual End together. Open completion moves each planned Start earlier only when Actual Start is earlier and always sets each End to Actual End. Actual Allocation ignores planned Task percentage and uses only eligible Dates inside Actual Start–Actual End. It competes only with other completed Actual Allocation for the same Assignee/Date, distributes Effort in `0.5`-hour balanced shares, recalculates remaining shares after constrained Dates, backfills spare BAU capacity, and then levels unavoidable total historical overcapacity with a latest-Date tie-breaker. Existing completed Actual rows remain immutable; planned automatic/manual/Locked rows are ignored for Actual head-to-head construction. Historical overcapacity never carries debt to later Dates. Locked Projects remain immutable scheduler outputs, but Actual Date may be saved and its Actual Allocation may recalculate transitively impacted Open Projects. Ordinary Task/dependency/priority/capacity mutations use grouped impact preview, confirmation, server revalidation, and Locked-impact blocking. Project Reopen expands an atomic transitive Locked closure to avoid mutual-lock dead ends.
 
 Execution, Commitment, and Actual daily allocations are separate projections. Actual Allocation rows are canonical and support both Task-centric and assignee-centric queries; current UI exposes the Task-centric read-only verification section while assignee analytics remains deferred. Impact simulation is version-bound: preview returns grouped Project names and a confirmation token, confirm re-simulates under scheduling locks, and stale impact never persists.
 
@@ -385,7 +389,7 @@ parent/name unique index. Group rename stays on the structural rename endpoint.
 No additional query or index is required for the combined Task update.
 
 For an Open unfinished Task with Automatic Scheduling enabled, Role, Assignee,
-Effort, and Lag blur events may request
+Effort, Lag, and Capacity Allocation Percentage blur events may request
 `POST .../executable/preview`. This endpoint is calculation-only: it applies the
 current draft inside the normal schedule-mutation serialization boundary, runs
 the concrete portfolio scheduler using the same database transaction, reads the
@@ -514,6 +518,23 @@ not require an application restart.
 - Current hash-based navigation and custom request cache are implementation
   choices, not requirements of the reusable frontend architecture.
 
+## Task Capacity Allocation target contract
+
+Executable WBS persists a non-null integer `capacity_allocation_percentage` with
+valid range `1–100` and default `100`. Rollout must backfill every existing
+Executable WBS to `100` before enforcing the invariant; otherwise numeric zero
+could incorrectly make legacy Tasks consume no capacity. Legacy create omission
+normalizes to `100`, update omission preserves the existing value, and explicit
+`0` is rejected. Changing or clearing Assignee resets the value to `100` unless
+the same new-Assignee command explicitly supplies another valid value.
+
+Execution and Commitment Task Daily Limits are calculated after each final
+timeline capacity has been independently rounded. The percentage is a maximum,
+not a reservation or priority. Automatic rows are ordered by Project Priority
+and visual WBS order and share residual same-Date capacity. Manual timeline rows
+are fixed reservations and may persist planned overcapacity. The field moves
+with executable data during WBS conversion; Grouping WBS never owns it.
+
 ## Actual Date and Reopen completed Task target contract
 
 US-6.2 replaces Actual End-only completion with a complete Actual Date pair.
@@ -525,8 +546,14 @@ either command.
 
 Actual Allocation is a separate daily projection keyed by Task, Assignee, Date,
 and projection kind. Execution, Commitment, and Actual allocation rows remain
-separately queryable. For completed Tasks, Actual Allocation is the sole
-capacity-consuming reservation used by future recalculation; Execution and
+separately queryable. Construction of a Task's Actual rows considers only other
+completed Actual rows for the same Assignee/Date; unfinished automatic, manual,
+and Locked planned rows are ignored. The algorithm works only inside Actual
+Date, preserves `0.5`-hour Effort exactly, progressively rebalances remaining
+shares, backfills spare BAU capacity, and equalizes unavoidable total
+overcapacity. Existing completed Actual rows are immutable, so completion order
+may affect attribution. For future unfinished recalculation, Actual Allocation
+is the sole capacity-consuming reservation for a completed Task; Execution and
 Commitment rows remain planning/baseline evidence and are not double-counted.
 One canonical Actual row set supports both Task-centric and assignee-centric
 queries.

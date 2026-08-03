@@ -19,16 +19,17 @@ type Timeline struct {
 }
 
 type ExecutableFields struct {
-	RoleID                      *string
-	AssigneeID                  *string
-	EffortMinutes               *int
-	LagDays                     int
-	ExecutionTimeline           Timeline
-	CommitmentTimeline          Timeline
-	ExecutionUnscheduledReason  *string
-	CommitmentUnscheduledReason *string
-	ActualStart                 *time.Time
-	ActualEnd                   *time.Time
+	RoleID                       *string
+	AssigneeID                   *string
+	EffortMinutes                *int
+	LagDays                      int
+	CapacityAllocationPercentage int
+	ExecutionTimeline            Timeline
+	CommitmentTimeline           Timeline
+	ExecutionUnscheduledReason   *string
+	CommitmentUnscheduledReason  *string
+	ActualStart                  *time.Time
+	ActualEnd                    *time.Time
 }
 
 type Node struct {
@@ -62,13 +63,13 @@ func New(id, projectID string, parentID *string, name string, position int, now 
 	if err != nil {
 		return nil, err
 	}
-	return &Node{ID: id, ProjectID: projectID, ParentID: cloneString(parentID), Name: name, Position: position, Children: []Node{}, CreatedAt: now, UpdatedAt: now}, nil
+	return &Node{ID: id, ProjectID: projectID, ParentID: cloneString(parentID), Name: name, Position: position, Executable: EmptyExecutable(), Children: []Node{}, CreatedAt: now, UpdatedAt: now}, nil
 }
 
 func (node Node) IsExecutable() bool { return !node.HasChildren }
 func (node Node) HasExecutableData() bool {
 	f := node.Executable
-	return f.RoleID != nil || f.AssigneeID != nil || f.EffortMinutes != nil || f.LagDays != 0 || f.ExecutionTimeline.Start != nil || f.ExecutionTimeline.End != nil || f.CommitmentTimeline.Start != nil || f.CommitmentTimeline.End != nil || f.ExecutionUnscheduledReason != nil || f.CommitmentUnscheduledReason != nil || f.ActualStart != nil || f.ActualEnd != nil
+	return f.RoleID != nil || f.AssigneeID != nil || f.EffortMinutes != nil || f.LagDays != 0 || f.CapacityAllocationPercentage != 100 || f.ExecutionTimeline.Start != nil || f.ExecutionTimeline.End != nil || f.CommitmentTimeline.Start != nil || f.CommitmentTimeline.End != nil || f.ExecutionUnscheduledReason != nil || f.CommitmentUnscheduledReason != nil || f.ActualStart != nil || f.ActualEnd != nil
 }
 
 func (node Node) Completed() bool {
@@ -88,6 +89,9 @@ func (node *Node) Rename(name string, now time.Time) error {
 }
 
 func ValidateExecutable(fields ExecutableFields, automaticScheduling bool, projectOpen bool) error {
+	if fields.CapacityAllocationPercentage < 1 || fields.CapacityAllocationPercentage > 100 {
+		return ErrCapacityAllocationInvalid
+	}
 	if fields.LagDays < 0 {
 		return ErrLagInvalid
 	}
@@ -168,7 +172,7 @@ func (node *Node) Reopen(now time.Time) error {
 	return nil
 }
 
-func EmptyExecutable() ExecutableFields { return ExecutableFields{} }
+func EmptyExecutable() ExecutableFields { return ExecutableFields{CapacityAllocationPercentage: 100} }
 
 func cloneFields(value ExecutableFields) ExecutableFields {
 	value.RoleID = cloneString(value.RoleID)

@@ -22,6 +22,7 @@ var (
 	ErrIncompletePredecessor      = errors.New("all predecessors must be completed before this task can be completed")
 	ErrEffortInvalid              = errors.New("effort must be at least 0.5 hours in 0.5 hour increments")
 	ErrLagInvalid                 = errors.New("lag must be a non-negative whole number of days")
+	ErrCapacityAllocationInvalid  = errors.New("capacity allocation percentage must be a whole number from 1 to 100")
 	ErrRoleAssigneeMismatch       = errors.New("assignee role does not match the selected role")
 	ErrCompletedReadOnly          = errors.New("completed executable WBS is read-only")
 	ErrTaskNotCompleted           = errors.New("task is not completed")

@@ -125,8 +125,8 @@ func TestAutomaticSchedulingCapacityAndUnscheduledAcceptance_AC1_AC4_AC5_AC6_AC7
 	manual := loadAcceptanceTask(t, database, "manual-task")
 	assertDate(t, "manual execution start", manual.ExecutionStart, "2026-08-12")
 	assertDate(t, "manual commitment end", manual.CommitmentEnd, "2026-08-13")
-	if rows := loadAcceptanceAllocations(t, database, "manual-task", string(schedulingdomain.Execution)); len(rows) != 0 {
-		t.Fatalf("manual task generated allocations=%#v", rows)
+	if rows := loadAcceptanceAllocations(t, database, "manual-task", string(schedulingdomain.Execution)); len(rows) != 2 || rows[0].AllocatedMinutes != "240.000000" || rows[1].AllocatedMinutes != "240.000000" {
+		t.Fatalf("manual task fixed allocations=%#v", rows)
 	}
 	lagged := loadAcceptanceTask(t, database, "lag-task")
 	assertDate(t, "lag without dependency skips weekend", lagged.ExecutionStart, "2026-08-10")
@@ -312,17 +312,13 @@ func TestAutomaticSchedulingOrderingAndAssigneeAcceptance_AC12_AC15_AC16_AC17_AC
 		candidate := loadAcceptanceTask(t, database, "candidate")
 		lower := loadAcceptanceTask(t, database, "lower")
 		assertDate(t, "newly ready candidate", candidate.ExecutionStart, "2026-08-04")
-		if candidate.ExecutionEnd == nil || lower.ExecutionStart == nil || lower.ExecutionStart.Before(*candidate.ExecutionEnd) {
-			t.Fatalf("lower task was not displaced as a whole: candidate=%#v lower=%#v", candidate, lower)
+		assertDate(t, "lower preserves pre-readiness allocation", lower.ExecutionStart, "2026-08-03")
+		var automaticCount int64
+		if err := database.Model(&acceptanceDependencyRecord{}).Where("blocking_task_id = ? AND blocked_task_id = ? AND automatic_owned = ?", "candidate", "lower", true).Count(&automaticCount).Error; err != nil {
+			t.Fatal(err)
 		}
-		for _, row := range loadAcceptanceAllocations(t, database, "lower", string(schedulingdomain.Execution)) {
-			if row.AllocationDate.Before(*candidate.ExecutionEnd) {
-				t.Fatalf("lower task retained preempted allocation=%#v", row)
-			}
-		}
-		automatic := loadAcceptanceDependency(t, database, "candidate", "lower")
-		if automatic.ManualOwned || !automatic.AutomaticOwned {
-			t.Fatalf("displacement blocker ownership=%#v", automatic)
+		if automaticCount != 0 {
+			t.Fatalf("priority displacement invented serial ownership count=%d", automaticCount)
 		}
 	})
 
@@ -510,27 +506,28 @@ func (scheduler *acceptanceFailingScheduler) MarkProjectUnscheduled(context.Cont
 func (acceptanceProjectRecord) TableName() string { return "projects" }
 
 type acceptanceTaskRecord struct {
-	ID                          string `gorm:"primaryKey"`
-	ProjectID                   string
-	ParentID                    *string
-	ParentKey                   string
-	Name                        string
-	NameKey                     string
-	Position                    int
-	RoleID                      *string
-	AssigneeID                  *string
-	EffortMinutes               *int
-	LagDays                     int
-	ExecutionStart              *time.Time
-	ExecutionEnd                *time.Time
-	CommitmentStart             *time.Time
-	CommitmentEnd               *time.Time
-	ActualStart                 *time.Time
-	ActualEnd                   *time.Time
-	ExecutionUnscheduledReason  *string
-	CommitmentUnscheduledReason *string
-	CreatedAt                   time.Time
-	UpdatedAt                   time.Time
+	ID                           string `gorm:"primaryKey"`
+	ProjectID                    string
+	ParentID                     *string
+	ParentKey                    string
+	Name                         string
+	NameKey                      string
+	Position                     int
+	RoleID                       *string
+	AssigneeID                   *string
+	EffortMinutes                *int
+	LagDays                      int
+	CapacityAllocationPercentage int `gorm:"default:100"`
+	ExecutionStart               *time.Time
+	ExecutionEnd                 *time.Time
+	CommitmentStart              *time.Time
+	CommitmentEnd                *time.Time
+	ActualStart                  *time.Time
+	ActualEnd                    *time.Time
+	ExecutionUnscheduledReason   *string
+	CommitmentUnscheduledReason  *string
+	CreatedAt                    time.Time
+	UpdatedAt                    time.Time
 }
 
 func (acceptanceTaskRecord) TableName() string { return "wbs_nodes" }
@@ -732,9 +729,12 @@ func TestAutomaticSchedulingWorkflowGeneratesDatesOwnershipAndLag_AC2_AC9_AC11_A
 	beforeLag := loadAcceptanceTask(t, database, "low-task")
 	assertDate(t, "initial low task start", beforeLag.ExecutionStart, "2026-08-03")
 	assertDate(t, "initial low task end", beforeLag.ExecutionEnd, "2026-08-04")
-	beforeRelation := loadAcceptanceDependency(t, database, "high-task", "low-task")
-	if beforeRelation.ManualOwned || !beforeRelation.AutomaticOwned {
-		t.Fatalf("initial ownership=%#v, want automatic-only", beforeRelation)
+	var initialRelationCount int64
+	if err := database.Model(&acceptanceDependencyRecord{}).Where("blocking_task_id = ? AND blocked_task_id = ?", "high-task", "low-task").Count(&initialRelationCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if initialRelationCount != 0 {
+		t.Fatalf("parallel initial schedule created serial relation count=%d", initialRelationCount)
 	}
 
 	dependencyService := dependencyapplication.NewServiceWithDependencies(
@@ -747,8 +747,8 @@ func TestAutomaticSchedulingWorkflowGeneratesDatesOwnershipAndLag_AC2_AC9_AC11_A
 	if err != nil {
 		t.Fatal(err)
 	}
-	if shared == nil || shared.ID != beforeRelation.ID || !shared.ManualOwned || !shared.AutomaticOwned {
-		t.Fatalf("manual create result=%#v, want same shared relation", shared)
+	if shared == nil || !shared.ManualOwned || shared.AutomaticOwned {
+		t.Fatalf("manual create result=%#v, want manual-only relation", shared)
 	}
 	var endpointCount int64
 	if err := database.Model(&acceptanceDependencyRecord{}).
@@ -779,7 +779,7 @@ func TestAutomaticSchedulingWorkflowGeneratesDatesOwnershipAndLag_AC2_AC9_AC11_A
 	assertDate(t, "lagged low task start", afterLag.ExecutionStart, "2026-08-04")
 	assertDate(t, "lagged low task end", afterLag.ExecutionEnd, "2026-08-04")
 	afterRelation := loadAcceptanceDependency(t, database, "high-task", "low-task")
-	if afterRelation.ID != beforeRelation.ID || !afterRelation.ManualOwned || afterRelation.AutomaticOwned {
+	if afterRelation.ID != shared.ID || !afterRelation.ManualOwned || afterRelation.AutomaticOwned {
 		t.Fatalf("ownership after Lag=%#v, want same manual relation after stale automatic ownership is removed", afterRelation)
 	}
 	endpointCount = 0

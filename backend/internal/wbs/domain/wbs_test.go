@@ -12,7 +12,7 @@ func TestNodeStateAndExecutableValidation(t *testing.T) {
 		t.Fatalf("unexpected new node: %#v %v", node, err)
 	}
 	effort := 30
-	if err := node.UpdateExecutable(ExecutableFields{EffortMinutes: &effort}, false, true, time.Now()); err != nil {
+	if err := node.UpdateExecutable(ExecutableFields{EffortMinutes: &effort, CapacityAllocationPercentage: 100}, false, true, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	node.HasChildren = true
@@ -25,7 +25,7 @@ func TestManualTimelineAndCompletion(t *testing.T) {
 	node, _ := New("w", "p", nil, "Build", 1, time.Now())
 	start := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
 	end := start.AddDate(0, 0, 1)
-	fields := ExecutableFields{ExecutionTimeline: Timeline{Start: &start, End: &end}}
+	fields := ExecutableFields{CapacityAllocationPercentage: 100, ExecutionTimeline: Timeline{Start: &start, End: &end}}
 	if err := node.UpdateExecutable(fields, true, true, time.Now()); !errors.Is(err, ErrManualTimeline) {
 		t.Fatalf("expected manual restriction, got %v", err)
 	}
@@ -109,10 +109,10 @@ func TestDedicatedReopenDoesNotWeakenCompletedGenericMutations_AC6(t *testing.T)
 }
 
 func TestValidateExecutableRejectsNegativeLagAndPreservesZeroDefault_US6_AC2_AC3(t *testing.T) {
-	if err := ValidateExecutable(ExecutableFields{LagDays: -1}, true, true); !errors.Is(err, ErrLagInvalid) {
+	if err := ValidateExecutable(ExecutableFields{LagDays: -1, CapacityAllocationPercentage: 100}, true, true); !errors.Is(err, ErrLagInvalid) {
 		t.Fatalf("negative Lag error = %v, want ErrLagInvalid", err)
 	}
-	if err := ValidateExecutable(ExecutableFields{}, true, true); err != nil {
+	if err := ValidateExecutable(ExecutableFields{CapacityAllocationPercentage: 100}, true, true); err != nil {
 		t.Fatalf("zero default Lag error = %v", err)
 	}
 }
@@ -127,7 +127,7 @@ func TestAutomaticSchedulingKeepsGeneratedDatesReadOnlyWhileLagRemainsEditable_U
 	}
 	node.Executable.ExecutionTimeline = Timeline{Start: &start, End: &end}
 	node.Executable.CommitmentTimeline = Timeline{Start: &start, End: &end}
-	err = node.UpdateExecutable(ExecutableFields{LagDays: 2}, true, true, now.Add(time.Hour))
+	err = node.UpdateExecutable(ExecutableFields{LagDays: 2, CapacityAllocationPercentage: 100}, true, true, now.Add(time.Hour))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,5 +136,25 @@ func TestAutomaticSchedulingKeepsGeneratedDatesReadOnlyWhileLagRemainsEditable_U
 	}
 	if node.Executable.ExecutionTimeline.Start == nil || !node.Executable.ExecutionTimeline.Start.Equal(start) || node.Executable.CommitmentTimeline.End == nil || !node.Executable.CommitmentTimeline.End.Equal(end) {
 		t.Fatalf("generated dates changed through generic automatic update: %#v", node.Executable)
+	}
+}
+
+func TestCapacityAllocationPercentageRangeAndDefault_US63_AC1_AC2(t *testing.T) {
+	node, err := New("task", "project", nil, "Task", 1, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if node.Executable.CapacityAllocationPercentage != 100 {
+		t.Fatalf("default percentage = %d", node.Executable.CapacityAllocationPercentage)
+	}
+	for _, invalid := range []int{0, -1, 101} {
+		if err := ValidateExecutable(ExecutableFields{CapacityAllocationPercentage: invalid}, false, true); !errors.Is(err, ErrCapacityAllocationInvalid) {
+			t.Fatalf("percentage %d error = %v", invalid, err)
+		}
+	}
+	for _, valid := range []int{1, 20, 50, 100} {
+		if err := ValidateExecutable(ExecutableFields{CapacityAllocationPercentage: valid}, false, true); err != nil {
+			t.Fatalf("percentage %d error = %v", valid, err)
+		}
 	}
 }
