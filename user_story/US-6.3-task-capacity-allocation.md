@@ -60,7 +60,7 @@ mengizinkan total automatic allocation melebihi final timeline capacity.
 | Ordered Task | Dependency-ready unfinished Task yang ditempatkan menurut Project Priority lalu visual WBS order |
 | Remaining Timeline Capacity | Final Timeline Capacity dikurangi fixed reservations dan planned allocations yang sudah ditempatkan lebih dahulu pada Date tersebut |
 | Concurrent Planned Allocation | Dua atau lebih unfinished Task dengan Assignee sama menerima positive allocation pada Date yang sama |
-| Fixed Manual Allocation | Daily allocation projection dari manual timeline yang tidak digeser scheduler otomatis dan mengurangi capacity untuk Project otomatis |
+| Fixed Manual Allocation | Daily allocation projection dari manual timeline yang tidak digeser scheduler otomatis; terhadap unfinished automatic Task, capacity precedence mengikuti Project Priority |
 | Planned Overcapacity | Manual fixed allocation pada Date melebihi final timeline capacity; valid karena manual dates bersifat authoritative |
 | Effective `100%` | Task boleh memakai seluruh remaining capacity, bukan reservation eksklusif atas seluruh daily capacity |
 
@@ -81,7 +81,7 @@ mengizinkan total automatic allocation melebihi final timeline capacity.
 - Concurrent same-assignee planned allocation menggunakan remaining capacity.
 - Automatic allocation tidak boleh overcapacity.
 - Manual timeline menghasilkan fixed daily allocation dan boleh planned overcapacity.
-- Fixed manual allocation memengaruhi shared Assignee capacity untuk Project otomatis.
+- Fixed manual allocation memengaruhi shared Assignee capacity untuk Project otomatis berdasarkan Project Priority.
 - Reconciliation automatic dependency yang aman untuk parallel allocation.
 - Preview, confirmation, transaction, schedule version, stale-response, Locked,
   completed, structural conversion, API, persistence, UI, accessibility, dan
@@ -315,8 +315,7 @@ Date with positive allocation.
 
 For each timeline independently:
 
-1. Load immutable completed Actual Allocation, Locked baseline reservations,
-   and fixed manual allocations.
+1. Load immutable completed Actual Allocation and Locked baseline reservations as absolute reservations, then load fixed manual allocations as immutable rows whose capacity precedence follows Project Priority.
 2. Resolve dependency/Lag readiness.
 3. Select the next ready Task by Project Priority and visual WBS order.
 4. From its earliest eligible Date, allocate its Effort across Dates using its
@@ -355,7 +354,8 @@ The retained invariant is:
 - recalculation with newly introduced higher-priority work may displace mutable
   future allocation of lower-priority work;
 - completed Actual Allocation, Locked baseline, and fixed manual allocation are
-  never displaced;
+  never displaced, but a lower-priority fixed manual allocation does not reduce
+  capacity available to a higher-priority automatic Task;
 - no automatic allocation may exceed Final Timeline Capacity.
 
 Task overlap caused by percentage is valid and is not considered preemption.
@@ -463,6 +463,40 @@ Total remains 8h
 
 The configuration is valid; scheduler uses actual remaining capacity.
 
+### 9.5 Manual versus Automatic Project Priority
+
+Common input:
+
+```text
+Assignee Daily Capacity: 8h
+Task A: Automatic Project, Effort 16h
+Task B: Manual Project, Effort 8h, fixed Date 1–2
+Manual projection for B: 4h on Date 1 and 4h on Date 2
+```
+
+When Project A has higher priority:
+
+| Date | Task A automatic | Task B manual | Aggregate |
+| --- | ---: | ---: | ---: |
+| 1 | 8h | 4h | 12h |
+| 2 | 8h | 4h | 12h |
+
+Task A remains Date 1–2. Task B remains Date 1–2. The overlap is accepted and
+produces no overcapacity warning because Task B's own `4h` row does not exceed
+its `8h` Task Daily Limit; the lower-priority manual row does not consume Task
+A's higher-priority capacity.
+
+When Project B has higher priority:
+
+| Date | Task B manual | Task A automatic | Remaining |
+| --- | ---: | ---: | ---: |
+| 1 | 4h | 4h | 0h |
+| 2 | 4h | 4h | 0h |
+| 3 | 0h | 8h | 0h |
+
+Task B remains Date 1–2. Task A uses shared remaining capacity and finishes on
+Date 3.
+
 ---
 
 ## 10. Automatic Dependency by Assignee
@@ -554,17 +588,37 @@ reference, but manual dates override the ceiling when both cannot be satisfied.
 
 ### 11.3 Interaction with Automatic Projects
 
-- Fixed manual allocation consumes shared Assignee capacity before mutable
-  automatic allocation on the same timeline/Date.
+- Completed Actual Allocation and Locked baseline remain absolute reservations
+  that reduce automatic capacity regardless of Project Priority.
+- Fixed manual allocation is immutable, but competes with unfinished automatic
+  allocation by Project Priority on the same Assignee/timeline/Date.
+- A higher-priority manual Project reduces capacity available to a lower-priority
+  automatic Project. The automatic Task uses the remaining capacity and may move
+  to later eligible Dates.
+- A lower-priority manual Project does not reduce capacity available to a
+  higher-priority automatic Project. Both allocations remain on the Date even
+  when their cumulative total exceeds Final Timeline Capacity.
+- This priority-authorized overlap is accepted without validation error,
+  confirmation, or overcapacity warning. It does not create capacity debt on
+  later Dates.
+- Manual daily allocation that independently exceeds its own Task Daily Limit or
+  Final Timeline Capacity retains the existing manual planned-overcapacity
+  behaviour from Sections 11.1–11.2.
+- Current active Project Priority is unique; no equal-priority manual-versus-
+  automatic tie exists.
 - Automatic allocation uses:
 
 ```text
-Remaining Timeline Capacity
-= max(0, Final Timeline Capacity − fixed reservations)
+Priority-Available Capacity
+= max(
+    0,
+    Final Timeline Capacity
+    − completed Actual reservations
+    − Locked baseline reservations
+    − higher-priority fixed manual allocations
+    − higher-priority mutable automatic allocations
+  )
 ```
-
-- Manual overcapacity floors automatic remaining capacity to `0`; excess is not
-  carried to later Dates.
 - Cross-project dependency readiness uses the manual Task's persisted End Date.
 - A Project automatic scheduler must not move or rewrite another Project's
   manual dates or fixed manual allocation.
@@ -852,13 +906,23 @@ Task Daily Limit or Final Timeline Capacity
 **And** dates remain unchanged
 **And** fixed manual allocation records planned overcapacity.
 
-### AC-19 — Manual allocation reserves shared capacity
+### AC-19 — Manual allocation obeys Project Priority
 
-**Given** fixed manual allocation and automatic Task share one Assignee/Date
-**When** automatic scheduler runs
-**Then** fixed manual allocation is subtracted first
-**And** automatic remaining capacity is floored at zero
+**Given** fixed manual allocation and an unfinished automatic Task share one
+Assignee/timeline/Date
+**When** the manual Project has higher Project Priority
+**Then** its fixed allocation is subtracted before the automatic Task
+**And** the automatic Task uses shared remaining capacity and may finish later
 **And** manual dates/allocation are not moved.
+
+**Given** the automatic Project has higher Project Priority
+**When** the scheduler recalculates
+**Then** the lower-priority fixed manual allocation does not reduce the automatic
+Task's available capacity
+**And** the automatic Task keeps the schedule it would receive without that
+lower-priority manual allocation
+**And** the manual dates/allocation remain unchanged
+**And** cumulative overcapacity is accepted without warning or later capacity debt.
 
 ### AC-20 — Manual range with no working Date
 
@@ -962,7 +1026,7 @@ this story without new coverage.
 - conditional executable/group persistence invariant;
 - explicit zero rejected at persistence/domain boundary;
 - allocation row uniqueness and half-hour deterministic arithmetic;
-- fixed manual reservations subtract before automatic rows;
+- completed/Locked reservations subtract absolutely; fixed manual reservations subtract from automatic rows only when the manual Project has higher priority;
 - automatic rows never exceed final capacity;
 - manual rows may exceed capacity and persist as fixed;
 - percentage mutation rollback with injected scheduler/allocation failure;
@@ -989,7 +1053,7 @@ this story without new coverage.
 4. Verify A/B/C `4h` example produces overlapping dates and C completes before B.
 5. Change Assignee and verify percentage resets/defaults safely without stale schedule.
 6. Edit percentage and confirm impacted Open Projects; verify Locked impact blocks atomically.
-7. Manual Project creates fixed overcapacity allocation; automatic Project sharing Assignee moves around it without changing manual dates.
+7. Higher-priority Manual Project consumes shared capacity and moves a lower-priority automatic Task; lower-priority Manual Project overlaps without moving the higher-priority automatic Task or showing a warning.
 8. Complete a `20%` Task and verify Actual Allocation follows US-6.2 rather than `20%`.
 9. Reopen and verify planned percentage is reused.
 10. Upgrade a pre-feature database and prove no existing Task becomes `0%` or loses dates merely from backfill.
@@ -1003,7 +1067,7 @@ this story without new coverage.
 - Migration/backward-compatibility behaviour is implemented and tested before
   enabling percentage scheduling.
 - Automatic same-assignee parallel allocation is deterministic and capacity-safe.
-- Manual fixed allocation is deterministic, visible, and honoured cross-project.
+- Manual fixed allocation is deterministic, visible, immutable, and honoured cross-project according to Project Priority.
 - Actual Allocation uses revised US-6.2 Actual-Date-only, Actual-versus-Actual, balanced/rebalanced rules and ignores planned percentage.
 - Automatic dependency never serializes a valid parallel schedule incorrectly.
 - All mutations preserve transaction, Locked protection, impact confirmation,

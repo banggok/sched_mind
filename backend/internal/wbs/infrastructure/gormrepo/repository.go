@@ -257,11 +257,7 @@ func (r *Repository) PreviewExecutableSchedule(ctx context.Context, p, id string
 			return err
 		}
 		value := toDomain(generated, false)
-		dependencies, err := loadSchedulePreviewDependencies(tx, id)
-		if err != nil {
-			return err
-		}
-		preview = &application.SchedulePreview{Task: &value, Dependencies: dependencies}
+		preview = &application.SchedulePreview{Task: &value}
 		return errSchedulePreviewComplete
 	})
 	if errors.Is(err, errSchedulePreviewComplete) {

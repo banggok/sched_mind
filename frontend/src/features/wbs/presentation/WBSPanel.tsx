@@ -280,6 +280,7 @@ export function WBSPanel({
                 <FormField
                   label="Name"
                   id="wbs-name"
+                  maxLength={200}
                   value={name}
                   onChange={(event) => setName(event.target.value)}
                   autoFocus

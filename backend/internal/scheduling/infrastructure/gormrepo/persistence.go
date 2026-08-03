@@ -93,8 +93,8 @@ func (repository *Repository) persist(
 		dirtyTasks[taskID] = struct{}{}
 		dirtyProjects[task.ProjectID] = struct{}{}
 	}
-	// Open manual Tasks own authoritative dates but their fixed allocation rows
-	// still participate in the shared portfolio capacity projection.
+	// Open manual Tasks own authoritative dates. Their fixed allocation rows
+	// participate in the shared projection according to Project Priority.
 	for taskID, task := range state.tasks {
 		project := state.projects[task.ProjectID]
 		if _, leaf := state.leafOrder[taskID]; !leaf || project.Status != "open" || project.AutomaticScheduling || task.ActualStart != nil || task.ActualEnd != nil {
@@ -282,11 +282,11 @@ func buildTimelineAllocationRowsWithOvercapacity(state *portfolioState, result *
 	for _, schedule := range result.schedules {
 		allocations = append(allocations, schedule.Allocations...)
 	}
-	sort.Slice(allocations, func(left, right int) bool { return allocations[left].Sequence < allocations[right].Sequence })
+	sort.SliceStable(allocations, func(left, right int) bool { return allocationPrecedes(state, allocations[left], allocations[right]) })
 
 	used := make(map[string]*big.Rat)
 	rows := make([]allocationModel, 0, len(allocations))
-	for _, allocation := range allocations {
+	for projectionSequence, allocation := range allocations {
 		task, exists := state.tasks[allocation.TaskID]
 		if !exists {
 			return nil, fmt.Errorf("%w: allocation task %s missing", schedulingdomain.ErrDataIntegrity, allocation.TaskID)
@@ -316,10 +316,38 @@ func buildTimelineAllocationRowsWithOvercapacity(state *portfolioState, result *
 		rows = append(rows, allocationModel{
 			TaskID: allocation.TaskID, AssigneeID: allocation.MemberID, Timeline: string(result.timeline),
 			AllocationDate: schedulingdomain.DateOnly(allocation.Date), AllocatedMinutes: ratString(allocation.Minutes),
-			RemainingCapacityMinutes: ratString(remaining), Sequence: allocation.Sequence,
+			RemainingCapacityMinutes: ratString(remaining), Sequence: projectionSequence + 1,
 		})
 	}
 	return rows, nil
+}
+
+func allocationPrecedes(state *portfolioState, left, right dailyAllocation) bool {
+	if left.MemberID != right.MemberID {
+		return left.MemberID < right.MemberID
+	}
+	if !left.Date.Equal(right.Date) {
+		return left.Date.Before(right.Date)
+	}
+
+	leftTask, leftExists := state.tasks[left.TaskID]
+	rightTask, rightExists := state.tasks[right.TaskID]
+	if leftExists && rightExists {
+		leftProject := state.projects[leftTask.ProjectID]
+		rightProject := state.projects[rightTask.ProjectID]
+		leftAbsolute := left.Fixed && (leftTask.ActualStart != nil && leftTask.ActualEnd != nil || leftProject.Status == "locked")
+		rightAbsolute := right.Fixed && (rightTask.ActualStart != nil && rightTask.ActualEnd != nil || rightProject.Status == "locked")
+		if leftAbsolute != rightAbsolute {
+			return leftAbsolute
+		}
+		if left.TaskID != right.TaskID {
+			return compareTaskOrder(state, leftTask, rightTask)
+		}
+	}
+	if left.TaskID != right.TaskID {
+		return left.TaskID < right.TaskID
+	}
+	return left.Sequence < right.Sequence
 }
 
 func persistSelectedAllocationRows(database *gorm.DB, rows []allocationModel, selected map[string]struct{}) error {
@@ -367,7 +395,8 @@ func allocationRowsEquivalent(existing, generated []allocationModel) bool {
 		if left[index].AssigneeID != right[index].AssigneeID ||
 			!schedulingdomain.DateOnly(left[index].AllocationDate).Equal(schedulingdomain.DateOnly(right[index].AllocationDate)) ||
 			left[index].AllocatedMinutes != right[index].AllocatedMinutes ||
-			left[index].RemainingCapacityMinutes != right[index].RemainingCapacityMinutes {
+			left[index].RemainingCapacityMinutes != right[index].RemainingCapacityMinutes ||
+			left[index].Sequence != right[index].Sequence {
 			return false
 		}
 	}

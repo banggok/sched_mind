@@ -24,17 +24,33 @@ export function AppShell({
     }
   }, [sidebarOpen]);
 
+  useEffect(() => {
+    if (activePage !== "home") {
+      return;
+    }
+
+    document.documentElement.classList.add("home-viewport-locked");
+
+    return () => {
+      document.documentElement.classList.remove("home-viewport-locked");
+    };
+  }, [activePage]);
+
   return (
-    <div className="min-h-screen bg-canvas text-text-primary">
+    <div
+      className={`${activePage === "home" ? "h-screen overflow-hidden" : "min-h-screen"} bg-canvas text-text-primary`}
+    >
       <ApplicationSidebar
         activePage={activePage}
         open={sidebarOpen}
         onOpenChange={setSidebarOpen}
       />
       <main
-        className={`shell-content min-h-screen ${
-          sidebarOpen ? "lg:ml-64" : "ml-0"
-        }`}
+        className={`shell-content ${
+          activePage === "home"
+            ? "flex h-screen min-h-0 flex-col overflow-hidden"
+            : "min-h-screen"
+        } ${sidebarOpen ? "lg:ml-64" : "ml-0"}`}
       >
         <TopBar />
         {children}

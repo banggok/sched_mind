@@ -476,10 +476,10 @@ export function PortfolioHomePage({
 
   return (
     <>
-      <PageContent>
-        <section className="min-w-0">
+      <PageContent className="flex min-h-0 flex-1 flex-col">
+        <section className="flex min-h-0 min-w-0 flex-1 flex-col">
           <section
-            className="overflow-hidden rounded-surface border border-border-subtle bg-surface shadow-surface"
+            className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-surface border border-border-subtle bg-surface shadow-surface"
             aria-labelledby="portfolio-title"
           >
             <div className="flex items-center justify-between border-b border-border-subtle px-3 py-2">
@@ -1110,7 +1110,7 @@ function Gantt({
 
   return (
     <div
-      className="grid h-[calc(100vh-14rem)] min-h-[28rem] overflow-hidden"
+      className="grid min-h-0 flex-1 overflow-hidden"
       style={{
         gridTemplateColumns: `${leftPaneWidth}px minmax(0, 1fr)`,
         gridTemplateRows: `${ganttHeaderHeight}px minmax(0, 1fr)`,
@@ -1472,8 +1472,7 @@ function Gantt({
         <ul className="sr-only" aria-label="Visible dependencies">
           {arrows.map((arrow) => (
             <li key={`text-${arrow.id}`}>
-              {arrow.blockingTaskId} blocks {arrow.blockedTaskId}; source{" "}
-              {arrow.source}
+              {arrow.blockingTaskId} blocks {arrow.blockedTaskId}
             </li>
           ))}
         </ul>

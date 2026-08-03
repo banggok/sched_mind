@@ -358,25 +358,6 @@ describe("WBSDetailDialog option loading", () => {
           commitmentTimeline: { start: "2026-08-03", end: "2026-08-05" },
         },
       },
-      dependencies: {
-        blockedBy: [
-          {
-            id: "automatic-1",
-            source: "automatic",
-            manualRemovable: false,
-            task: {
-              id: "task-1",
-              name: "Task 1",
-              projectId: "project",
-              projectName: "Alpha",
-              hierarchyPath: "",
-              completed: false,
-              expectedStart: "2026-08-03",
-            },
-          },
-        ],
-        blocks: [],
-      },
     };
     const updateExecutable = vi.fn().mockResolvedValue(undefined);
     const gateway = {
@@ -483,19 +464,6 @@ describe("WBSDetailDialog option loading", () => {
     });
     expect(status.textContent).toContain("Unconfirmed schedule preview");
     expect(status.textContent).toContain("Save confirms the draft");
-    const dependencies = screen.getByRole("region", { name: "Dependencies" });
-    expect(
-      within(dependencies).getByText(
-        "Unconfirmed dependency preview. Save confirms automatic dependencies.",
-      ),
-    ).not.toBeNull();
-    expect(within(dependencies).getByText("Task 1")).not.toBeNull();
-    expect(
-      within(dependencies).getByLabelText("Dependency source: Automatic"),
-    ).not.toBeNull();
-    expect(
-      within(dependencies).queryByRole("button", { name: "Add" }),
-    ).toBeNull();
 
     fireEvent.submit(screen.getByLabelText("Name").closest("form")!);
     await waitFor(() =>
@@ -641,7 +609,6 @@ describe("WBSDetailDialog option loading", () => {
           commitmentTimeline: { start: "2026-08-10", end: "2026-08-12" },
         },
       },
-      dependencies: { blockedBy: [], blocks: [] },
     });
     const status = screen.getByRole("status", {
       name: "Automatic schedule status",
@@ -660,7 +627,6 @@ describe("WBSDetailDialog option loading", () => {
           commitmentTimeline: { start: "2026-08-03", end: "2026-08-05" },
         },
       },
-      dependencies: { blockedBy: [], blocks: [] },
     });
     await waitFor(() => {
       expect(status.textContent).toContain(formatDateOnly("2026-08-12"));
@@ -668,196 +634,7 @@ describe("WBSDetailDialog option loading", () => {
     });
   });
 
-  it("recalculates dates and automatic dependency when Assignee changes", async () => {
-    const node: WBSNode = {
-      id: "task",
-      projectId: "project",
-      name: "Build API",
-      position: 2,
-      hasChildren: false,
-      executable: {
-        roleId: "role",
-        assigneeId: "member-1",
-        effortMinutes: 480,
-        lagDays: 0,
-        executionTimeline: { start: "2026-08-01", end: "2026-08-01" },
-        commitmentTimeline: { start: "2026-08-01", end: "2026-08-02" },
-      },
-      children: [],
-    };
-    const gateway = {
-      previewExecutableSchedule: vi.fn().mockResolvedValue({
-        task: {
-          ...node,
-          executable: {
-            ...node.executable,
-            assigneeId: "member-2",
-            executionTimeline: { start: "2026-08-10", end: "2026-08-11" },
-            commitmentTimeline: {
-              start: "2026-08-10",
-              end: "2026-08-12",
-            },
-          },
-        },
-        dependencies: {
-          blockedBy: [
-            {
-              id: "automatic-2",
-              source: "automatic",
-              manualRemovable: false,
-              task: {
-                id: "task-3",
-                name: "Task 3",
-                projectId: "project",
-                projectName: "Alpha",
-                hierarchyPath: "",
-                completed: false,
-              },
-            },
-          ],
-          blocks: [],
-        },
-      } satisfies SchedulePreview),
-      updateExecutable: vi.fn(),
-    } as unknown as WBSGateway;
-    const dependenciesGateway = {
-      list: vi.fn().mockResolvedValue({
-        blockedBy: [
-          {
-            id: "automatic-1",
-            source: "automatic",
-            manualRemovable: false,
-            task: {
-              id: "task-1",
-              name: "Task 1",
-              projectId: "project",
-              projectName: "Alpha",
-              hierarchyPath: "",
-              completed: false,
-            },
-          },
-        ],
-        blocks: [],
-      }),
-      candidates: vi.fn(),
-      create: vi.fn(),
-      remove: vi.fn(),
-      keepAsManual: vi.fn(),
-      invalidateTask: vi.fn(),
-    } as unknown as DependenciesGateway;
-    const rolesGateway = {
-      list: vi.fn().mockResolvedValue({
-        items: [
-          {
-            id: "role",
-            name: "Backend",
-            createdAt: new Date(),
-            updatedAt: new Date(),
-          },
-        ],
-        page: 1,
-        pageSize: 100,
-        total: 1,
-      }),
-    } as unknown as RolesGateway;
-    const membersGateway = {
-      list: vi.fn().mockResolvedValue({
-        items: [
-          {
-            id: "member-1",
-            name: "Harry",
-            role: { id: "role", name: "Backend" },
-            dailyCapacity: 8,
-            bufferPercentage: 20,
-            baseExecutionCapacity: 6.5,
-            createdAt: new Date(),
-            updatedAt: new Date(),
-          },
-          {
-            id: "member-2",
-            name: "Sandi",
-            role: { id: "role", name: "Backend" },
-            dailyCapacity: 8,
-            bufferPercentage: 20,
-            baseExecutionCapacity: 6.5,
-            createdAt: new Date(),
-            updatedAt: new Date(),
-          },
-        ],
-        page: 1,
-        pageSize: 100,
-        total: 2,
-      }),
-    } as unknown as TeamMembersGateway;
-
-    render(
-      <WBSDetailDialog
-        project={{
-          id: "project",
-          name: "Alpha",
-          status: "open",
-          autoCalculateDate: true,
-          automaticScheduling: true,
-          projectBuffer: 20,
-          scheduleVersion: 0,
-          priority: 1,
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        }}
-        node={node}
-        gateway={gateway}
-        dependenciesGateway={dependenciesGateway}
-        rolesGateway={rolesGateway}
-        membersGateway={membersGateway}
-        onClose={() => undefined}
-        onChanged={() => undefined}
-        onReopened={() => undefined}
-      />,
-    );
-
-    const assignee = await screen.findByLabelText("Assignee");
-    const status = screen.getByRole("status", {
-      name: "Automatic schedule status",
-    });
-    expect(status.textContent).toContain(formatDateOnly("2026-08-01"));
-
-    fireEvent.change(assignee, { target: { value: "member-2" } });
-    expect(
-      (
-        screen.getByRole("spinbutton", {
-          name: "Capacity Allocation (%)",
-        }) as HTMLInputElement
-      ).value,
-    ).toBe("100");
-    expect(gateway.previewExecutableSchedule).not.toHaveBeenCalled();
-    expect(status.textContent).toContain(formatDateOnly("2026-08-01"));
-    fireEvent.blur(assignee);
-
-    await waitFor(() =>
-      expect(gateway.previewExecutableSchedule).toHaveBeenCalledWith(
-        "project",
-        "task",
-        {
-          roleId: "role",
-          assigneeId: "member-2",
-          effortHours: 8,
-          lagDays: 0,
-          capacityAllocationPercentage: 100,
-        },
-        expect.any(AbortSignal),
-      ),
-    );
-    await waitFor(() => {
-      expect(status.textContent).toContain(formatDateOnly("2026-08-10"));
-      expect(status.textContent).toContain(formatDateOnly("2026-08-12"));
-      expect(status.textContent).not.toContain(formatDateOnly("2026-08-01"));
-    });
-    const dependencies = screen.getByRole("region", { name: "Dependencies" });
-    expect(within(dependencies).queryByText("Task 1")).toBeNull();
-    expect(within(dependencies).getByText("Task 3")).not.toBeNull();
-  });
-
-  it("reconciles automatic dependency and returns an unscheduled preview when Assignee is cleared", async () => {
+  it("preserves manual dependency and returns an unscheduled preview when Assignee is cleared", async () => {
     const missingAssigneeReason =
       "Task requires an Assignee before it can be scheduled.";
     const node: WBSNode = {
@@ -889,7 +666,6 @@ describe("WBSDetailDialog option loading", () => {
             commitmentUnscheduledReason: missingAssigneeReason,
           },
         },
-        dependencies: { blockedBy: [], blocks: [] },
       } satisfies SchedulePreview),
       updateExecutable: vi.fn(),
     } as unknown as WBSGateway;
@@ -1007,13 +783,8 @@ describe("WBSDetailDialog option loading", () => {
     await waitFor(() => {
       expect(status.textContent).toContain(missingAssigneeReason);
       expect(status.textContent).not.toContain(formatDateOnly("2026-08-01"));
-      expect(within(dependencies).queryByText("Task 1")).toBeNull();
+      expect(within(dependencies).getByText("Task 1")).not.toBeNull();
     });
-    expect(
-      within(dependencies).getByText(
-        "Unconfirmed dependency preview. Save confirms automatic dependencies.",
-      ),
-    ).not.toBeNull();
   });
 });
 

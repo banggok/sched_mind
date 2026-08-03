@@ -487,7 +487,7 @@ US-6.3 supersedes the former exclusive whole-Task/non-preemptive queue.
 - A Task receives at most its Task Daily Limit and the Date's Remaining Timeline Capacity.
 - Later ordered Tasks may use the same Date when positive capacity remains.
 - Lower-priority work never reduces the allocation a higher-priority Task would receive under its own daily limit.
-- Recalculation may displace mutable future lower-priority rows, but completed Actual Allocation, Locked baseline, and fixed manual allocation remain immutable.
+- Recalculation may displace mutable future lower-priority rows. Completed Actual Allocation, Locked baseline, and fixed manual allocation remain immutable; US-6.3 defines that lower-priority manual allocation may overlap without reducing higher-priority automatic capacity.
 - Valid same-assignee overlap caused by Task Capacity Allocation Percentage is not preemption and is not an integrity conflict.
 
 ---
@@ -705,7 +705,7 @@ When Assignee becomes empty:
 Execution scheduler harus:
 
 1. Load seluruh Active Portfolio input yang diperlukan.
-2. Treat Locked allocations and fixed manual allocation as fixed reservations.
+2. Treat completed Actual Allocation and Locked allocations as absolute reservations; treat fixed manual allocation as immutable with priority-aware capacity precedence from US-6.3.
 3. Exclude Closed Projects from mutable planned scheduling.
 4. Exclude completed Tasks from unfinished recalculation while retaining Actual End readiness anchors and Actual Allocation capacity consumption under revised US-6.2.
 5. Resolve manual dependency graph and reject cycle.
@@ -725,7 +725,7 @@ Execution scheduler must not:
 - let lower-priority work reduce a higher-priority Task below its own daily limit;
 - apply percentage before final timeline capacity rounding;
 - round Task Effort into whole days;
-- shift completed Tasks, Locked baselines, or fixed manual allocation;
+- shift completed Tasks, Locked baselines, or fixed manual allocation; lower-priority manual rows may overlap higher-priority automatic rows under US-6.3;
 - invent a serial auto dependency for valid parallel allocation.
 
 ---
@@ -1451,7 +1451,7 @@ Minimum scenarios:
 9. Preserve manual dependency when Assignee changes.
 10. Automatic Scheduling OFF preserves manual dates and does not regenerate auto relation.
 11. Scheduler failure rolls back Task, relation, and dates.
-12. Shared assignee across Projects stays non-overlapping by Project Priority.
+12. Shared assignee across automatic Projects stays capacity-safe by Project Priority; manual-versus-automatic overlap follows US-6.3 priority-aware immutable allocation rules.
 13. Locked baseline does not move.
 14. Stale response cannot restore old dependency/dates.
 15. Clear Assignee and blur; preview removes stale automatic ownership, shows

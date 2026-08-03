@@ -52,7 +52,7 @@ func TestConcurrentSameAssigneeAllocationUsesDailyLimits_US63_AC9_AC11_AC15(t *t
 		}
 	}
 	var count int64
-	if err := database.Model(&dependencyModel{}).Where("automatic_owned = ?", true).Count(&count).Error; err != nil {
+	if err := database.Model(&dependencyModel{}).Count(&count).Error; err != nil {
 		t.Fatal(err)
 	}
 	if count != 0 {

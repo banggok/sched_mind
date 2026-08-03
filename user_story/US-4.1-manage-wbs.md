@@ -1,5 +1,11 @@
 # US-4.1 Manage WBS
 
+> **Product decision update — US-6.4:** Task mutations and rollback-only schedule
+> preview recalculate dates, allocations, and unscheduled state without creating,
+> removing, or previewing automatic dependency ownership. Dependency remains
+> explicit manual data owned by US-5.1. This supersedes every automatic
+> dependency preview/reconciliation clause in this story.
+
 > **Product decision update — US-7.1:** Home Portfolio Gantt is the canonical
 > active-Project WBS presentation surface. The standalone Project Structure
 > entry point is removed. Home reuses the same Project, Group, and Task forms and
@@ -347,7 +353,7 @@ duplicate their domain rules.
 
 ### WBS Name
 
-- Name is trimmed, required, not whitespace-only, and at most 100 characters.
+- Name is trimmed, required, not whitespace-only, and at most 200 characters.
 - Sibling names are case-insensitively unique; equal names under different
   parents are allowed. Rename excludes the current node from the uniqueness
   check.

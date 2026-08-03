@@ -2,7 +2,6 @@ package gormrepo
 
 import (
 	"fmt"
-	"sort"
 
 	schedulingdomain "github.com/banggok/sched_mind/backend/internal/scheduling/domain"
 )
@@ -33,27 +32,9 @@ func (state *portfolioState) potentialLockedImpacts() ([]string, error) {
 	simulation.classifyDependencies()
 	simulation.classifyFixedTasks()
 
-	var execution *timelineResult
-	previousBlockers := map[string]string{}
-	converged := false
-	for iteration := 0; iteration < len(simulation.tasks)+1; iteration++ {
-		result, err := simulation.scheduleTimeline(schedulingdomain.Execution)
-		if err != nil {
-			return nil, err
-		}
-		execution = result
-		if blockerMapsEqual(previousBlockers, execution.automaticBlocker) {
-			converged = true
-			break
-		}
-		previousBlockers = cloneBlockerMap(execution.automaticBlocker)
-		simulation.refreshDependenciesFromExecution(execution)
-		if err := simulation.validateEffectiveGraph(); err != nil {
-			return nil, err
-		}
-	}
-	if !converged {
-		return nil, schedulingdomain.ErrNoConvergence
+	execution, err := simulation.scheduleTimeline(schedulingdomain.Execution)
+	if err != nil {
+		return nil, err
 	}
 	commitment, err := simulation.scheduleTimeline(schedulingdomain.Commitment)
 	if err != nil {
@@ -87,8 +68,7 @@ func (state *portfolioState) potentialLockedImpacts() ([]string, error) {
 		}
 		if !scheduleMatchesTask(task, executionSchedule, commitmentSchedule) ||
 			!allocationRowsEquivalent(state.existingAllocations[schedulingdomain.Execution][taskID], generatedRows[schedulingdomain.Execution][taskID]) ||
-			!allocationRowsEquivalent(state.existingAllocations[schedulingdomain.Commitment][taskID], generatedRows[schedulingdomain.Commitment][taskID]) ||
-			existingAutomaticBlocker(state, taskID) != execution.automaticBlocker[taskID] {
+			!allocationRowsEquivalent(state.existingAllocations[schedulingdomain.Commitment][taskID], generatedRows[schedulingdomain.Commitment][taskID]) {
 			impacted[task.ProjectID] = struct{}{}
 		}
 	}
@@ -121,40 +101,6 @@ func (state *portfolioState) cloneForSimulation() *portfolioState {
 	}
 	for id, order := range state.leafOrder {
 		clone.leafOrder[id] = order
-	}
-	return clone
-}
-
-func existingAutomaticBlocker(state *portfolioState, blockedTaskID string) string {
-	values := make([]string, 0)
-	for _, dependency := range state.dependencies {
-		if dependency.BlockedTaskID == blockedTaskID && dependency.AutomaticOwned {
-			values = append(values, dependency.BlockingTaskID)
-		}
-	}
-	sort.Strings(values)
-	if len(values) == 0 {
-		return ""
-	}
-	return values[0]
-}
-
-func blockerMapsEqual(left, right map[string]string) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for taskID, blockerID := range left {
-		if right[taskID] != blockerID {
-			return false
-		}
-	}
-	return true
-}
-
-func cloneBlockerMap(value map[string]string) map[string]string {
-	clone := make(map[string]string, len(value))
-	for taskID, blockerID := range value {
-		clone[taskID] = blockerID
 	}
 	return clone
 }

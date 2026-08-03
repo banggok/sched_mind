@@ -22,6 +22,8 @@ This directory supplies the concrete decisions needed to apply that baseline:
   context and points to authoritative requirements.
 - [`task-capacity-allocation-implementation-evidence.md`](task-capacity-allocation-implementation-evidence.md)
   records US-6.3 and revised US-6.2 acceptance traceability.
+- [`remove-auto-dependency-implementation-evidence.md`](remove-auto-dependency-implementation-evidence.md)
+  records US-6.4 manual-only dependency traceability.
 
 Project-specific rules may override a generic recommendation only when the
 exception is explicit, justified, and documented here. Mandatory dependency,

@@ -10,7 +10,6 @@ import (
 var (
 	ErrInvalidDecimal     = errors.New("invalid scheduling decimal")
 	ErrDataIntegrity      = errors.New("scheduling data integrity violation")
-	ErrNoConvergence      = errors.New("automatic dependency reconciliation did not converge")
 	ErrConcurrentConflict = errors.New("schedule changed concurrently")
 )
 

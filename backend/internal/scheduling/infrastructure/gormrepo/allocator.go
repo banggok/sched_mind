@@ -28,10 +28,9 @@ type taskSchedule struct {
 }
 
 type timelineResult struct {
-	timeline         schedulingdomain.Timeline
-	schedules        map[string]taskSchedule
-	automaticBlocker map[string]string
-	calendar         *allocationCalendar
+	timeline  schedulingdomain.Timeline
+	schedules map[string]taskSchedule
+	calendar  *allocationCalendar
 }
 
 type allocationCalendar struct {
@@ -51,10 +50,9 @@ func newAllocationCalendar(state *portfolioState, timeline schedulingdomain.Time
 
 func (state *portfolioState) scheduleTimeline(timeline schedulingdomain.Timeline) (*timelineResult, error) {
 	result := &timelineResult{
-		timeline:         timeline,
-		schedules:        make(map[string]taskSchedule),
-		automaticBlocker: make(map[string]string),
-		calendar:         newAllocationCalendar(state, timeline),
+		timeline:  timeline,
+		schedules: make(map[string]taskSchedule),
+		calendar:  newAllocationCalendar(state, timeline),
 	}
 	if err := result.reserveFixedTasks(); err != nil {
 		return nil, err
@@ -115,9 +113,6 @@ func (state *portfolioState) scheduleTimeline(timeline schedulingdomain.Timeline
 		delete(pending, selected.ID)
 	}
 
-	if timeline == schedulingdomain.Execution {
-		result.deriveAutomaticBlockers()
-	}
 	return result, nil
 }
 
@@ -424,7 +419,9 @@ func (calendar *allocationCalendar) simulateContiguous(
 
 		remainingCapacity := schedulingdomain.CloneRat(base)
 		for _, allocation := range existing {
-			remainingCapacity.Sub(remainingCapacity, allocation.Minutes)
+			if calendar.allocationConsumesCapacityFor(task, allocation) {
+				remainingCapacity.Sub(remainingCapacity, allocation.Minutes)
+			}
 		}
 		if remainingCapacity.Sign() <= 0 {
 			date = date.AddDate(0, 0, 1)
@@ -444,6 +441,29 @@ func (calendar *allocationCalendar) simulateContiguous(
 		date = date.AddDate(0, 0, 1)
 	}
 	return nil, nil, time.Time{}, false, nil
+}
+
+func (calendar *allocationCalendar) allocationConsumesCapacityFor(candidate taskModel, allocation dailyAllocation) bool {
+	if !allocation.Fixed {
+		return true
+	}
+
+	reservedTask, taskExists := calendar.state.tasks[allocation.TaskID]
+	reservedProject, projectExists := calendar.state.projects[reservedTask.ProjectID]
+	if !taskExists || !projectExists {
+		return true
+	}
+	if reservedTask.ActualStart != nil && reservedTask.ActualEnd != nil || reservedProject.Status == "locked" {
+		return true
+	}
+	if reservedProject.Status == "open" && !reservedProject.AutomaticScheduling {
+		candidateProject, exists := calendar.state.projects[candidate.ProjectID]
+		if !exists {
+			return true
+		}
+		return reservedProject.Priority <= candidateProject.Priority
+	}
+	return true
 }
 
 func taskDailyLimit(capacity *big.Rat, percentage int) *big.Rat {
@@ -628,55 +648,4 @@ func minRat(left, right *big.Rat) *big.Rat {
 		return schedulingdomain.CloneRat(left)
 	}
 	return schedulingdomain.CloneRat(right)
-}
-
-func (result *timelineResult) deriveAutomaticBlockers() {
-	state := result.calendar.state
-	byMember := make(map[string][]taskSchedule)
-	for taskID, schedule := range result.schedules {
-		task := state.tasks[taskID]
-		if schedule.Start == nil || schedule.End == nil || len(schedule.Allocations) == 0 || task.AssigneeID == nil {
-			continue
-		}
-		byMember[*task.AssigneeID] = append(byMember[*task.AssigneeID], schedule)
-	}
-	for memberID := range byMember {
-		values := byMember[memberID]
-		sort.Slice(values, func(left, right int) bool {
-			if !values[left].Start.Equal(*values[right].Start) {
-				return values[left].Start.Before(*values[right].Start)
-			}
-			return values[left].Allocations[0].Sequence < values[right].Allocations[0].Sequence
-		})
-		for index, schedule := range values {
-			task := state.tasks[schedule.TaskID]
-			project := state.projects[task.ProjectID]
-			if index == 0 || schedule.ManualCandidateDate == nil || schedule.Start == nil || task.ActualStart != nil && task.ActualEnd != nil || project.Status != "open" || !project.AutomaticScheduling {
-				continue
-			}
-			previous := values[index-1]
-			if previous.End == nil {
-				continue
-			}
-			if containsTaskID(state.manualBlockers[schedule.TaskID], previous.TaskID) {
-				continue
-			}
-			resourceDelayed := schedule.Start.After(*schedule.ManualCandidateDate)
-			if !resourceDelayed && state.isEffectiveBlocker(schedule.TaskID, previous.TaskID) {
-				resourceDelayed = true
-			}
-			if resourceDelayed && !previous.End.After(*schedule.Start) {
-				result.automaticBlocker[schedule.TaskID] = previous.TaskID
-			}
-		}
-	}
-}
-
-func containsTaskID(values []string, taskID string) bool {
-	for _, value := range values {
-		if value == taskID {
-			return true
-		}
-	}
-	return false
 }

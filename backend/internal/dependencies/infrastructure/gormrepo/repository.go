@@ -24,7 +24,6 @@ func New(db *gorm.DB) *Repository { return &Repository{db: db} }
 
 type dependencyModel struct {
 	ID, BlockingTaskID, BlockedTaskID string
-	ManualOwned, AutomaticOwned       bool
 	CreatedAt, UpdatedAt              time.Time
 }
 
@@ -58,13 +57,13 @@ func (r *Repository) List(ctx context.Context, taskID string) (*domain.Detail, e
 	}
 	var incoming, outgoing []dependencyRow
 	if err := r.db.WithContext(ctx).Table("task_dependencies d").
-		Select("d.id,d.blocking_task_id,d.blocked_task_id,d.manual_owned,d.automatic_owned,d.created_at,d.updated_at,t.id task_id,t.name task_name,t.project_id,p.name project_name,t.actual_start,t.actual_end,t.execution_start expected_start").
+		Select("d.id,d.blocking_task_id,d.blocked_task_id,d.created_at,d.updated_at,t.id task_id,t.name task_name,t.project_id,p.name project_name,t.actual_start,t.actual_end,t.execution_start expected_start").
 		Joins("JOIN wbs_nodes t ON t.id = d.blocking_task_id").Joins("JOIN projects p ON p.id = t.project_id").
 		Where("d.blocked_task_id = ?", taskID).Order("LOWER(p.name) ASC").Order("t.parent_key ASC").Order("t.position ASC").Order("t.id ASC").Scan(&incoming).Error; err != nil {
 		return nil, fmt.Errorf("load blocked by: %w", err)
 	}
 	if err := r.db.WithContext(ctx).Table("task_dependencies d").
-		Select("d.id,d.blocking_task_id,d.blocked_task_id,d.manual_owned,d.automatic_owned,d.created_at,d.updated_at,t.id task_id,t.name task_name,t.project_id,p.name project_name,t.actual_start,t.actual_end,t.execution_start expected_start").
+		Select("d.id,d.blocking_task_id,d.blocked_task_id,d.created_at,d.updated_at,t.id task_id,t.name task_name,t.project_id,p.name project_name,t.actual_start,t.actual_end,t.execution_start expected_start").
 		Joins("JOIN wbs_nodes t ON t.id = d.blocked_task_id").Joins("JOIN projects p ON p.id = t.project_id").
 		Where("d.blocking_task_id = ?", taskID).Order("LOWER(p.name) ASC").Order("t.parent_key ASC").Order("t.position ASC").Order("t.id ASC").Scan(&outgoing).Error; err != nil {
 		return nil, fmt.Errorf("load blocks: %w", err)
@@ -75,7 +74,6 @@ func (r *Repository) List(ctx context.Context, taskID string) (*domain.Detail, e
 // dependencyRow is kept package-level so DTO mapping remains explicit.
 type dependencyRow struct {
 	ID, BlockingTaskID, BlockedTaskID, TaskID, TaskName, ProjectID, ProjectName string
-	ManualOwned, AutomaticOwned                                                 bool
 	CreatedAt, UpdatedAt                                                        time.Time
 	ActualStart, ActualEnd, ExpectedStart                                       *time.Time
 }
@@ -83,7 +81,7 @@ type dependencyRow struct {
 func mapDependencyRows(rows []dependencyRow) []domain.Item {
 	out := make([]domain.Item, 0, len(rows))
 	for _, v := range rows {
-		out = append(out, domain.Item{Dependency: domain.Dependency{ID: v.ID, BlockingTaskID: v.BlockingTaskID, BlockedTaskID: v.BlockedTaskID, ManualOwned: v.ManualOwned, AutomaticOwned: v.AutomaticOwned, CreatedAt: v.CreatedAt, UpdatedAt: v.UpdatedAt}, Task: domain.Task{ID: v.TaskID, Name: v.TaskName, ProjectID: v.ProjectID, ProjectName: v.ProjectName, ActualStart: v.ActualStart, ActualEnd: v.ActualEnd, ExpectedStart: v.ExpectedStart}})
+		out = append(out, domain.Item{Dependency: domain.Dependency{ID: v.ID, BlockingTaskID: v.BlockingTaskID, BlockedTaskID: v.BlockedTaskID, CreatedAt: v.CreatedAt, UpdatedAt: v.UpdatedAt}, Task: domain.Task{ID: v.TaskID, Name: v.TaskName, ProjectID: v.ProjectID, ProjectName: v.ProjectName, ActualStart: v.ActualStart, ActualEnd: v.ActualEnd, ExpectedStart: v.ExpectedStart}})
 	}
 	return out
 }
@@ -231,26 +229,7 @@ func (r *Repository) Create(ctx context.Context, value domain.Dependency, schedu
 			Where("blocking_task_id = ? AND blocked_task_id = ?", blocking.ID, blocked.ID).
 			First(&existing).Error
 		if err == nil {
-			current, hydrateErr := domain.Rehydrate(existing.ID, existing.BlockingTaskID, existing.BlockedTaskID, existing.ManualOwned, existing.AutomaticOwned, existing.CreatedAt, existing.UpdatedAt)
-			if hydrateErr != nil {
-				return hydrateErr
-			}
-			if err := current.AddManual(value.UpdatedAt); err != nil {
-				return err
-			}
-			if err := tx.Model(&dependencyModel{}).Where("id = ?", current.ID).Updates(map[string]any{
-				"manual_owned": true,
-				"updated_at":   current.UpdatedAt,
-			}).Error; err != nil {
-				return err
-			}
-			if projects[blocking.ProjectID] || projects[blocked.ProjectID] {
-				if err := schedule(dependencyScheduleContext(ctx, tx, blocked.ProjectID), uniqueStrings(blocking.ProjectID, blocked.ProjectID)); err != nil {
-					return err
-				}
-			}
-			out = current
-			return nil
+			return domain.ErrAlreadyExists
 		}
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return err
@@ -269,7 +248,7 @@ func (r *Repository) Create(ctx context.Context, value domain.Dependency, schedu
 		}
 		m := dependencyModel{
 			ID: value.ID, BlockingTaskID: value.BlockingTaskID, BlockedTaskID: value.BlockedTaskID,
-			ManualOwned: true, AutomaticOwned: false, CreatedAt: value.CreatedAt, UpdatedAt: value.UpdatedAt,
+			CreatedAt: value.CreatedAt, UpdatedAt: value.UpdatedAt,
 		}
 		if err := tx.Create(&m).Error; err != nil {
 			return mapConflict(err)
@@ -280,8 +259,6 @@ func (r *Repository) Create(ctx context.Context, value domain.Dependency, schedu
 			}
 		}
 		copy := value
-		copy.ManualOwned = true
-		copy.AutomaticOwned = false
 		out = &copy
 		return nil
 	})
@@ -301,7 +278,7 @@ func (r *Repository) Delete(ctx context.Context, id string, now time.Time, sched
 		if err != nil {
 			return err
 		}
-		m, dependency, blocking, blocked, err := loadOwnedDependency(tx, id)
+		m, _, blocking, blocked, err := loadOwnedDependency(tx, id)
 		if err != nil {
 			return err
 		}
@@ -311,18 +288,7 @@ func (r *Repository) Delete(ctx context.Context, id string, now time.Time, sched
 		if blocked.ActualStart != nil && blocked.ActualEnd != nil {
 			return domain.ErrCompletedHistory
 		}
-		deleteRelation, err := dependency.RemoveManual(now)
-		if err != nil {
-			return err
-		}
-		if deleteRelation {
-			if err := tx.Delete(&m).Error; err != nil {
-				return err
-			}
-		} else if err := tx.Model(&dependencyModel{}).Where("id = ?", id).Updates(map[string]any{
-			"manual_owned": false,
-			"updated_at":   dependency.UpdatedAt,
-		}).Error; err != nil {
+		if err := tx.Delete(&m).Error; err != nil {
 			return err
 		}
 		if projects[blocking.ProjectID] || projects[blocked.ProjectID] {
@@ -330,45 +296,6 @@ func (r *Repository) Delete(ctx context.Context, id string, now time.Time, sched
 		}
 		return nil
 	})
-}
-
-func (r *Repository) KeepAsManual(ctx context.Context, id string, now time.Time, schedule func(context.Context, []string) error) (*domain.Dependency, error) {
-	ctx, release := persistence.SerializeScheduleMutation(ctx)
-	defer release()
-	r.graphMu.Lock()
-	defer r.graphMu.Unlock()
-	var out *domain.Dependency
-	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := persistence.LockScheduleMutation(tx); err != nil {
-			return fmt.Errorf("lock schedule mutation: %w", err)
-		}
-		projects, err := lockActiveProjects(tx)
-		if err != nil {
-			return err
-		}
-		_, dependency, blocking, blocked, err := loadOwnedDependency(tx, id)
-		if err != nil {
-			return err
-		}
-		if err := ensureEndpointProjectsOpen(tx, blocking, blocked); err != nil {
-			return err
-		}
-		dependency.KeepAsManual(now)
-		if err := tx.Model(&dependencyModel{}).Where("id = ?", id).Updates(map[string]any{
-			"manual_owned": true,
-			"updated_at":   now,
-		}).Error; err != nil {
-			return err
-		}
-		if projects[blocking.ProjectID] || projects[blocked.ProjectID] {
-			if err := schedule(dependencyScheduleContext(ctx, tx, blocked.ProjectID), uniqueStrings(blocking.ProjectID, blocked.ProjectID)); err != nil {
-				return err
-			}
-		}
-		out = dependency
-		return nil
-	})
-	return out, err
 }
 
 func loadOwnedDependency(tx *gorm.DB, id string) (dependencyModel, *domain.Dependency, taskModel, taskModel, error) {
@@ -380,7 +307,7 @@ func loadOwnedDependency(tx *gorm.DB, id string) (dependencyModel, *domain.Depen
 	if err != nil {
 		return model, nil, taskModel{}, taskModel{}, err
 	}
-	dependency, err := domain.Rehydrate(model.ID, model.BlockingTaskID, model.BlockedTaskID, model.ManualOwned, model.AutomaticOwned, model.CreatedAt, model.UpdatedAt)
+	dependency, err := domain.Rehydrate(model.ID, model.BlockingTaskID, model.BlockedTaskID, model.CreatedAt, model.UpdatedAt)
 	if err != nil {
 		return model, nil, taskModel{}, taskModel{}, err
 	}

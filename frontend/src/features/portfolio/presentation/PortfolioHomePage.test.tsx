@@ -150,7 +150,6 @@ function projection(
             id: "dependency",
             blockingTaskId: "completed",
             blockedTaskId: "completed",
-            source: "manual",
           },
         ]
       : [],
@@ -487,7 +486,6 @@ describe("US-7.1 Home portfolio Gantt acceptance workflow", () => {
           id: "same-day-dependency",
           blockingTaskId: "task-3",
           blockedTaskId: "task-4",
-          source: "automatic",
         },
       ],
       holidays: [],

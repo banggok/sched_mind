@@ -21,7 +21,6 @@ type Service interface {
 	Candidates(context.Context, string, domain.Direction, string, int, int) (*domain.CandidatePage, error)
 	Create(context.Context, string, string) (*domain.Dependency, error)
 	Delete(context.Context, string) error
-	KeepAsManual(context.Context, string) (*domain.Dependency, error)
 }
 type Handler struct{ service Service }
 
@@ -31,7 +30,6 @@ func (h *Handler) Register(m *http.ServeMux) {
 	m.HandleFunc("GET /api/dependency-candidates", h.candidates)
 	m.HandleFunc("POST /api/dependencies", h.create)
 	m.HandleFunc("DELETE /api/dependencies/{dependencyId}", h.delete)
-	m.HandleFunc("POST /api/dependencies/{dependencyId}/keep-manual", h.keepAsManual)
 }
 
 type response struct {
@@ -42,13 +40,11 @@ type createRequest struct {
 	BlockedTaskID  string `json:"blockedTaskId"`
 }
 type dependencyResponse struct {
-	ID              string `json:"id"`
-	BlockingTaskID  string `json:"blockingTaskId"`
-	BlockedTaskID   string `json:"blockedTaskId"`
-	CreatedAt       string `json:"createdAt"`
-	UpdatedAt       string `json:"updatedAt"`
-	Source          string `json:"source"`
-	ManualRemovable bool   `json:"manualRemovable"`
+	ID             string `json:"id"`
+	BlockingTaskID string `json:"blockingTaskId"`
+	BlockedTaskID  string `json:"blockedTaskId"`
+	CreatedAt      string `json:"createdAt"`
+	UpdatedAt      string `json:"updatedAt"`
 }
 type taskItem struct {
 	ID            string  `json:"id"`
@@ -60,10 +56,8 @@ type taskItem struct {
 	ExpectedStart *string `json:"expectedStart"`
 }
 type relationItem struct {
-	ID              string   `json:"id"`
-	Source          string   `json:"source"`
-	ManualRemovable bool     `json:"manualRemovable"`
-	Task            taskItem `json:"task"`
+	ID   string   `json:"id"`
+	Task taskItem `json:"task"`
 }
 type detailResponse struct {
 	BlockedBy []relationItem `json:"blockedBy"`
@@ -151,24 +145,13 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(204)
 }
 
-func (h *Handler) keepAsManual(w http.ResponseWriter, r *http.Request) {
-	value, err := h.service.KeepAsManual(r.Context(), r.PathValue("dependencyId"))
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	httpjson.Write(w, 200, response{mapDependency(*value)})
-}
-
 func mapDependency(value domain.Dependency) dependencyResponse {
 	return dependencyResponse{
-		ID:              value.ID,
-		BlockingTaskID:  value.BlockingTaskID,
-		BlockedTaskID:   value.BlockedTaskID,
-		CreatedAt:       value.CreatedAt.Format(time.RFC3339Nano),
-		UpdatedAt:       value.UpdatedAt.Format(time.RFC3339Nano),
-		Source:          string(value.Source()),
-		ManualRemovable: value.ManualRemovable(),
+		ID:             value.ID,
+		BlockingTaskID: value.BlockingTaskID,
+		BlockedTaskID:  value.BlockedTaskID,
+		CreatedAt:      value.CreatedAt.Format(time.RFC3339Nano),
+		UpdatedAt:      value.UpdatedAt.Format(time.RFC3339Nano),
 	}
 }
 
@@ -179,7 +162,7 @@ func detail(v *domain.Detail) detailResponse {
 func relations(values []domain.Item) []relationItem {
 	out := make([]relationItem, 0, len(values))
 	for _, v := range values {
-		out = append(out, relationItem{ID: v.Dependency.ID, Source: string(v.Dependency.Source()), ManualRemovable: v.Dependency.ManualRemovable(), Task: mapTask(v.Task)})
+		out = append(out, relationItem{ID: v.Dependency.ID, Task: mapTask(v.Task)})
 	}
 	return out
 }
@@ -257,13 +240,11 @@ func writeError(w http.ResponseWriter, err error) {
 		status, code, message = 409, "DEPENDENCY_COMPLETED_TASK_CANNOT_BE_BLOCKED", "A completed task cannot be blocked by a new dependency."
 	case errors.Is(err, domain.ErrCompletedHistory):
 		status, code, message = 409, "DEPENDENCY_COMPLETED_HISTORY_READ_ONLY", "This historical dependency is read-only."
-	case errors.Is(err, domain.ErrAutomaticOnlyReadOnly):
-		status, code, message = 409, "DEPENDENCY_AUTOMATIC_ONLY_READ_ONLY", "Automatic-only dependency cannot be removed directly."
 	case errors.Is(err, domain.ErrInvalidDirection):
 		status, code, message = 400, "INVALID_DEPENDENCY_DIRECTION", "Dependency direction is invalid."
 	case errors.Is(err, schedulingdomain.ErrConcurrentConflict):
 		status, code, message = 409, "SCHEDULING_CONFLICT", "The schedule changed concurrently. Refresh and try again."
-	case errors.Is(err, schedulingdomain.ErrDataIntegrity), errors.Is(err, schedulingdomain.ErrNoConvergence):
+	case errors.Is(err, schedulingdomain.ErrDataIntegrity):
 		status, code, message = 409, "SCHEDULING_DATA_INTEGRITY_CONFLICT", "The portfolio schedule is inconsistent and was not changed."
 	}
 	res := errorResponse{Code: code, Message: message}

@@ -88,7 +88,6 @@ function dependenciesGateway(): DependenciesGateway {
     }),
     create: vi.fn().mockResolvedValue(undefined),
     remove: vi.fn().mockResolvedValue(undefined),
-    keepAsManual: vi.fn().mockResolvedValue(undefined),
     invalidateTask: vi.fn(),
     invalidateAll: vi.fn(),
   };
@@ -103,8 +102,6 @@ describe("WBS direct Home action controller", () => {
       blocks: [
         {
           id: "dependency",
-          source: "manual",
-          manualRemovable: true,
           task: {
             id: "deploy",
             name: "Deploy",

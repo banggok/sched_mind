@@ -50,7 +50,7 @@ func NormalizeName(value string) (string, error) {
 	if value == "" {
 		return "", ErrNameRequired
 	}
-	if utf8.RuneCountInString(value) > 100 {
+	if utf8.RuneCountInString(value) > 200 {
 		return "", ErrNameTooLong
 	}
 	return value, nil

@@ -2,9 +2,20 @@ package domain
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
+
+func TestNormalizeNameAcceptsTwoHundredCharactersAndRejectsMore(t *testing.T) {
+	want := strings.Repeat("界", 200)
+	if got, err := NormalizeName(want); err != nil || got != want {
+		t.Fatalf("NormalizeName(200 runes) = %q, %v", got, err)
+	}
+	if _, err := NormalizeName(strings.Repeat("界", 201)); !errors.Is(err, ErrNameTooLong) {
+		t.Fatalf("NormalizeName(201 runes) error = %v, want %v", err, ErrNameTooLong)
+	}
+}
 
 func TestNodeStateAndExecutableValidation(t *testing.T) {
 	node, err := New("w", "p", nil, " Build ", 1, time.Now())

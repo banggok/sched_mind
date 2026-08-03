@@ -76,6 +76,14 @@ html {
   scrollbar-gutter: stable;
 }
 
+html.home-viewport-locked,
+html.home-viewport-locked body,
+html.home-viewport-locked #root {
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
 :root {
   font-family:
     Inter,

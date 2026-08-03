@@ -103,7 +103,7 @@ func seedProjectAndTasks(t *testing.T, db *gorm.DB) {
 
 func testDependency(id, from, to string) domain.Dependency {
 	now := time.Date(2026, 7, 27, 0, 0, 0, 0, time.UTC)
-	return domain.Dependency{ID: id, BlockingTaskID: from, BlockedTaskID: to, ManualOwned: true, CreatedAt: now, UpdatedAt: now}
+	return domain.Dependency{ID: id, BlockingTaskID: from, BlockedTaskID: to, CreatedAt: now, UpdatedAt: now}
 }
 
 func TestCreateListAndDuplicateConstraint(t *testing.T) {
@@ -339,7 +339,6 @@ func TestDeleteRejectsCompletedBlockedHistory(t *testing.T) {
 		ID:             "ab",
 		BlockingTaskID: "a",
 		BlockedTaskID:  "b",
-		ManualOwned:    true,
 		CreatedAt:      time.Now(),
 		UpdatedAt:      time.Now(),
 	}).Error; err != nil {
@@ -1134,143 +1133,4 @@ func TestCandidatesIncludeTasksFromAllActiveProjects(t *testing.T) {
 			"Gamma > Gamma Blocker",
 		)
 	}
-}
-
-func TestOwnershipCommandsPreserveOneEndpointAndRollbackWithScheduler_AC23_AC24_AC25_AC35(t *testing.T) {
-	t.Run("manual create upgrades automatic endpoint and rolls back on scheduling failure", func(t *testing.T) {
-		repo, db := testRepository(t)
-		seedProjectAndTasks(t, db)
-		now := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
-		if err := db.Create(&dependencyModel{
-			ID: "automatic", BlockingTaskID: "a", BlockedTaskID: "b",
-			AutomaticOwned: true, CreatedAt: now, UpdatedAt: now,
-		}).Error; err != nil {
-			t.Fatal(err)
-		}
-
-		schedulerFailure := errors.New("scheduler failed")
-		_, err := repo.Create(
-			context.Background(),
-			testDependency("ignored-new-id", "a", "b"),
-			func(context.Context, []string) error { return schedulerFailure },
-		)
-		if !errors.Is(err, schedulerFailure) {
-			t.Fatalf("Create() error=%v, want scheduler failure", err)
-		}
-		var afterFailure dependencyModel
-		if err := db.First(&afterFailure, "id = ?", "automatic").Error; err != nil {
-			t.Fatal(err)
-		}
-		if afterFailure.ManualOwned || !afterFailure.AutomaticOwned {
-			t.Fatalf("ownership after rollback = manual:%v automatic:%v", afterFailure.ManualOwned, afterFailure.AutomaticOwned)
-		}
-
-		created, err := repo.Create(
-			context.Background(),
-			testDependency("ignored-new-id", "a", "b"),
-			func(context.Context, []string) error { return nil },
-		)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if created == nil || created.ID != "automatic" || created.Source() != domain.SourceShared {
-			t.Fatalf("shared result=%#v", created)
-		}
-		var rows []dependencyModel
-		if err := db.Where("blocking_task_id = ? AND blocked_task_id = ?", "a", "b").Find(&rows).Error; err != nil {
-			t.Fatal(err)
-		}
-		if len(rows) != 1 || !rows[0].ManualOwned || !rows[0].AutomaticOwned {
-			t.Fatalf("endpoint rows=%#v, want one shared row", rows)
-		}
-	})
-
-	t.Run("shared delete removes manual ownership only and automatic-only remains protected", func(t *testing.T) {
-		repo, db := testRepository(t)
-		seedProjectAndTasks(t, db)
-		now := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
-		if err := db.Create(&dependencyModel{
-			ID: "shared", BlockingTaskID: "a", BlockedTaskID: "b",
-			ManualOwned: true, AutomaticOwned: true, CreatedAt: now, UpdatedAt: now,
-		}).Error; err != nil {
-			t.Fatal(err)
-		}
-
-		schedulerFailure := errors.New("scheduler failed")
-		if err := repo.Delete(context.Background(), "shared", now.Add(time.Hour), func(context.Context, []string) error {
-			return schedulerFailure
-		}); !errors.Is(err, schedulerFailure) {
-			t.Fatalf("Delete() error=%v, want scheduler failure", err)
-		}
-		var afterFailure dependencyModel
-		if err := db.First(&afterFailure, "id = ?", "shared").Error; err != nil {
-			t.Fatal(err)
-		}
-		if !afterFailure.ManualOwned || !afterFailure.AutomaticOwned {
-			t.Fatalf("rollback ownership = %#v", afterFailure)
-		}
-
-		if err := repo.Delete(context.Background(), "shared", now.Add(2*time.Hour), func(context.Context, []string) error { return nil }); err != nil {
-			t.Fatal(err)
-		}
-		var automaticOnly dependencyModel
-		if err := db.First(&automaticOnly, "id = ?", "shared").Error; err != nil {
-			t.Fatal(err)
-		}
-		if automaticOnly.ManualOwned || !automaticOnly.AutomaticOwned {
-			t.Fatalf("ownership after manual removal = %#v", automaticOnly)
-		}
-		if err := repo.Delete(context.Background(), "shared", now.Add(3*time.Hour), func(context.Context, []string) error { return nil }); !errors.Is(err, domain.ErrAutomaticOnlyReadOnly) {
-			t.Fatalf("automatic-only Delete() error=%v", err)
-		}
-		var count int64
-		if err := db.Model(&dependencyModel{}).Where("id = ?", "shared").Count(&count).Error; err != nil {
-			t.Fatal(err)
-		}
-		if count != 1 {
-			t.Fatalf("automatic endpoint count=%d, want 1", count)
-		}
-	})
-
-	t.Run("keep as manual preserves automatic ownership and rolls back with scheduler", func(t *testing.T) {
-		repo, db := testRepository(t)
-		seedProjectAndTasks(t, db)
-		now := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
-		if err := db.Create(&dependencyModel{
-			ID: "automatic", BlockingTaskID: "a", BlockedTaskID: "b",
-			AutomaticOwned: true, CreatedAt: now, UpdatedAt: now,
-		}).Error; err != nil {
-			t.Fatal(err)
-		}
-
-		schedulerFailure := errors.New("scheduler failed")
-		_, err := repo.KeepAsManual(context.Background(), "automatic", now.Add(time.Hour), func(context.Context, []string) error {
-			return schedulerFailure
-		})
-		if !errors.Is(err, schedulerFailure) {
-			t.Fatalf("KeepAsManual() error=%v, want scheduler failure", err)
-		}
-		var afterFailure dependencyModel
-		if err := db.First(&afterFailure, "id = ?", "automatic").Error; err != nil {
-			t.Fatal(err)
-		}
-		if afterFailure.ManualOwned || !afterFailure.AutomaticOwned {
-			t.Fatalf("rollback ownership = %#v", afterFailure)
-		}
-
-		kept, err := repo.KeepAsManual(context.Background(), "automatic", now.Add(2*time.Hour), func(context.Context, []string) error { return nil })
-		if err != nil {
-			t.Fatal(err)
-		}
-		if kept == nil || kept.Source() != domain.SourceShared {
-			t.Fatalf("kept dependency=%#v", kept)
-		}
-		var stored dependencyModel
-		if err := db.First(&stored, "id = ?", "automatic").Error; err != nil {
-			t.Fatal(err)
-		}
-		if !stored.ManualOwned || !stored.AutomaticOwned {
-			t.Fatalf("stored ownership=%#v", stored)
-		}
-	})
 }

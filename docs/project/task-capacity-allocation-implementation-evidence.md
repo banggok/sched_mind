@@ -1,5 +1,9 @@
 # Task Capacity Allocation Implementation Evidence
 
+> **US-6.4 supersession:** Automatic dependency ownership and reconciliation
+> references below are historical US-6.3 evidence, not current acceptance
+> authority. Current allocation performs zero dependency DML.
+
 This document owns traceability for US-6.3 and revised US-6.2 AC-7–AC-12. The
 authoritative behavior remains in the user stories; this file records production
 symbols and automated evidence without redefining those rules.
@@ -9,7 +13,7 @@ symbols and automated evidence without redefining those rules.
 | Delta | Implemented scope |
 | --- | --- |
 | D1 | Persisted integer percentage, default/omission/reset, conversion, API, form, lifecycle, and allocation display. |
-| D2 | Independently rounded daily limits, concurrent ordered allocation, safe blocker reconciliation, and fixed manual allocation. |
+| D2 | Independently rounded daily limits, concurrent ordered allocation, safe blocker reconciliation, and priority-aware immutable manual allocation. |
 | D3 | Actual completion ignores planned percentage; Reopen returns to the persisted planned value. |
 | D4 | Actual-Date-only and Actual-versus-Actual allocation, progressive balancing, backfill, equalized overcapacity, and immutable prior Actual rows. |
 | D5 | PostgreSQL backfill/default/check migration and guarded rollback. |
@@ -40,7 +44,7 @@ Unless a narrower command is shown, backend evidence is executed by
 | AC-16 | stable capacity-release blocker; continuing/manual candidates rejected | `TestPriorityPreservingConcurrentAllocationAndSafeBlockers_US63_AC13_AC16` | Gap workflow re-reads the deterministic automatic endpoint. |
 | AC-17 | reconciliation removes stale automatic ownership and preserves manual ownership | `TestAutomaticOwnershipReconciliationPreservesManualGraph_AC22_AC23_AC24_AC25_AC26` | Real dependency workflow verifies one manual-only endpoint after reconciliation. |
 | AC-18 | `reconstructFixed` evenly persists authoritative manual allocation, including overcapacity | `TestManualFixedAllocationMayExceedLimitAndReservesAutomaticCapacity_US63_AC18_AC19`; `TestManualFixedAllocationUsesEligibleZeroCapacityWeekdays_US63_AC18_AC20` | Repository workflow re-reads unchanged manual dates and fixed rows. |
-| AC-19 | fixed rows reserve before mutable automatic rows | `TestManualFixedAllocationMayExceedLimitAndReservesAutomaticCapacity_US63_AC18_AC19` | Same workflow observes automatic `180/180/120` around fixed `300/300`. |
+| AC-19 | `allocationConsumesCapacityFor` applies Project Priority to open manual reservations while keeping completed/Locked reservations absolute; allocation persistence orders same-date rows by effective precedence | `TestAllocationConsumesCapacityForManualReservationByProjectPriority_US63_AC19`; `TestManualAllocationRespectsProjectPriorityAcrossAutomaticProjects_US63_AC19`; existing higher-priority manual fixture `TestManualFixedAllocationMayExceedLimitAndReservesAutomaticCapacity_US63_AC18_AC19` | `TestManualAndAutomaticCrossProjectPriorityAcceptance_US63_AC19` proves higher-priority automatic `480/480` overlaps lower-priority manual `240/240` without warning, and higher-priority manual produces automatic `240/240/480`. |
 | AC-20 | no-working range persists all Effort on manual Start | `TestManualFixedAllocationUsesManualStartWhenRangeHasNoWorkingDate_US63_AC20` | Same repository workflow re-reads the weekend Start row. |
 | AC-21 | Actual allocator has no percentage input and uses revised US-6.2 algorithm | `TestReplaceActualAllocationsProgressivelyRebalancesAroundExistingActualLoad_US62_AC8_AC9` with persisted `20%` | Completion allocation repository boundary re-reads uncapped balanced rows. |
 | AC-22 | completion replaces planned rows; Reopen removes Actual and reschedules persisted percentage | Existing Reopen integration tests plus percentage persistence tests | Reopen HTTP/application workflows and scheduling acceptance. |

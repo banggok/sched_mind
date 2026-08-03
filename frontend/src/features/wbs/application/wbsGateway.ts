@@ -1,4 +1,3 @@
-import type { DependencyDetail } from "../../dependencies/domain/dependency";
 import type { WBSNode } from "../domain/wbs";
 export class WBSOperationError extends Error {
   constructor(
@@ -69,7 +68,6 @@ export interface ExecutableInput {
 
 export interface SchedulePreview {
   task: WBSNode;
-  dependencies: DependencyDetail;
 }
 
 export interface SchedulePreviewInput {

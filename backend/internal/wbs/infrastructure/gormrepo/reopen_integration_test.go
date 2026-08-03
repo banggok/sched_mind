@@ -35,8 +35,6 @@ type reopenDependencyRecord struct {
 	ID             string `gorm:"primaryKey"`
 	BlockingTaskID string
 	BlockedTaskID  string
-	ManualOwned    bool
-	AutomaticOwned bool
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
 }
@@ -88,8 +86,8 @@ func seedReopenGraph(t *testing.T, db *gorm.DB, status string) nodeModel {
 		t.Fatal(err)
 	}
 	links := []reopenDependencyRecord{
-		{ID: "incoming-link", BlockingTaskID: "incoming", BlockedTaskID: "task", ManualOwned: true, CreatedAt: created, UpdatedAt: updated},
-		{ID: "outgoing-link", BlockingTaskID: "task", BlockedTaskID: "outgoing", ManualOwned: true, CreatedAt: created, UpdatedAt: updated},
+		{ID: "incoming-link", BlockingTaskID: "incoming", BlockedTaskID: "task", CreatedAt: created, UpdatedAt: updated},
+		{ID: "outgoing-link", BlockingTaskID: "task", BlockedTaskID: "outgoing", CreatedAt: created, UpdatedAt: updated},
 	}
 	if err := db.Create(&links).Error; err != nil {
 		t.Fatal(err)
