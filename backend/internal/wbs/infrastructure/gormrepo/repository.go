@@ -152,14 +152,8 @@ func (r *Repository) UpdateExecutable(ctx context.Context, p, id string, input a
 		}
 		n := toDomain(m, count > 0)
 		percentage := n.Executable.CapacityAllocationPercentage
-		if differentString(n.Executable.AssigneeID, input.AssigneeID) {
-			percentage = 100
-		}
 		if input.CapacityAllocationPercentage != nil {
 			percentage = *input.CapacityAllocationPercentage
-		}
-		if input.AssigneeID == nil {
-			percentage = 100
 		}
 		fields := domain.ExecutableFields{RoleID: input.RoleID, AssigneeID: input.AssigneeID, EffortMinutes: input.EffortMinutes, LagDays: input.LagDays, CapacityAllocationPercentage: percentage, ExecutionTimeline: input.Execution, CommitmentTimeline: input.Commitment, ActualStart: n.Executable.ActualStart, ActualEnd: n.Executable.ActualEnd}
 		if input.Name != nil {

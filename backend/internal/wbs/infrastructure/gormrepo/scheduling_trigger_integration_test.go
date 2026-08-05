@@ -163,7 +163,7 @@ func TestUpdateExecutableAutomaticOffPreservesManualTimelineAndRebuildsFixedAllo
 	}
 }
 
-func TestUpdateExecutablePreservesOmittedPercentageAndResetsOnAssigneeChange_US63_AC4_AC5(t *testing.T) {
+func TestUpdateExecutablePreservesPercentageOnFirstSelectionChangeAndClear_US65_AC13_AC14_AC15(t *testing.T) {
 	repository, database := reopenTestDB(t)
 	if err := database.AutoMigrate(&memberModel{}); err != nil {
 		t.Fatal(err)
@@ -179,7 +179,7 @@ func TestUpdateExecutablePreservesOmittedPercentageAndResetsOnAssigneeChange_US6
 		}
 	}
 	effort, percentage := 480, 20
-	if err := database.Create(&nodeModel{ID: "task", ProjectID: "project", ParentKey: "", Name: "Task", NameKey: "task", Position: 1, RoleID: &roleID, AssigneeID: &firstID, EffortMinutes: &effort, CapacityAllocationPercentage: percentage, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+	if err := database.Create(&nodeModel{ID: "task", ProjectID: "project", ParentKey: "", Name: "Task", NameKey: "task", Position: 1, RoleID: &roleID, EffortMinutes: &effort, CapacityAllocationPercentage: percentage, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
 		t.Fatal(err)
 	}
 	noopSchedule := func(context.Context, string) error { return nil }
@@ -188,22 +188,29 @@ func TestUpdateExecutablePreservesOmittedPercentageAndResetsOnAssigneeChange_US6
 		t.Fatal(err)
 	}
 	if value.Executable.CapacityAllocationPercentage != 20 {
-		t.Fatalf("omitted update percentage=%d", value.Executable.CapacityAllocationPercentage)
+		t.Fatalf("first-assignment percentage=%d", value.Executable.CapacityAllocationPercentage)
 	}
 	value, err = repository.UpdateExecutable(context.Background(), "project", "task", application.WriteExecutableInput{RoleID: &roleID, AssigneeID: &secondID, EffortMinutes: &effort}, now.Add(2*time.Hour), noopSchedule)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if value.Executable.CapacityAllocationPercentage != 100 {
+	if value.Executable.CapacityAllocationPercentage != 20 {
 		t.Fatalf("changed-assignee percentage=%d", value.Executable.CapacityAllocationPercentage)
 	}
-	explicit := 20
-	value, err = repository.UpdateExecutable(context.Background(), "project", "task", application.WriteExecutableInput{RoleID: &roleID, AssigneeID: nil, EffortMinutes: &effort, CapacityAllocationPercentage: &explicit}, now.Add(3*time.Hour), noopSchedule)
+	value, err = repository.UpdateExecutable(context.Background(), "project", "task", application.WriteExecutableInput{RoleID: &roleID, AssigneeID: nil, EffortMinutes: &effort}, now.Add(3*time.Hour), noopSchedule)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if value.Executable.CapacityAllocationPercentage != 100 {
+	if value.Executable.CapacityAllocationPercentage != 20 {
 		t.Fatalf("cleared-assignee percentage=%d", value.Executable.CapacityAllocationPercentage)
+	}
+	explicit := 60
+	value, err = repository.UpdateExecutable(context.Background(), "project", "task", application.WriteExecutableInput{RoleID: &roleID, AssigneeID: &firstID, EffortMinutes: &effort, CapacityAllocationPercentage: &explicit}, now.Add(4*time.Hour), noopSchedule)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value.Executable.CapacityAllocationPercentage != 60 {
+		t.Fatalf("explicit percentage=%d", value.Executable.CapacityAllocationPercentage)
 	}
 }
 

@@ -622,8 +622,9 @@ valid range `1–100` and default `100`. Rollout must backfill every existing
 Executable WBS to `100` before enforcing the invariant; otherwise numeric zero
 could incorrectly make legacy Tasks consume no capacity. Legacy create omission
 normalizes to `100`, update omission preserves the existing value, and explicit
-`0` is rejected. Changing or clearing Assignee resets the value to `100` unless
-the same new-Assignee command explicitly supplies another valid value.
+`0` is rejected. Selecting, changing, or clearing Assignee preserves the
+Task-level value. Update omission preserves the existing value even when
+Assignee changes; only an explicit valid percentage replaces it.
 
 Execution and Commitment Task Daily Limits are calculated after each final
 timeline capacity has been independently rounded. The percentage is a maximum,
@@ -631,6 +632,54 @@ not a reservation or priority. Automatic rows are ordered by Project Priority
 and visual WBS order and share residual same-Date capacity. Manual timeline rows
 are fixed reservations and may persist planned overcapacity. The field moves
 with executable data during WBS conversion; Grouping WBS never owns it.
+
+## Assignee recommendation target contract
+
+US-6.5 extends the existing WBS Task boundary with one batch recommendation
+operation for a confirmed executable Task identity. The operation is a query-like
+calculation command, not a new aggregate and not a Task mutation. It resolves all
+active Role-matching candidates in one request and returns backend-ranked results
+with calculation Date and schedule-version snapshot identity.
+
+Automatic Scheduling `ON` applies each candidate draft inside the existing
+schedule-mutation serialization and database transaction boundary, invokes the
+same concrete scheduler used by confirmed Task mutation, reads the candidate
+Execution result and ranking metrics, and deliberately rolls back. The edited
+Task's own planned allocation/projection is removed before each candidate is
+applied so current assignment is not counted twice. The scheduler algorithm,
+Project anchor, horizon, priority, dependency, capacity, rounding, fixed/manual,
+completed, and Locked rules remain owned by US-6.1/US-6.2/US-6.3; recommendation
+must not maintain a duplicate implementation.
+
+Automatic Scheduling `OFF` preserves confirmed/manual timelines and runs a
+side-effect-free advisory Execution allocation using the same capacity,
+dependency, Lag, priority, WBS-order, fixed-allocation, and horizon primitives.
+Its start lower bound is draft Manual Execution Start when present; otherwise
+`max(Project Scheduling Start Date, today)`; otherwise today. Backend resolves
+today in `APP_TIMEZONE`. Manual Execution End is neither changed nor used as the
+ranking completion result.
+
+All candidates share one confirmed Recommendation Snapshot. The backend ranks:
+feasible completion without incremental candidate-Member overcapacity, then
+completion with added overcapacity, then no completion. Inside the first two
+groups it orders by earliest simulated Execution End, largest Execution Capacity
+remaining immediately after candidate allocation on that completion Date, then
+normalized Member name and ID. Lower-priority work that consumes residual
+capacity later is excluded from the remaining-capacity metric, and downstream
+lower-priority schedule impact is not an optimization objective.
+
+The frontend places Role and Assignee immediately after Lag and before timeline
+and dependency controls, requests the latest batch before stale options become
+selectable, freezes order
+for the open option interaction, and ignores superseded responses. Failure
+falls back to deterministic alphabetical selection without blocking normal Task
+Save. Recommendation never reserves capacity, advances schedule version,
+invalidates confirmed caches as a mutation, or makes its snapshot a Save token.
+
+Production access must avoid one HTTP request or database candidate query per
+Member. Candidate lookup and scheduler inputs are loaded in bounded sets and
+reuse one snapshot; every new/changed query remains subject to the backend query
+review gate.
 
 ## Actual Date and Reopen completed Task target contract
 

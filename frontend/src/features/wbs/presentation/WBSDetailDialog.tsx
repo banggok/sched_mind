@@ -5,10 +5,16 @@ import type { Project } from "../../projects/domain/project";
 import type { RolesGateway } from "../../roles/application/rolesGateway";
 import type { Role } from "../../roles/domain/role";
 import type { TeamMembersGateway } from "../../team-members/application/teamMembersGateway";
-import type { TeamMember } from "../../team-members/domain/teamMember";
+import {
+  sortTeamMembers,
+  type TeamMember,
+} from "../../team-members/domain/teamMember";
 import type {
   AllocationGroups,
   AllocationRow,
+  AssigneeRecommendationInput,
+  AssigneeRecommendationItem,
+  AssigneeRecommendationResult,
   SchedulePreviewInput,
   WBSGateway,
 } from "../application/wbsGateway";
@@ -57,6 +63,8 @@ export function WBSDetailDialog({
 }) {
   const [roles, setRoles] = useState<Role[]>([]);
   const [members, setMembers] = useState<TeamMember[]>([]);
+  const [optionsLoadError, setOptionsLoadError] = useState("");
+  const [optionsReloadVersion, setOptionsReloadVersion] = useState(0);
   const [name, setName] = useState(node.name);
   const [role, setRole] = useState(node.executable.roleId ?? "");
   const [assignee, setAssignee] = useState(node.executable.assigneeId ?? "");
@@ -86,6 +94,14 @@ export function WBSDetailDialog({
   );
   const [commitmentUnscheduledReason, setCommitmentUnscheduledReason] =
     useState(node.executable.commitmentUnscheduledReason ?? "");
+  const [recommendation, setRecommendation] =
+    useState<AssigneeRecommendationResult>();
+  const [heldRecommendation, setHeldRecommendation] =
+    useState<AssigneeRecommendationResult>();
+  const [recommendationBusy, setRecommendationBusy] = useState(false);
+  const [recommendationInteractionStale, setRecommendationInteractionStale] =
+    useState(false);
+  const [recommendationError, setRecommendationError] = useState("");
   const [previewBusy, setPreviewBusy] = useState(false);
   const [previewError, setPreviewError] = useState("");
   const [hasCurrentSchedulePreview, setHasCurrentSchedulePreview] =
@@ -98,6 +114,16 @@ export function WBSDetailDialog({
   const [reopenBusy, setReopenBusy] = useState(false);
   const [reopenError, setReopenError] = useState("");
   const reopenLock = useRef(false);
+  const recommendationController = useRef<AbortController | undefined>(
+    undefined,
+  );
+  const recommendationRequestSequence = useRef(0);
+  const recommendationDraftVersion = useRef(0);
+  const assigneeInteractionOpenRef = useRef(false);
+  const recommendationInteractionStaleRef = useRef(false);
+  const recommendationRef = useRef<AssigneeRecommendationResult | undefined>(
+    undefined,
+  );
   const previewController = useRef<AbortController | undefined>(undefined);
   const scheduleDraftVersion = useRef(0);
   const previewingVersion = useRef<number | undefined>(undefined);
@@ -105,7 +131,7 @@ export function WBSDetailDialog({
   useEffect(() => {
     if (node.hasChildren) return;
     const controller = new AbortController();
-    setError("");
+    setOptionsLoadError("");
     void Promise.all([
       rolesGateway.list(
         { search: "", page: 1, pageSize: 100 },
@@ -122,12 +148,14 @@ export function WBSDetailDialog({
       })
       .catch((reason: unknown) => {
         if (!(reason instanceof DOMException && reason.name === "AbortError"))
-          setError("Role and member options could not be loaded.");
+          setOptionsLoadError("Role and member options could not be loaded.");
       });
     return () => controller.abort();
-  }, [membersGateway, node.hasChildren, rolesGateway]);
+  }, [membersGateway, node.hasChildren, optionsReloadVersion, rolesGateway]);
   useEffect(
     () => () => {
+      recommendationController.current?.abort();
+      recommendationController.current = undefined;
       previewController.current?.abort();
       previewController.current = undefined;
       previewingVersion.current = undefined;
@@ -141,7 +169,23 @@ export function WBSDetailDialog({
   const canReopen = completed && project.status === "open";
   const manual =
     project.status === "open" && !project.automaticScheduling && !completed;
-  function markScheduleDraftChanged() {
+  function clearRecommendation() {
+    recommendationController.current?.abort();
+    recommendationController.current = undefined;
+    recommendationRequestSequence.current += 1;
+    recommendationDraftVersion.current += 1;
+    recommendationRef.current = undefined;
+    setRecommendation(undefined);
+    setHeldRecommendation(undefined);
+    recommendationInteractionStaleRef.current = false;
+    setRecommendationInteractionStale(false);
+    setRecommendationBusy(false);
+    setRecommendationError("");
+  }
+
+  function markScheduleDraftChanged(options?: {
+    preserveRecommendation?: boolean;
+  }) {
     scheduleDraftVersion.current += 1;
     previewController.current?.abort();
     previewController.current = undefined;
@@ -149,7 +193,139 @@ export function WBSDetailDialog({
     setPreviewBusy(false);
     setPreviewError("");
     setHasCurrentSchedulePreview(false);
+    if (!options?.preserveRecommendation) clearRecommendation();
   }
+
+  function recommendationInput(): AssigneeRecommendationInput | undefined {
+    const effortHours = parseDecimalDraft(effort);
+    if (
+      !role ||
+      effortHours === undefined ||
+      !Number.isFinite(effortHours) ||
+      effortHours < 0.5 ||
+      !Number.isInteger(effortHours * 2) ||
+      !/^\d+$/.test(lag) ||
+      !/^\d+$/.test(capacityAllocationPercentage) ||
+      Number(capacityAllocationPercentage) < 1 ||
+      Number(capacityAllocationPercentage) > 100
+    ) {
+      return undefined;
+    }
+    return {
+      roleId: role,
+      effortHours,
+      lagDays: Number(lag),
+      capacityAllocationPercentage: Number(capacityAllocationPercentage),
+      executionStart: manual && executionStart ? executionStart : undefined,
+    };
+  }
+
+  async function loadRecommendations() {
+    if (readOnly || node.hasChildren) return;
+    const input = recommendationInput();
+    if (!input) {
+      clearRecommendation();
+      return;
+    }
+    if (!gateway.recommendAssignees) {
+      recommendationRef.current = undefined;
+      setRecommendation(undefined);
+      setHeldRecommendation(undefined);
+      setRecommendationBusy(false);
+      setRecommendationError(
+        "Assignee recommendation is temporarily unavailable.",
+      );
+      return;
+    }
+
+    const draftVersion = recommendationDraftVersion.current;
+    const requestSequence = recommendationRequestSequence.current + 1;
+    recommendationRequestSequence.current = requestSequence;
+    const controller = new AbortController();
+    recommendationController.current?.abort();
+    recommendationController.current = controller;
+    setRecommendationBusy(true);
+    setRecommendationError("");
+    try {
+      const result = await gateway.recommendAssignees(
+        project.id,
+        node.id,
+        input,
+        controller.signal,
+      );
+      if (
+        controller.signal.aborted ||
+        recommendationRequestSequence.current !== requestSequence ||
+        recommendationDraftVersion.current !== draftVersion
+      ) {
+        return;
+      }
+      if (
+        assigneeInteractionOpenRef.current &&
+        recommendationRef.current !== undefined
+      ) {
+        setHeldRecommendation(result);
+      } else {
+        recommendationRef.current = result;
+        setRecommendation(result);
+        setHeldRecommendation(undefined);
+      }
+    } catch (reason: unknown) {
+      if (
+        controller.signal.aborted ||
+        recommendationRequestSequence.current !== requestSequence ||
+        recommendationDraftVersion.current !== draftVersion
+      ) {
+        return;
+      }
+      recommendationRef.current = undefined;
+      setRecommendation(undefined);
+      setHeldRecommendation(undefined);
+      if (!(reason instanceof DOMException && reason.name === "AbortError")) {
+        setRecommendationError(
+          "Assignee recommendation is temporarily unavailable.",
+        );
+      }
+    } finally {
+      if (
+        recommendationRequestSequence.current === requestSequence &&
+        recommendationDraftVersion.current === draftVersion
+      ) {
+        setRecommendationBusy(false);
+      }
+    }
+  }
+
+  useEffect(() => {
+    return gateway.subscribeToConfirmedChanges?.(() => {
+      scheduleDraftVersion.current += 1;
+      previewController.current?.abort();
+      previewController.current = undefined;
+      previewingVersion.current = undefined;
+      setPreviewBusy(false);
+      setPreviewError("");
+      setHasCurrentSchedulePreview(false);
+      recommendationController.current?.abort();
+      recommendationController.current = undefined;
+      recommendationRequestSequence.current += 1;
+      recommendationDraftVersion.current += 1;
+      setHeldRecommendation(undefined);
+      setRecommendationBusy(false);
+      setRecommendationError("");
+      if (
+        assigneeInteractionOpenRef.current &&
+        recommendationRef.current !== undefined
+      ) {
+        recommendationInteractionStaleRef.current = true;
+        setRecommendationInteractionStale(true);
+        return;
+      }
+      recommendationRef.current = undefined;
+      setRecommendation(undefined);
+      recommendationInteractionStaleRef.current = false;
+      setRecommendationInteractionStale(false);
+    });
+  }, [gateway]);
 
   function clearDraftSchedule(reason: string) {
     setHasCurrentSchedulePreview(false);
@@ -371,6 +547,91 @@ export function WBSDetailDialog({
       setBusy(false);
     }
   }
+  const currentAssignee = members.find((member) => member.id === assignee);
+  const currentAssigneeMismatchesRole = Boolean(
+    currentAssignee && role && currentAssignee.role.id !== role,
+  );
+  const eligibleMembers = sortTeamMembers(
+    members.filter((member) => !role || member.role.id === role),
+  );
+  const automaticRecommendationAnchorMissing = Boolean(
+    recommendation?.mode === "automatic" &&
+    recommendation.items.length > 0 &&
+    recommendation.items.every(
+      (item) => item.reasonCode === "AUTOMATIC_ANCHOR_MISSING",
+    ),
+  );
+  const recommendationItems = automaticRecommendationAnchorMissing
+    ? undefined
+    : recommendation?.items.filter((item) => item.roleId === role);
+  const optionIdentities = recommendationItems
+    ? recommendationItems.map((item) => ({
+        id: item.memberId,
+        name: item.memberName,
+        roleId: item.roleId,
+      }))
+    : eligibleMembers.map((member) => ({
+        id: member.id,
+        name: member.name,
+        roleId: member.role.id,
+      }));
+  const duplicateNames = new Set(
+    optionIdentities
+      .filter(
+        (candidate, index, all) =>
+          all.findIndex(
+            (other) =>
+              other.name.localeCompare(candidate.name, undefined, {
+                sensitivity: "base",
+              }) === 0,
+          ) !== index,
+      )
+      .map((candidate) => candidate.name.toLocaleLowerCase()),
+  );
+  const assigneeOptions =
+    recommendationItems && recommendation
+      ? recommendationItems.map((item) => ({
+          id: item.memberId,
+          roleId: item.roleId,
+          label: recommendationOptionLabel(
+            item,
+            recommendation.mode,
+            recommendationMemberName(item, roles, duplicateNames),
+          ),
+        }))
+      : eligibleMembers.map((member) => ({
+          id: member.id,
+          roleId: member.role.id,
+          label: recommendationMemberName(
+            {
+              memberId: member.id,
+              memberName: member.name,
+              roleId: member.role.id,
+            },
+            roles,
+            duplicateNames,
+          ),
+        }));
+  if (
+    currentAssignee &&
+    !currentAssigneeMismatchesRole &&
+    !assigneeOptions.some((option) => option.id === currentAssignee.id)
+  ) {
+    assigneeOptions.push({
+      id: currentAssignee.id,
+      roleId: currentAssignee.role.id,
+      label: currentAssignee.name,
+    });
+  }
+  if (currentAssignee && currentAssigneeMismatchesRole) {
+    assigneeOptions.push({
+      id: currentAssignee.id,
+      roleId: currentAssignee.role.id,
+      label: `${currentAssignee.name} — does not match selected Role`,
+    });
+  }
+  const recommendationPrerequisitesComplete =
+    recommendationInput() !== undefined;
   return (
     <Dialog
       nested={nested}
@@ -442,70 +703,6 @@ export function WBSDetailDialog({
                 autoFocus
                 onChange={(e) => setName(e.target.value)}
               />
-              <div>
-                <label
-                  className="block text-label font-bold"
-                  htmlFor="detail-role"
-                >
-                  Role
-                </label>
-                <select
-                  id="detail-role"
-                  className="ui-input mt-2"
-                  value={role}
-                  disabled={readOnly}
-                  onChange={(e) => {
-                    markScheduleDraftChanged();
-                    setRole(e.target.value);
-                    if (
-                      members.find((m) => m.id === assignee)?.role.id !==
-                      e.target.value
-                    ) {
-                      setAssignee("");
-                      setCapacityAllocationPercentage("100");
-                    }
-                  }}
-                  onBlur={() => void previewSchedule()}
-                >
-                  <option value="">No role</option>
-                  {roles.map((r) => (
-                    <option key={r.id} value={r.id}>
-                      {r.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label
-                  className="block text-label font-bold"
-                  htmlFor="detail-assignee"
-                >
-                  Assignee
-                </label>
-                <select
-                  id="detail-assignee"
-                  className="ui-input mt-2"
-                  value={assignee}
-                  disabled={readOnly}
-                  onChange={(e) => {
-                    markScheduleDraftChanged();
-                    setAssignee(e.target.value);
-                    setCapacityAllocationPercentage("100");
-                    const m = members.find((v) => v.id === e.target.value);
-                    if (m) setRole(m.role.id);
-                  }}
-                  onBlur={() => void previewSchedule()}
-                >
-                  <option value="">No assignee</option>
-                  {members
-                    .filter((m) => !role || m.role.id === role)
-                    .map((m) => (
-                      <option key={m.id} value={m.id}>
-                        {m.name}
-                      </option>
-                    ))}
-                </select>
-              </div>
               <FormField
                 id="detail-effort"
                 name="effortHours"
@@ -572,6 +769,165 @@ export function WBSDetailDialog({
                   scheduling start date.
                 </p>
               </div>
+              <div>
+                <label
+                  className="block text-label font-bold"
+                  htmlFor="detail-role"
+                >
+                  Role
+                </label>
+                <select
+                  id="detail-role"
+                  className="ui-input mt-2"
+                  value={role}
+                  disabled={readOnly}
+                  onChange={(event) => {
+                    markScheduleDraftChanged();
+                    setRole(event.target.value);
+                  }}
+                  onBlur={() => void previewSchedule()}
+                >
+                  <option value="">No role</option>
+                  {roles.map((candidateRole) => (
+                    <option key={candidateRole.id} value={candidateRole.id}>
+                      {candidateRole.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label
+                  className="block text-label font-bold"
+                  htmlFor="detail-assignee"
+                >
+                  Assignee
+                </label>
+                <select
+                  id="detail-assignee"
+                  className="ui-input mt-2"
+                  value={assignee}
+                  disabled={readOnly}
+                  aria-describedby="detail-assignee-help"
+                  aria-busy={recommendationBusy}
+                  onFocus={() => {
+                    assigneeInteractionOpenRef.current = true;
+                    recommendationInteractionStaleRef.current = false;
+                    setRecommendationInteractionStale(false);
+                    if (recommendationRef.current?.mode === "manual-advisory") {
+                      recommendationRef.current = undefined;
+                      setRecommendation(undefined);
+                      setHeldRecommendation(undefined);
+                    }
+                    if (!recommendationRef.current && !recommendationBusy) {
+                      void loadRecommendations();
+                    }
+                  }}
+                  onChange={(event) => {
+                    markScheduleDraftChanged({ preserveRecommendation: true });
+                    setAssignee(event.target.value);
+                    const member = members.find(
+                      (candidate) => candidate.id === event.target.value,
+                    );
+                    if (member) setRole(member.role.id);
+                  }}
+                  onBlur={() => {
+                    assigneeInteractionOpenRef.current = false;
+                    if (recommendationInteractionStaleRef.current) {
+                      clearRecommendation();
+                    } else if (heldRecommendation) {
+                      recommendationRef.current = heldRecommendation;
+                      setRecommendation(heldRecommendation);
+                      setHeldRecommendation(undefined);
+                    }
+                    void previewSchedule();
+                  }}
+                >
+                  <option value="">No assignee</option>
+                  {assigneeOptions.map((option) => (
+                    <option
+                      key={option.id}
+                      value={option.id}
+                      disabled={
+                        recommendationBusy || recommendationInteractionStale
+                      }
+                    >
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <div
+                  id="detail-assignee-help"
+                  className="mt-2 space-y-2 text-sm text-muted"
+                  role="status"
+                  aria-live="polite"
+                >
+                  {!recommendationPrerequisitesComplete ? (
+                    <p>
+                      Select Role and enter valid Effort, Capacity Allocation,
+                      and Lag to calculate recommendations. Candidates remain
+                      alphabetical until then.
+                    </p>
+                  ) : recommendationBusy ? (
+                    <p>Calculating recommendations…</p>
+                  ) : recommendationInteractionStale ? (
+                    <p>
+                      Scheduling state changed while Assignee was open. Close
+                      and reopen it to load the latest ranking.
+                    </p>
+                  ) : recommendationError ? (
+                    <div>
+                      <p>Assignee recommendation is temporarily unavailable.</p>
+                      <Button
+                        type="button"
+                        className="mt-2"
+                        onClick={() => void loadRecommendations()}
+                      >
+                        Retry recommendations
+                      </Button>
+                    </div>
+                  ) : automaticRecommendationAnchorMissing ? (
+                    <p>
+                      Automatic Scheduling needs a Project Scheduling Start Date
+                      before recommendations can be calculated. Candidates
+                      remain alphabetical.
+                    </p>
+                  ) : recommendation ? (
+                    <p>
+                      {recommendation.mode === "automatic"
+                        ? "Projected finishes"
+                        : "Advisory estimates"}{" "}
+                      use confirmed scheduling state calculated on{" "}
+                      {formatDateOnly(recommendation.calculatedOnDate)}. Save
+                      remains authoritative.
+                    </p>
+                  ) : (
+                    <p>
+                      Open Assignee to calculate one ranked batch. Selection
+                      does not reserve capacity.
+                    </p>
+                  )}
+                </div>
+                {currentAssigneeMismatchesRole ? (
+                  <Alert tone="warning" className="mt-3">
+                    Current Assignee does not match selected Role. Replace or
+                    clear it before Save.
+                  </Alert>
+                ) : null}
+                {optionsLoadError ? (
+                  <Alert tone="danger" className="mt-3">
+                    <p>{optionsLoadError}</p>
+                    <Button
+                      type="button"
+                      className="mt-2"
+                      onClick={() =>
+                        setOptionsReloadVersion((version) => version + 1)
+                      }
+                    >
+                      Retry member options
+                    </Button>
+                  </Alert>
+                ) : null}
+              </div>
             </div>
 
             <div className="min-w-0 space-y-4">
@@ -587,6 +943,7 @@ export function WBSDetailDialog({
                     disabled={!manual || busy}
                     loadPublicHolidayDates={loadPublicHolidayDates}
                     onChange={(start, end) => {
+                      if (start !== executionStart) markScheduleDraftChanged();
                       setExecutionStart(start);
                       setExecutionEnd(end);
                     }}
@@ -620,7 +977,7 @@ export function WBSDetailDialog({
                         ? "Updating schedule preview…"
                         : hasCurrentSchedulePreview
                           ? "Unconfirmed schedule preview. Save confirms the draft."
-                          : "Preview updates after leaving Role, Assignee, Effort, or Lag. Save confirms the draft."}
+                          : "Preview updates after leaving Role, Assignee, Effort, Capacity Allocation, or Lag. Save confirms the draft."}
                     </p>
                     <p>
                       <strong>Execution:</strong>{" "}
@@ -790,6 +1147,54 @@ export function WBSDetailDialog({
       )}
     </Dialog>
   );
+}
+
+type RecommendationMemberReference = Pick<
+  AssigneeRecommendationItem,
+  "memberId" | "memberName" | "roleId"
+>;
+
+function recommendationMemberName(
+  member: RecommendationMemberReference,
+  roles: Role[],
+  duplicateNames: Set<string>,
+): string {
+  if (!duplicateNames.has(member.memberName.toLocaleLowerCase())) {
+    return member.memberName;
+  }
+  const roleName =
+    roles.find((candidateRole) => candidateRole.id === member.roleId)?.name ??
+    "Unknown role";
+  const shortID = member.memberId.slice(-6) || member.memberId;
+  return `${member.memberName} (${roleName}, ${shortID})`;
+}
+
+function recommendationOptionLabel(
+  item: AssigneeRecommendationItem,
+  mode: AssigneeRecommendationResult["mode"],
+  memberName: string,
+): string {
+  if (item.rankGroup === "no-completion" || !item.executionEnd) {
+    return `${memberName} — no projected completion`;
+  }
+  const finishVerb = mode === "automatic" ? "finishes" : "estimated";
+  if (item.rankGroup === "overcapacity") {
+    return `${memberName} — ${finishVerb} ${formatDateOnly(
+      item.executionEnd,
+    )}, adds ${formatRecommendationHours(
+      item.incrementalOvercapacityHours,
+    )} overcapacity`;
+  }
+  return `${memberName} — ${finishVerb} ${formatDateOnly(
+    item.executionEnd,
+  )}, ${formatRecommendationHours(
+    item.remainingExecutionCapacityHours,
+  )} remaining`;
+}
+
+function formatRecommendationHours(hours: number): string {
+  const rounded = Math.round(hours * 100) / 100;
+  return `${Number.isInteger(rounded) ? rounded : rounded.toFixed(2)}h`;
 }
 
 function CapacityAllocationSection({

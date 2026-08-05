@@ -36,6 +36,14 @@ future context are not permission to implement them.
 > and Tasks, reads live Execution capacity/allocation, and never changes the
 > scheduler, Project, WBS, Task, or capacity source data.
 
+> **Approved Assignee recommendation target — 2026-08-05:** US-6.5 ranks
+> eligible Assignees for first assignment and Edit Task using one latest
+> side-effect-free batch. Automatic Scheduling ON reuses the concrete scheduler
+> in rollback-only mode; OFF uses the approved advisory anchor hierarchy with
+> backend today resolved from `APP_TIMEZONE`. Ranking prefers no added overcapacity, earliest Execution End,
+> then largest completion-Date remaining Execution Capacity. Recommendation does
+> not reserve capacity or optimize lower-priority portfolio impact.
+
 The current product manages:
 
 - Roles used to classify Members and Tasks;
@@ -63,6 +71,7 @@ Detailed rules are owned by:
 - [US-6.1 Automatic Scheduling](../../user_story/US-6.1-automatic-scheduling.md)
 - [US-6.2 Locked Project and Completed Task Scheduling](../../user_story/US-6.2-locked-project-and-completed-task-scheduling.md)
 - [US-6.3 Task Capacity Allocation Percentage](../../user_story/US-6.3-task-capacity-allocation.md)
+- [US-6.5 Recommend Assignee by Simulated Completion](../../user_story/US-6.5-recommend-assignee.md)
 - [US-7.1 Home Portfolio Gantt Workspace](../../user_story/US-7.1-home-portfolio-gantt.md)
 - [US-8.1 Manage Sprints](../../user_story/US-8.1-manage-sprints.md)
 
@@ -169,8 +178,9 @@ Capacity Allocation Percentage. The percentage is a persisted integer `1–100`
 with default `100`; it is a maximum planned allocation per Date, not a guaranteed
 reservation or priority. Existing Executable WBS records must be migrated to
 `100`, explicit `0` is invalid, legacy create omission becomes `100`, and update
-omission preserves the existing value. Changing/clearing Assignee resets the
-draft/default according to US-6.3. Execution and Commitment dates are generated
+omission preserves the existing value. Selecting, changing, or clearing
+Assignee preserves the Task-level percentage according to revised US-6.3 and
+US-6.5. Execution and Commitment dates are generated
 independently when Automatic Scheduling is ON and are treated as retained manual
 values when it is OFF. Dependency endpoint pairs are stored once and may be
 manual-owned, automatic-owned, or both. Removing manual ownership never removes
@@ -202,6 +212,20 @@ scheduler as a rollback-only draft preview so generated dates are visible before
 Save; changing Assignee recalculates dates and dependency ownership, while
 clearing Assignee returns an unconfirmed missing-Assignee schedule and removes
 stale automatic ownership. The preview does not advance persisted schedule state.
+
+US-6.5 adds Assignee recommendation to the same Task workflow. Role and
+Assignee are the final two planning inputs so Effort, Capacity Allocation
+Percentage, Lag, and manual timeline data are available first. One batch removes
+the edited Task's own allocation from a shared confirmed baseline and evaluates
+all Role-matching Members. Automatic ON invokes the concrete scheduler without
+inventing a missing Project anchor. Automatic OFF preserves manual dates and
+uses Manual Execution Start, otherwise `max(Project Scheduling Start Date,
+today)`, otherwise backend today in `APP_TIMEZONE` as an advisory anchor.
+Feasible candidates precede candidates that add incremental overcapacity;
+within each group, earliest simulated Execution End, largest completion-Date
+remaining Execution Capacity, normalized name, and ID determine order. The
+recommendation is advisory, side-effect free, and does not reserve capacity or
+penalize downstream lower-priority impact.
 
 US-4.3 defines the approved View Group and Edit Project summary behaviour. Project is the logical WBS level `0`, so Edit Project recursively summarizes every confirmed Task across all top-level WBS roots; View Group summarizes only the selected subtree. Both contexts use one read-only calculation contract. Execution and Commitment ranges each use the earliest Start and latest End among Tasks with a complete pair, with separate scheduled-Task coverage. Effort Completion uses complete Actual Date as the completion source and compares completed known Effort with total known Effort; Tasks without Effort are excluded from the arithmetic and disclosed. The summary is not persisted on Group or Project and never consumes unconfirmed Task preview data.
 

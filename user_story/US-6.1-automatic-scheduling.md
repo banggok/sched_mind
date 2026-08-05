@@ -18,6 +18,13 @@
 > conflict. Capacity resolution, Lag, transactions, impact coordination, and
 > unaffected rules in this story remain authoritative.
 
+> **Product decision update — US-6.5:** Assignee recommendation with Automatic
+> Scheduling `ON` must invoke this same concrete scheduler in rollback-only
+> candidate simulation. US-6.5 does not define a second automatic algorithm and
+> does not change confirmed scheduler ordering, capacity, dependency, horizon,
+> transaction, or missing-anchor behaviour. Automatic Scheduling `OFF` advisory
+> recommendation is owned entirely by US-6.5 and does not mutate manual dates.
+
 ## 1. User Story
 
 **Sebagai** Engineering Lead,

@@ -433,8 +433,8 @@ describe("App Home row focus restoration", () => {
     const { container } = render(<App />);
     const alphaName = await screen.findByRole("button", { name: "Alpha" });
     await user.click(alphaName);
-    const dialog = await screen.findByRole("dialog", { name: "Edit Project" });
-    const name = within(dialog).getByLabelText("Name");
+    const dialog = await screen.findByRole("dialog", { name: "Edit Alpha" });
+    const name = within(dialog).getByLabelText("Project name");
     await user.clear(name);
     await user.type(name, "Renamed Alpha");
     await user.click(within(dialog).getByRole("button", { name: "Save" }));
@@ -449,7 +449,7 @@ describe("App Home row focus restoration", () => {
       ),
     );
     await waitFor(() =>
-      expect(screen.queryByRole("dialog", { name: "Edit Project" })).toBeNull(),
+      expect(screen.queryByRole("dialog", { name: "Edit Alpha" })).toBeNull(),
     );
     const temporaryFocus = screen.getByRole("button", {
       name: "Configure Gantt",

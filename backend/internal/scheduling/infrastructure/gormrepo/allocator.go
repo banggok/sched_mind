@@ -28,9 +28,14 @@ type taskSchedule struct {
 }
 
 type timelineResult struct {
-	timeline  schedulingdomain.Timeline
-	schedules map[string]taskSchedule
-	calendar  *allocationCalendar
+	timeline          schedulingdomain.Timeline
+	schedules         map[string]taskSchedule
+	completionMetrics map[string]taskCompletionMetric
+	calendar          *allocationCalendar
+}
+
+type taskCompletionMetric struct {
+	RemainingCapacityMinutes *big.Rat
 }
 
 type allocationCalendar struct {
@@ -50,18 +55,27 @@ func newAllocationCalendar(state *portfolioState, timeline schedulingdomain.Time
 
 func (state *portfolioState) scheduleTimeline(timeline schedulingdomain.Timeline) (*timelineResult, error) {
 	result := &timelineResult{
-		timeline:  timeline,
-		schedules: make(map[string]taskSchedule),
-		calendar:  newAllocationCalendar(state, timeline),
+		timeline:          timeline,
+		schedules:         make(map[string]taskSchedule),
+		completionMetrics: make(map[string]taskCompletionMetric),
+		calendar:          newAllocationCalendar(state, timeline),
 	}
 	if err := result.reserveFixedTasks(); err != nil {
 		return nil, err
+	}
+
+	fixedTaskIDs := make(map[string]struct{}, len(state.fixed[timeline]))
+	for _, task := range state.fixed[timeline] {
+		fixedTaskIDs[task.ID] = struct{}{}
 	}
 
 	pending := make(map[string]taskModel)
 	for _, task := range state.tasks {
 		project := state.projects[task.ProjectID]
 		if _, leaf := state.leafOrder[task.ID]; !leaf {
+			continue
+		}
+		if _, fixed := fixedTaskIDs[task.ID]; fixed {
 			continue
 		}
 		if task.ActualStart != nil && task.ActualEnd != nil || project.Status != "open" || !project.AutomaticScheduling {
@@ -109,6 +123,13 @@ func (state *portfolioState) scheduleTimeline(timeline schedulingdomain.Timeline
 		}
 		result.invalidateDisplaced(displaced, pending)
 		schedule.Allocations = result.calendar.commit(selected, schedule.Allocations)
+		if schedule.End != nil {
+			remaining, metricErr := result.calendar.remainingForCandidate(selected, *schedule.End)
+			if metricErr != nil {
+				return nil, metricErr
+			}
+			result.completionMetrics[selected.ID] = taskCompletionMetric{RemainingCapacityMinutes: remaining}
+		}
 		result.schedules[selected.ID] = schedule
 		delete(pending, selected.ID)
 	}
@@ -576,6 +597,20 @@ func (calendar *allocationCalendar) add(taskID, memberID string, date time.Time,
 
 func (calendar *allocationCalendar) day(memberID string, date time.Time) []dailyAllocation {
 	return calendar.allocations[memberID][schedulingdomain.DateKey(date)]
+}
+
+func (calendar *allocationCalendar) remainingForCandidate(candidate taskModel, date time.Time) (*big.Rat, error) {
+	capacity, err := calendar.capacity(*candidate.AssigneeID, candidate.ProjectID, date)
+	if err != nil {
+		return nil, err
+	}
+	remaining := schedulingdomain.CloneRat(capacity)
+	for _, allocation := range calendar.day(*candidate.AssigneeID, date) {
+		if calendar.allocationConsumesCapacityFor(candidate, allocation) {
+			remaining.Sub(remaining, allocation.Minutes)
+		}
+	}
+	return remaining, nil
 }
 
 func (calendar *allocationCalendar) remaining(memberID, projectID string, date time.Time) (*big.Rat, error) {

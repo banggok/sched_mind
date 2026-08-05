@@ -11,6 +11,10 @@
 > priority, scheduling transactions, impact coordination, and all rules not
 > explicitly changed here. US-6.2 remains authoritative for Actual Allocation,
 > including the Actual-Date-only, Actual-versus-Actual, balanced/rebalanced allocation revision recorded together with this story.
+> US-6.5 supersedes this story's former Assignee reset contract: Capacity
+> Allocation Percentage is preserved when Assignee is first selected, changed,
+> or cleared so every recommendation and confirmed mutation uses the same visible
+> Task-level percentage.
 
 ## 1. User Story
 
@@ -54,7 +58,7 @@ mengizinkan total automatic allocation melebihi final timeline capacity.
 | Term | Meaning |
 | --- | --- |
 | Task Capacity Allocation Percentage | Integer `1–100` yang membatasi planned capacity maksimum satu Executable WBS per Date |
-| Default Allocation | Persisted value `100`, set ketika Task dibuat atau Assignee reset |
+| Default Allocation | Persisted value `100` ketika Task dibuat tanpa explicit percentage |
 | Final Timeline Capacity | Execution Capacity atau Commitment Capacity setelah capacity precedence, buffer, dan rounding `0.5` jam |
 | Task Daily Limit | Maximum planned allocation Task pada satu Date untuk timeline tertentu setelah percentage dan rounding diterapkan |
 | Ordered Task | Dependency-ready unfinished Task yang ditempatkan menurut Project Priority lalu visual WBS order |
@@ -73,7 +77,7 @@ mengizinkan total automatic allocation melebihi final timeline capacity.
 - Field `Capacity Allocation (%)` pada Executable WBS.
 - Persisted integer default `100` dan validation `1–100`.
 - Migration/backfill seluruh Executable WBS existing menjadi `100`.
-- Reset allocation ketika Assignee berubah atau dikosongkan.
+- Preserve allocation ketika Assignee pertama dipilih, berubah, atau dikosongkan.
 - Independent Execution dan Commitment Task Daily Limit.
 - Rounding Task Daily Limit ke kelipatan `0.5` jam.
 - Minimum positive Task Daily Limit `0.5` jam.
@@ -145,18 +149,23 @@ Rules:
 - API must distinguish omitted field from explicit numeric zero at its boundary.
 - Backend/domain validation adalah source of truth; frontend default bukan satu-satunya protection.
 
-### 5.4 Assignee Change and Clear
+### 5.4 Assignee Selection, Change, and Clear
 
-- Ketika Assignee draft berubah ke Member lain, Capacity Allocation draft di-reset
-  menjadi `100%`.
-- User boleh mengubah kembali draft percentage sebelum Save untuk Assignee baru.
+- Capacity Allocation Percentage adalah Task attribute dan tidak dimiliki oleh
+  Assignee.
+- Ketika Assignee pertama dipilih, Capacity Allocation draft tetap menggunakan
+  value yang terlihat; custom value tidak di-reset menjadi `100`.
+- Ketika Assignee berubah ke Member lain, draft dan persisted percentage tetap
+  dipertahankan kecuali user mengirim explicit valid percentage baru.
 - Update command yang mengganti Assignee dan tidak mengirim explicit percentage
-  menyimpan `100`.
-- Update command yang mengganti Assignee dan secara explicit mengirim valid
-  percentage menyimpan value tersebut untuk Assignee baru.
-- Ketika Assignee dikosongkan, persisted percentage di-reset menjadi `100`.
-- Task tanpa Assignee tetap menyimpan `100` dan tetap unscheduled menurut US-6.1.
-- Stale percentage milik Assignee lama tidak boleh dipakai setelah Assignee berubah.
+  mempertahankan persisted value existing.
+- Ketika Assignee dikosongkan, draft dan persisted percentage tetap dipertahankan.
+- Task tanpa Assignee boleh menyimpan custom percentage dan tetap unscheduled
+  menurut US-6.1.
+- Role change yang membuat current Assignee tidak sesuai juga tidak mengubah
+  percentage.
+- US-6.5 menggunakan percentage yang sama untuk seluruh candidate simulation;
+  backend/frontend tidak boleh memakai implicit `100%` untuk candidate lain.
 
 ### 5.5 Structural Conversion
 
@@ -693,15 +702,15 @@ With Automatic Scheduling OFF:
 
 ### 14.1 Task Form
 
-- Place `Capacity Allocation (%)` in the Task scheduling section near Assignee
-  and Effort.
+- Place `Capacity Allocation (%)` in the Task scheduling section before the
+  final Role and Assignee fields defined by US-6.5.
 - Control is integer numeric input or equivalent accessible spin control.
 - Default visible value is `100`.
 - Display `%` as unit without making it part of the numeric value.
 - Helper text communicates: `Maximum planned capacity per day. Remaining capacity may be used by other tasks.`
 - The field is disabled/non-editable when Task state is not editable.
-- Changing Assignee resets the draft to `100`; user can then enter another valid value.
-- Clearing Assignee resets to `100`.
+- Selecting, changing, or clearing Assignee preserves the visible draft value.
+- Add Task still starts at `100` only as the Task default, not as an Assignee-change side effect.
 - Validation does not wait for scheduler preview.
 
 ### 14.2 Allocation Verification
@@ -742,8 +751,8 @@ Mandatory semantics:
 - create omission → `100`;
 - update omission → preserve existing;
 - explicit `0`/invalid → `INVALID_TASK_CAPACITY_ALLOCATION`;
-- Assignee clear → `100`;
-- Assignee change without explicit replacement → `100`;
+- Assignee first-select/change/clear with percentage omission → preserve existing;
+- Role change or Role/Assignee mismatch → preserve existing;
 - accepted value included in confirmed Task response;
 - preview and confirmed schedule response expose allocation rows consistent with value;
 - Group payload cannot smuggle executable percentage;
@@ -798,14 +807,13 @@ language/database zero-value.
 **Given** request explicitly sends `0`
 **Then** backend rejects it rather than treating it as omitted.
 
-### AC-5 — Assignee reset
+### AC-5 — Assignee changes preserve percentage
 
-**When** Assignee is changed
-**Then** UI resets percentage draft to `100`
-**And** user may explicitly choose another valid value before Save.
-
-**When** Assignee is cleared
-**Then** confirmed percentage becomes `100`.
+**Given** Task Capacity Allocation is a valid custom value
+**When** Assignee is first selected, changed, or cleared
+**Then** UI preserves the visible percentage draft
+**And** backend preserves the confirmed percentage when update omission is used
+**And** only an explicit valid percentage changes the value.
 
 ### AC-6 — Percentage applied after final capacity
 
@@ -1006,7 +1014,7 @@ this story without new coverage.
 - valid `1`, `20`, `50`, `100`;
 - invalid `0`, negative, fractional, malformed, above `100`;
 - create omission versus update omission versus explicit zero;
-- Assignee change/clear reset semantics;
+- Assignee first-select/change/clear preservation semantics;
 - half-up `0.5` rounding and minimum positive `0.5`;
 - independent Execution/Commitment limits;
 - A/B/C examples from Section 9;
@@ -1039,7 +1047,7 @@ this story without new coverage.
 
 - default `100`, unit, helper text, label, keyboard and screen-reader semantics;
 - integer validation and preserved draft;
-- Assignee change/clear reset;
+- Assignee first-select/change/clear preserves the draft;
 - lifecycle read-only states;
 - preview loading/failure/stale response;
 - allocation verification fields;
@@ -1051,7 +1059,7 @@ this story without new coverage.
 2. Put a `100%` higher-priority Task first and verify the `20%` Task starts later when no capacity remains.
 3. Verify `5.5h`, `50%`, `50%` produces `3.0h` then `2.5h` by order.
 4. Verify A/B/C `4h` example produces overlapping dates and C completes before B.
-5. Change Assignee and verify percentage resets/defaults safely without stale schedule.
+5. Select/change/clear Assignee and verify custom percentage is preserved without stale schedule.
 6. Edit percentage and confirm impacted Open Projects; verify Locked impact blocks atomically.
 7. Higher-priority Manual Project consumes shared capacity and moves a lower-priority automatic Task; lower-priority Manual Project overlaps without moving the higher-priority automatic Task or showing a warning.
 8. Complete a `20%` Task and verify Actual Allocation follows US-6.2 rather than `20%`.
@@ -1063,7 +1071,7 @@ this story without new coverage.
 ## 18. Definition of Done
 
 - Approved user story and supersession links are consistent across US-4.1,
-  US-6.1, US-6.2, project context, and implementation evidence.
+  US-6.1, US-6.2, US-6.5, project context, and implementation evidence.
 - Migration/backward-compatibility behaviour is implemented and tested before
   enabling percentage scheduling.
 - Automatic same-assignee parallel allocation is deterministic and capacity-safe.

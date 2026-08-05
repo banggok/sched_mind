@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	schedulingdomain "github.com/banggok/sched_mind/backend/internal/scheduling/domain"
@@ -23,6 +24,7 @@ type Service interface {
 	Rename(context.Context, string, string, string) (*domain.Node, error)
 	UpdateExecutable(context.Context, string, string, application.WriteExecutableInput) (*domain.Node, error)
 	PreviewExecutableSchedule(context.Context, string, string, application.PreviewExecutableInput) (*application.SchedulePreview, error)
+	RecommendAssignees(context.Context, string, string, schedulingdomain.AssigneeRecommendationInput) (*schedulingdomain.AssigneeRecommendationResult, error)
 	Complete(context.Context, string, string, time.Time, time.Time) (*domain.Node, error)
 	Reopen(context.Context, string, string) (*domain.Node, error)
 	Reorder(context.Context, string, string, domain.Direction) error
@@ -56,6 +58,15 @@ type previewExecutableRequest struct {
 	EffortHours                  *float64        `json:"effortHours"`
 	LagDays                      json.RawMessage `json:"lag"`
 	CapacityAllocationPercentage json.RawMessage `json:"capacityAllocationPercentage"`
+}
+
+type assigneeRecommendationRequest struct {
+	RoleID                       string          `json:"roleId"`
+	EffortHours                  *float64        `json:"effortHours"`
+	LagDays                      json.RawMessage `json:"lag"`
+	CapacityAllocationPercentage json.RawMessage `json:"capacityAllocationPercentage"`
+	ExecutionStart               *string         `json:"executionStart"`
+	ExecutionEnd                 *string         `json:"executionEnd"`
 }
 
 type commandRequest struct {
@@ -98,6 +109,26 @@ type item struct {
 type schedulePreviewItem struct {
 	Task item `json:"task"`
 }
+type assigneeRecommendationItem struct {
+	MemberID                        string  `json:"memberId"`
+	MemberName                      string  `json:"memberName"`
+	RoleID                          string  `json:"roleId"`
+	RankGroup                       string  `json:"rankGroup"`
+	ExecutionEnd                    *string `json:"executionEnd"`
+	RemainingExecutionCapacityHours float64 `json:"remainingExecutionCapacityHours"`
+	IncrementalOvercapacityHours    float64 `json:"incrementalOvercapacityHours"`
+	ReasonCode                      *string `json:"reasonCode"`
+}
+
+type assigneeRecommendationResultItem struct {
+	CalculatedOnDate string `json:"calculatedOnDate"`
+	Snapshot         struct {
+		ProjectScheduleVersions map[string]int64 `json:"projectScheduleVersions"`
+	} `json:"snapshot"`
+	Mode  string                       `json:"mode"`
+	Items []assigneeRecommendationItem `json:"items"`
+}
+
 type allocationRowItem struct {
 	Date                         string `json:"date"`
 	AllocatedMinutes             int    `json:"allocatedMinutes"`
@@ -127,6 +158,7 @@ func (h *Handler) Register(m *http.ServeMux) {
 	m.HandleFunc("PUT /api/projects/{projectId}/wbs/{wbsId}", h.rename)
 	m.HandleFunc("PUT /api/projects/{projectId}/wbs/{wbsId}/executable", h.executable)
 	m.HandleFunc("POST /api/projects/{projectId}/wbs/{wbsId}/executable/preview", h.previewExecutable)
+	m.HandleFunc("POST /api/projects/{projectId}/wbs/{wbsId}/assignee-recommendations", h.recommendAssignees)
 	m.HandleFunc("POST /api/projects/{projectId}/wbs/{wbsId}/actual-date", h.complete)
 	m.HandleFunc("POST /api/projects/{projectId}/wbs/{wbsId}/reopen", h.reopen)
 	m.HandleFunc("POST /api/projects/{projectId}/wbs/{wbsId}/reorder", h.reorder)
@@ -266,6 +298,80 @@ func (h *Handler) previewExecutable(w http.ResponseWriter, r *http.Request) {
 	httpjson.Write(w, http.StatusOK, response{schedulePreviewItem{
 		Task: mapNode(*value.Task),
 	}})
+}
+
+func (h *Handler) recommendAssignees(w http.ResponseWriter, r *http.Request) {
+	var payload assigneeRecommendationRequest
+	if !decode(w, r, &payload) {
+		return
+	}
+	input, field, err := parseAssigneeRecommendationRequest(payload)
+	if err != nil {
+		httpjson.Write(w, http.StatusBadRequest, errorResponse{
+			"ASSIGNEE_RECOMMENDATION_INPUT_INVALID",
+			"Role, Effort, Capacity Allocation, Lag, or Execution timeline is invalid.",
+			field,
+		})
+		return
+	}
+	value, err := h.service.RecommendAssignees(
+		r.Context(),
+		r.PathValue("projectId"),
+		r.PathValue("wbsId"),
+		input,
+	)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	httpjson.Write(w, http.StatusOK, response{mapAssigneeRecommendation(*value)})
+}
+
+func parseAssigneeRecommendationRequest(payload assigneeRecommendationRequest) (schedulingdomain.AssigneeRecommendationInput, string, error) {
+	if strings.TrimSpace(payload.RoleID) == "" {
+		return schedulingdomain.AssigneeRecommendationInput{}, "roleId", schedulingdomain.ErrAssigneeRecommendationInputInvalid
+	}
+	if payload.EffortHours == nil {
+		return schedulingdomain.AssigneeRecommendationInput{}, "effortHours", schedulingdomain.ErrAssigneeRecommendationInputInvalid
+	}
+	effortMinutes := int(*payload.EffortHours * 60)
+	if effortMinutes < 30 || effortMinutes%30 != 0 || float64(effortMinutes) != *payload.EffortHours*60 {
+		return schedulingdomain.AssigneeRecommendationInput{}, "effortHours", schedulingdomain.ErrAssigneeRecommendationInputInvalid
+	}
+	if len(payload.LagDays) == 0 || string(payload.LagDays) == "null" {
+		return schedulingdomain.AssigneeRecommendationInput{}, "lag", schedulingdomain.ErrAssigneeRecommendationInputInvalid
+	}
+	var lagDays int
+	if err := json.Unmarshal(payload.LagDays, &lagDays); err != nil || lagDays < 0 {
+		return schedulingdomain.AssigneeRecommendationInput{}, "lag", schedulingdomain.ErrAssigneeRecommendationInputInvalid
+	}
+	if len(payload.CapacityAllocationPercentage) == 0 || string(payload.CapacityAllocationPercentage) == "null" {
+		return schedulingdomain.AssigneeRecommendationInput{}, "capacityAllocationPercentage", schedulingdomain.ErrAssigneeRecommendationInputInvalid
+	}
+	var percentage int
+	if err := json.Unmarshal(payload.CapacityAllocationPercentage, &percentage); err != nil || percentage < 1 || percentage > 100 {
+		return schedulingdomain.AssigneeRecommendationInput{}, "capacityAllocationPercentage", schedulingdomain.ErrAssigneeRecommendationInputInvalid
+	}
+	var executionStart *time.Time
+	if payload.ExecutionStart != nil {
+		value, err := time.Parse("2006-01-02", *payload.ExecutionStart)
+		if err != nil {
+			return schedulingdomain.AssigneeRecommendationInput{}, "executionStart", schedulingdomain.ErrAssigneeRecommendationInputInvalid
+		}
+		executionStart = &value
+	}
+	if payload.ExecutionEnd != nil {
+		if _, err := time.Parse("2006-01-02", *payload.ExecutionEnd); err != nil {
+			return schedulingdomain.AssigneeRecommendationInput{}, "executionEnd", schedulingdomain.ErrAssigneeRecommendationInputInvalid
+		}
+	}
+	return schedulingdomain.AssigneeRecommendationInput{
+		RoleID:                       payload.RoleID,
+		EffortMinutes:                effortMinutes,
+		LagDays:                      lagDays,
+		CapacityAllocationPercentage: percentage,
+		ExecutionStart:               executionStart,
+	}, "", nil
 }
 
 func (h *Handler) complete(w http.ResponseWriter, r *http.Request) {
@@ -499,16 +605,55 @@ func writeError(w http.ResponseWriter, err error) {
 		status, code = 422, "INVALID_TASK_CAPACITY_ALLOCATION"
 	case errors.Is(err, domain.ErrEffortInvalid) || errors.Is(err, domain.ErrTimelinePair) || errors.Is(err, domain.ErrTimelineOrder):
 		status, code = 400, "WBS_EXECUTABLE_INVALID"
+	case errors.Is(err, schedulingdomain.ErrAssigneeRecommendationInputInvalid):
+		status, code = 400, "ASSIGNEE_RECOMMENDATION_INPUT_INVALID"
+	case errors.Is(err, schedulingdomain.ErrTaskNotRecommendable):
+		status, code = 409, "TASK_NOT_RECOMMENDABLE"
+	case errors.Is(err, schedulingdomain.ErrAssigneeRecommendationStale):
+		status, code = 409, "ASSIGNEE_RECOMMENDATION_STALE"
+	case errors.Is(err, schedulingdomain.ErrAssigneeRecommendationUnavailable):
+		status, code = 503, "ASSIGNEE_RECOMMENDATION_UNAVAILABLE"
 	case errors.Is(err, schedulingdomain.ErrConcurrentConflict):
 		status, code = 409, "SCHEDULING_CONFLICT"
 	case errors.Is(err, schedulingdomain.ErrDataIntegrity):
 		status, code = 409, "SCHEDULING_DATA_INTEGRITY_CONFLICT"
 	}
 	message := err.Error()
+	switch code {
+	case "ASSIGNEE_RECOMMENDATION_INPUT_INVALID":
+		message = "Assignee recommendation input is invalid."
+	case "TASK_NOT_RECOMMENDABLE":
+		message = "Assignee recommendation is not available for this Task."
+	case "ASSIGNEE_RECOMMENDATION_STALE":
+		message = "Scheduling state changed. Refresh and try again."
+	case "ASSIGNEE_RECOMMENDATION_UNAVAILABLE":
+		message = "Assignee recommendation is temporarily unavailable."
+	case "INTERNAL_ERROR":
+		message = "An internal error occurred"
+	}
 	if status == 500 {
 		message = "An internal error occurred"
 	}
 	httpjson.Write(w, status, errorResponse{code, message, ""})
+}
+
+func mapAssigneeRecommendation(value schedulingdomain.AssigneeRecommendationResult) assigneeRecommendationResultItem {
+	result := assigneeRecommendationResultItem{
+		CalculatedOnDate: value.CalculatedOnDate.Format("2006-01-02"),
+		Mode:             string(value.Mode),
+		Items:            make([]assigneeRecommendationItem, 0, len(value.Items)),
+	}
+	result.Snapshot.ProjectScheduleVersions = value.ProjectScheduleVersions
+	for _, item := range value.Items {
+		result.Items = append(result.Items, assigneeRecommendationItem{
+			MemberID: item.MemberID, MemberName: item.MemberName, RoleID: item.RoleID, RankGroup: string(item.RankGroup),
+			ExecutionEnd:                    date(item.ExecutionEnd),
+			RemainingExecutionCapacityHours: float64(item.RemainingExecutionCapacityMinutes) / 60,
+			IncrementalOvercapacityHours:    float64(item.IncrementalOvercapacityMinutes) / 60,
+			ReasonCode:                      item.ReasonCode,
+		})
+	}
+	return result
 }
 
 func mapAllocationGroups(value application.AllocationGroups) allocationGroupsItem {

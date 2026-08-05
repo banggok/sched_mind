@@ -2,6 +2,8 @@ import { schedulingImpactFetch } from "../../../shared/infrastructure/scheduling
 import {
   WBSOperationError,
   type AllocationGroups,
+  type AssigneeRecommendationItem,
+  type AssigneeRecommendationResult,
   type AllocationRow,
   type SchedulePreview,
   type WBSGateway,
@@ -142,6 +144,21 @@ export function createHTTPWBSGateway(baseURL: string): WBSGateway {
       );
       invalidateAll(true);
     },
+    recommendAssignees: async (projectId, id, input, signal) => {
+      const requestVersion = currentScheduleProjectionVersion();
+      const { lagDays, ...fields } = input;
+      const data = await request(
+        `${path(projectId)}/${encodeURIComponent(id)}/assignee-recommendations`,
+        {
+          ...json("POST", { ...fields, lag: lagDays }),
+          signal,
+        },
+      );
+      if (currentScheduleProjectionVersion() !== requestVersion) {
+        throw staleResponseError();
+      }
+      return mapAssigneeRecommendation(data);
+    },
     previewExecutableSchedule: async (projectId, id, input, signal) => {
       const requestVersion = currentScheduleProjectionVersion();
       const { lagDays, ...fields } = input;
@@ -192,6 +209,76 @@ export function createHTTPWBSGateway(baseURL: string): WBSGateway {
         );
       }
     },
+  };
+}
+
+function mapAssigneeRecommendation(
+  value: unknown,
+): AssigneeRecommendationResult {
+  if (
+    !isRecord(value) ||
+    typeof value.calculatedOnDate !== "string" ||
+    (value.mode !== "automatic" && value.mode !== "manual-advisory") ||
+    !isRecord(value.snapshot) ||
+    !isRecord(value.snapshot.projectScheduleVersions) ||
+    !Array.isArray(value.items)
+  ) {
+    throw new Error(invalidResponseMessage);
+  }
+  const versions: Record<string, number> = {};
+  for (const [projectId, version] of Object.entries(
+    value.snapshot.projectScheduleVersions,
+  )) {
+    if (
+      typeof version !== "number" ||
+      !Number.isInteger(version) ||
+      version < 0
+    ) {
+      throw new Error(invalidResponseMessage);
+    }
+    versions[projectId] = version;
+  }
+  return {
+    calculatedOnDate: value.calculatedOnDate,
+    snapshot: { projectScheduleVersions: versions },
+    mode: value.mode,
+    items: value.items.map(mapAssigneeRecommendationItem),
+  };
+}
+
+function mapAssigneeRecommendationItem(
+  value: unknown,
+): AssigneeRecommendationItem {
+  if (
+    !isRecord(value) ||
+    typeof value.memberId !== "string" ||
+    typeof value.memberName !== "string" ||
+    typeof value.roleId !== "string" ||
+    (value.rankGroup !== "feasible" &&
+      value.rankGroup !== "overcapacity" &&
+      value.rankGroup !== "no-completion") ||
+    (value.executionEnd !== null &&
+      value.executionEnd !== undefined &&
+      typeof value.executionEnd !== "string") ||
+    typeof value.remainingExecutionCapacityHours !== "number" ||
+    !Number.isFinite(value.remainingExecutionCapacityHours) ||
+    typeof value.incrementalOvercapacityHours !== "number" ||
+    !Number.isFinite(value.incrementalOvercapacityHours) ||
+    (value.reasonCode !== null &&
+      value.reasonCode !== undefined &&
+      typeof value.reasonCode !== "string")
+  ) {
+    throw new Error(invalidResponseMessage);
+  }
+  return {
+    memberId: value.memberId,
+    memberName: value.memberName,
+    roleId: value.roleId,
+    rankGroup: value.rankGroup,
+    executionEnd: optionalString(value.executionEnd),
+    remainingExecutionCapacityHours: value.remainingExecutionCapacityHours,
+    incrementalOvercapacityHours: value.incrementalOvercapacityHours,
+    reasonCode: optionalString(value.reasonCode),
   };
 }
 

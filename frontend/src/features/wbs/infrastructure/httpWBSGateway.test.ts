@@ -316,7 +316,140 @@ describe("HTTP WBS gateway tree cache", () => {
     expect(confirmedChange).not.toHaveBeenCalled();
     unsubscribe?.();
   });
+
+  it("US-6.5 AC-12 AC-25 sends one ranked recommendation batch and maps stable metadata", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: assigneeRecommendationResponse(),
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const gateway = createHTTPWBSGateway("/api");
+
+    const result = await gateway.recommendAssignees!(
+      "project",
+      "task/with slash",
+      {
+        roleId: "role",
+        effortHours: 8,
+        lagDays: 2,
+        capacityAllocationPercentage: 40,
+        executionStart: "2026-08-10",
+      },
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/projects/project/wbs/task%2Fwith%20slash/assignee-recommendations",
+      expect.objectContaining({ method: "POST" }),
+    );
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(JSON.parse(String(init.body))).toEqual({
+      roleId: "role",
+      effortHours: 8,
+      capacityAllocationPercentage: 40,
+      executionStart: "2026-08-10",
+      lag: 2,
+    });
+    expect(result).toEqual({
+      calculatedOnDate: "2026-08-05",
+      snapshot: { projectScheduleVersions: { project: 12 } },
+      mode: "manual-advisory",
+      items: [
+        {
+          memberId: "member",
+          memberName: "Ayu",
+          roleId: "role",
+          rankGroup: "feasible",
+          executionEnd: "2026-08-10",
+          remainingExecutionCapacityHours: 4,
+          incrementalOvercapacityHours: 0,
+          reasonCode: undefined,
+        },
+      ],
+    });
+  });
+
+  it("US-6.5 AC-26 AC-28 rejects a recommendation invalidated by a confirmed scheduling mutation", async () => {
+    let resolveRecommendation: ((response: Response) => void) | undefined;
+    const recommendationRequest = new Promise<Response>((resolve) => {
+      resolveRecommendation = resolve;
+    });
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(() => recommendationRequest)
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const wbsGateway = createHTTPWBSGateway("/api");
+    const projectsGateway = createHTTPProjectsGateway("/api");
+
+    const recommendation = wbsGateway.recommendAssignees!("project", "task", {
+      roleId: "role",
+      effortHours: 8,
+      lagDays: 0,
+      capacityAllocationPercentage: 100,
+    });
+    await projectsGateway.delete("other-project");
+    resolveRecommendation?.(
+      new Response(JSON.stringify({ data: assigneeRecommendationResponse() }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    await expect(recommendation).rejects.toMatchObject({ name: "AbortError" });
+  });
+
+  it("US-6.5 AC-25 AC-31 rejects malformed recommendation rows instead of trusting partial ranking", async () => {
+    const malformed = assigneeRecommendationResponse();
+    malformed.items[0].remainingExecutionCapacityHours = Number.NaN;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ data: malformed }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+    const gateway = createHTTPWBSGateway("/api");
+
+    await expect(
+      gateway.recommendAssignees!("project", "task", {
+        roleId: "role",
+        effortHours: 8,
+        lagDays: 0,
+        capacityAllocationPercentage: 100,
+      }),
+    ).rejects.toThrow("WBS response is invalid. Try again.");
+  });
 });
+
+function assigneeRecommendationResponse() {
+  return {
+    calculatedOnDate: "2026-08-05",
+    snapshot: { projectScheduleVersions: { project: 12 } },
+    mode: "manual-advisory" as const,
+    items: [
+      {
+        memberId: "member",
+        memberName: "Ayu",
+        roleId: "role",
+        rankGroup: "feasible" as const,
+        executionEnd: "2026-08-10",
+        remainingExecutionCapacityHours: 4,
+        incrementalOvercapacityHours: 0,
+        reasonCode: null,
+      },
+    ],
+  };
+}
 
 function schedulePreviewResponse() {
   return {

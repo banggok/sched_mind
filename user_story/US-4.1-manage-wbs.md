@@ -33,6 +33,15 @@
 > percentage moves with executable data to a conversion child, while a newly
 > executable WBS defaults to `100`.
 
+> **Product decision update — US-6.5:** Editable unfinished Task Details ranks
+> Assignee candidates through one latest batch simulation. Role and Assignee
+> appear immediately after Lag, in that order and before timeline/dependency
+> controls; current
+> Role-mismatched Assignee remains visible until replaced/cleared, and Capacity
+> Allocation Percentage is preserved on first selection, reassignment, and clear.
+> US-6.5 owns ranking and simulation; this story owns form composition and atomic
+> Task mutation integration.
+
 ## User Story
 
 **As an** Engineering Lead
@@ -63,6 +72,7 @@ duplicating mutation rules.
 - Automatic conversion between Grouping and Executable WBS
 - Manage executable attributes owned by this story: Role, Assignee, Effort, Capacity Allocation Percentage integration, Manual Execution Timeline, Manual Commitment Timeline, Actual Start, Actual End
 - Integrate Task Capacity Allocation Percentage from US-6.3 without duplicating its scheduling or migration rules
+- Integrate Assignee recommendation from US-6.5 without duplicating ranking or simulation rules
 - Integrate with Dependency from US-5.1 and Lag/generated dates from US-6.1 without duplicating their business rules
 - Validation, Persistence, API and UI
 
@@ -73,6 +83,7 @@ duplicating mutation rules.
 - Dependency editor and graph rules; owned by US-5.1
 - Lag validation and calculation; owned by US-6.1
 - Task Capacity Allocation Percentage calculation and migration; owned by US-6.3
+- Assignee recommendation ranking, simulation, and candidate metrics; owned by US-6.5
 - Recursive Group and whole-Project timeline/effort-completion summary; owned by US-4.3
 
 ---
@@ -188,6 +199,10 @@ WBS commands.
 34. A completed Task in an Open Project may be reordered or moved under existing BAU, but cannot Add Child or Delete; its executable data and Actual Date remain immutable.
 35. Active WBS acceptance-level tests exercise `Home → row action/dialog → confirm → refreshed Home` and prove that no Projects/Project Structure background navigation occurs.
 36. Successful eligible Task deletion atomically removes every Sprint Task relation for that Task; any delete failure preserves both the Task and its Sprint relations.
+37. First assignment and Edit Task expose the US-6.5 ranked Assignee list when Role, Effort, Capacity Allocation Percentage, and Lag are valid.
+38. Role and Assignee appear immediately after Lag, in that order and before timeline/dependency controls; accessible tab order matches the visible order.
+39. Selecting, changing, or clearing Assignee preserves Task Capacity Allocation Percentage.
+40. Role change keeps a mismatched current Assignee visible until user replaces or clears it; backend mismatch validation remains authoritative.
 
 ---
 
@@ -212,11 +227,16 @@ WBS commands.
 - Delete with Automatic Scheduling OFF and verify remaining manual dates are unchanged.
 - Delete a Task associated with Planned and Started Sprints and verify all Sprint Task relations are removed in the same transaction without deleting either Sprint.
 - Edit executable attributes, including Capacity Allocation Percentage.
+- Complete Effort, Capacity Allocation Percentage, Lag, and Role, then verify the Assignee control shows one latest US-6.5 batch ranking.
+- Select/change/clear Assignee and verify Capacity Allocation Percentage is preserved.
+- Change Role to conflict with current Assignee and verify the current value remains visible until replaced/cleared.
 - Enter complete Actual Date and verify allocation.
 
 ### Validation
 
 - Attempt executable fields on Grouping WBS.
+- Leave Role, Effort, Capacity Allocation Percentage, or Lag invalid and verify recommendation is not requested while alphabetic Assignee selection remains usable.
+- Verify completed, Locked, Closed, and Group contexts do not request recommendation.
 - Verify View Group summary remains derived/read-only and does not create Group
   executable state.
 - Add child to Executable containing data without confirming conversion.
@@ -290,6 +310,12 @@ available and may not claim completion from a no-op adapter.
   selected or explicitly cleared; clearing it still previews automatic-
   dependency reconciliation and the missing-Assignee unscheduled result. Save
   remains the only confirmed Task mutation.
+- For first assignment and Edit Task, Assignee recommendation follows US-6.5:
+  one latest side-effect-free batch, current Task allocation removed from the
+  baseline, and deterministic ranked metadata. Automatic ON reuses the concrete
+  scheduler; Automatic OFF uses advisory simulation without changing manual dates.
+- Capacity Allocation Percentage remains unchanged when Assignee is selected,
+  changed, or cleared.
 
 ---
 
@@ -353,6 +379,16 @@ duplicate their domain rules.
 - A Role change that conflicts with the selected Assignee requires the user to
   replace or clear Assignee. Backend rejects mismatched combinations and never
   clears Assignee implicitly.
+- The Task form must not clear a conflicting current Assignee automatically; it
+  remains visible with the US-6.5 mismatch warning until user replaces or clears it.
+- For editable unfinished Task planning, visible and accessible order is Effort,
+  Capacity Allocation Percentage, Lag, Role, then Assignee. Applicable manual or
+  generated timelines and confirmed dependency controls appear after Assignee.
+  Actual Date remains a separate lifecycle action and may remain after the primary
+  Save action.
+- The Assignee control consumes the batch recommendation owned by US-6.5 when
+  its required draft inputs are valid; incomplete or failed recommendation keeps
+  deterministic alphabetic selection available.
 
 ### WBS Name
 
@@ -437,7 +473,7 @@ The summary does not weaken the rule that Grouping WBS cannot own executable att
 
 US-4.1 persists the executable Task field and integrates its form, lifecycle,
 conversion, and atomic mutation behaviour. US-6.3 owns default `100`, integer
-`1–100`, Assignee reset, migration, percentage rounding, concurrent planned
+`1–100`, Assignee-selection preservation, migration, percentage rounding, concurrent planned
 allocation, manual fixed allocation, and Actual Allocation non-interaction.
 Per-Date projections and capacity consumption must not be reimplemented inside
 the WBS feature.
