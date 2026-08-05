@@ -556,11 +556,55 @@ Member transaction and retained Sprint Tasks surface live Needs Review warnings.
 
 Sprint detail and suggestion reads must be bounded and set-based across selected
 Members, candidate/selected Tasks, capacity inputs, holidays/overrides, Projects,
-WBS order, and allocation rows. Avoid per-Member, per-Task, per-Date, or
-per-Project N+1 access. Daily values use bounded accessible disclosures while
-keeping every positive outside-Sprint allocation Date discoverable. Migration
-`000025_manage_sprints` supplies deterministic list and reverse-relation indexes;
-additional indexes require measured PostgreSQL plan evidence.
+complete WBS trees for represented Projects, and allocation rows. Avoid
+per-Member, per-Task, per-Date, or per-Project N+1 access. The read model exposes
+one server-resolved flat daily-plan order using earliest positive allocation Date,
+Project Priority, depth-first WBS rank, and Task ID, with readable completed Tasks
+after unfinished Tasks and unreadable Tasks in deterministic Needs Review fallback
+order. The projection token includes the Sprint, Member/capacity values, Task and
+Project values, WBS ancestor ordering inputs, overrides, holidays, and allocation
+rows so a changed path or order cannot be paired with a stale token.
+Suggestion read or canonical-allocation integrity failures are normalized by the
+Sprint application boundary to the stable recoverable
+`SPRINT_SUGGESTION_UNAVAILABLE` contract. The HTTP adapter does not depend on the
+Scheduling domain and a failed suggestion writes no Sprint aggregate or relation.
+
+For every Sprint Date, Member Capacity, Selected Allocation, Remaining, and
+Overcapacity are composed independently. Member period values sum their daily
+values; Sprint daily and period values sum Member daily values. Do not recompute
+Remaining or Overcapacity from aggregate Capacity minus aggregate Allocation,
+because that would net one Member or Date against another. Readable Needs Review
+allocation is exposed separately by Date and excluded from selected-member
+utilization.
+
+The frontend renders a flat Member-grouped daily grid without loading a separate
+WBS tree. It keeps Project/status on every Task row while WBS path/rank remains an
+internal ordering input. The grid contains exactly the inclusive Sprint
+Start-to-End Date range in one horizontally scrollable grid with no Previous/Next
+Date controls. Positive allocation outside the Sprint Period remains available
+to canonical ordering/read-model logic but creates no visible Date column or Task
+allocation cell. Each Member exposes only period/per-Date Capacity; Task
+allocation remains on Task rows. A `0h` Member Daily Capacity marks the complete
+Member Date column and adds one textual `No capacity` state in its header;
+Remaining Capacity does not control the marker. Sprint, Remaining, and
+Overcapacity summaries are intentionally not rendered.
+
+Task Name is the edit activation inside Sprint Planning. It opens the same
+`WBSPanel` direct-entry Task controller used by Home, loading the authoritative
+Project and WBS tree without changing the active hash/page. Closing the shared
+dialog leaves the local Sprint Planning selection untouched. A confirmed Task
+mutation closes only the dialog and invokes the existing Sprint suggestion read
+against the saved Sprint Dates/Members; the replacement remains local until
+`Save Sprint Planning`. Home keeps its existing composition-root overlay wiring
+unchanged.
+
+Migration `000025_manage_sprints` supplies deterministic list and reverse-relation
+indexes. The added set-based WBS context read reuses
+`wbs_nodes_project_tree_idx`; allocation composition and candidate readability
+checks reuse the allocation primary key and
+`task_schedule_allocations_member_date_idx`. No schema migration or speculative
+index is introduced by the daily-plan projection; any additional index still
+requires measured PostgreSQL plan evidence.
 
 The PostgreSQL query-review gate was measured against temporary tables cloned
 from the production schema and indexes with 10,000 Sprints, 200 Members, 500
@@ -579,10 +623,12 @@ speculative date index is justified. Representative execution times were below
 2.2 ms for every reviewed shape on the local PostgreSQL 16 validation dataset.
 
 The Sprint Create/Edit dialog owns only Details and Members. A saved Sprint is
-reviewed on the main Sprint page, where Task membership is generated and
-managed. The frontend composes each Member group with the authoritative WBS
-gateway: Project is rendered as level `0`, followed by retained WBS ancestors
-and selected executable Task leaves. Editing Details or Members preserves
+planned on the main Sprint page, where Task membership is generated and managed.
+Sprint Planning groups by selected Member but does not render Project roots,
+Group rows, or a WBS hierarchy. It consumes server-provided WBS path/rank only for
+canonical ordering, keeps Project context on each flat Task row, formats visible
+Dates as `DD MMM YYYY`, wraps Task names within `50ch`, and preserves order while
+the user horizontally scrolls one all-Date grid. Editing Details or Members preserves
 existing Task IDs; suggestion replacement remains an explicit page action.
 
 Sprint endpoints are:

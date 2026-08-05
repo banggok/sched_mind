@@ -57,7 +57,7 @@ async function selectDate(label: string, date: string) {
 }
 
 describe("SprintFormDialog", () => {
-  it("creates Details and Members without rendering Task Review in the modal", async () => {
+  it("creates Details and Members without rendering Sprint Planning in the modal", async () => {
     const { gateway, membersGateway } = gateways();
     const onSaved = vi.fn();
     render(
@@ -78,7 +78,7 @@ describe("SprintFormDialog", () => {
     await userEvent.click(
       await screen.findByRole("checkbox", { name: /Harry/ }),
     );
-    expect(screen.queryByText("Task Review")).toBeNull();
+    expect(screen.queryByText("Sprint Planning")).toBeNull();
     await userEvent.click(
       screen.getByRole("button", { name: "Create Sprint" }),
     );
@@ -111,10 +111,12 @@ describe("SprintFormDialog", () => {
           name: "Harry",
           roleName: "Engineer",
           dailyCapacity: [],
+          dailySummaries: [],
           capacityMinutes: 480,
           inSprintAllocationMinutes: 0,
           remainingMinutes: 480,
           overcapacityMinutes: 0,
+          totalAllocationMinutes: 0,
         },
       ],
       tasks: [
@@ -123,8 +125,11 @@ describe("SprintFormDialog", () => {
           projectId: "project-1",
           projectName: "Alpha",
           projectStatus: "open",
+          projectPriority: 1,
           name: "API",
           wbsOrder: "1",
+          wbsPath: "1",
+          wbsRank: 1,
           assigneeId: "member-1",
           completed: false,
           allocations: [],
@@ -137,9 +142,13 @@ describe("SprintFormDialog", () => {
       totals: {
         capacityMinutes: 480,
         selectedMemberAllocationMinutes: 0,
+        remainingMinutes: 480,
+        overcapacityMinutes: 0,
         needsReviewAllocationMinutes: 0,
+        needsReviewDailyAllocation: [],
         allTaskInSprintMinutes: 0,
         allTaskTotalMinutes: 0,
+        dailySummaries: [],
       },
       projectionToken: "p",
     };

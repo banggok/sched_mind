@@ -45,9 +45,13 @@ function detail(sprint: Sprint): SprintDetail {
     totals: {
       capacityMinutes: 480,
       selectedMemberAllocationMinutes: 120,
+      remainingMinutes: 360,
+      overcapacityMinutes: 0,
       needsReviewAllocationMinutes: 0,
+      needsReviewDailyAllocation: [],
       allTaskInSprintMinutes: 120,
       allTaskTotalMinutes: 180,
+      dailySummaries: [],
     },
   };
 }
@@ -66,9 +70,13 @@ function gateway(): SprintsGateway {
       totals: {
         capacityMinutes: 0,
         selectedMemberAllocationMinutes: 0,
+        remainingMinutes: 0,
+        overcapacityMinutes: 0,
         needsReviewAllocationMinutes: 0,
+        needsReviewDailyAllocation: [],
         allTaskInSprintMinutes: 0,
         allTaskTotalMinutes: 0,
+        dailySummaries: [],
       },
       projectionToken: "p",
     }),
@@ -93,7 +101,6 @@ const membersGateway: TeamMembersGateway = {
   update: vi.fn(),
   delete: vi.fn(),
 };
-const wbsGateway = { tree: vi.fn().mockResolvedValue([]) };
 const loadPublicHolidayDates = vi.fn().mockResolvedValue([]);
 
 describe("SprintsPage", () => {
@@ -103,7 +110,6 @@ describe("SprintsPage", () => {
       <SprintsPage
         gateway={api}
         membersGateway={membersGateway}
-        wbsGateway={wbsGateway}
         loadPublicHolidayDates={loadPublicHolidayDates}
       />,
     );
@@ -169,7 +175,6 @@ describe("SprintsPage", () => {
       <SprintsPage
         gateway={api}
         membersGateway={membersGateway}
-        wbsGateway={wbsGateway}
         loadPublicHolidayDates={loadPublicHolidayDates}
       />,
     );
@@ -209,7 +214,6 @@ describe("SprintsPage", () => {
       <SprintsPage
         gateway={api}
         membersGateway={membersGateway}
-        wbsGateway={wbsGateway}
         loadPublicHolidayDates={loadPublicHolidayDates}
       />,
     );
@@ -223,7 +227,11 @@ describe("SprintsPage", () => {
     ).toBeTruthy();
     expect(screen.getByText("No eligible Tasks found.")).toBeTruthy();
     expect(screen.queryByRole("dialog")).toBeNull();
-    expect(api.candidates).toHaveBeenCalledWith("sprint-1", 1);
+    expect(api.candidates).toHaveBeenCalledWith(
+      "sprint-1",
+      1,
+      expect.any(AbortSignal),
+    );
   });
 
   it("starts Planned Sprint once and confirms Delete without duplicate submission_AC4And66To71", async () => {
@@ -232,7 +240,6 @@ describe("SprintsPage", () => {
       <SprintsPage
         gateway={api}
         membersGateway={membersGateway}
-        wbsGateway={wbsGateway}
         loadPublicHolidayDates={loadPublicHolidayDates}
       />,
     );
@@ -263,7 +270,6 @@ describe("SprintsPage", () => {
       <SprintsPage
         gateway={api}
         membersGateway={membersGateway}
-        wbsGateway={wbsGateway}
         loadPublicHolidayDates={loadPublicHolidayDates}
       />,
     );
@@ -302,7 +308,6 @@ describe("SprintsPage", () => {
       <SprintsPage
         gateway={api}
         membersGateway={membersGateway}
-        wbsGateway={wbsGateway}
         loadPublicHolidayDates={loadPublicHolidayDates}
       />,
     );

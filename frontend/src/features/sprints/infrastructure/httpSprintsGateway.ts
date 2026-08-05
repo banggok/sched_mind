@@ -7,8 +7,10 @@ import {
 import type {
   Sprint,
   SprintDetail,
+  SprintMemberProjection,
   SprintSuggestion,
   SprintTaskProjection,
+  SprintTotals,
   SprintWriteInput,
 } from "../domain/sprint";
 
@@ -36,16 +38,56 @@ interface ItemDTO<T> {
 }
 type TaskProjectionDTO = Omit<
   SprintTaskProjection,
-  "allocations" | "warnings"
+  | "allocations"
+  | "warnings"
+  | "wbsPath"
+  | "projectPriority"
+  | "wbsRank"
+  | "dailyPlanOrderDate"
 > & {
   allocations?: SprintTaskProjection["allocations"] | null;
   warnings?: string[] | null;
+  wbsPath?: string | null;
+  projectPriority?: number;
+  wbsRank?: number;
+  dailyPlanOrderDate?: string | null;
 };
-interface SuggestionDTO extends Omit<SprintSuggestion, "tasks"> {
+type MemberProjectionDTO = Omit<
+  SprintMemberProjection,
+  "dailyCapacity" | "dailySummaries" | "totalAllocationMinutes"
+> & {
+  dailyCapacity?: SprintMemberProjection["dailyCapacity"] | null;
+  dailySummaries?: SprintMemberProjection["dailySummaries"] | null;
+  totalAllocationMinutes?: number;
+};
+type TotalsDTO = Omit<
+  SprintTotals,
+  | "dailySummaries"
+  | "needsReviewDailyAllocation"
+  | "remainingMinutes"
+  | "overcapacityMinutes"
+> & {
+  dailySummaries?: SprintTotals["dailySummaries"] | null;
+  needsReviewDailyAllocation?:
+    SprintTotals["needsReviewDailyAllocation"] | null;
+  remainingMinutes?: number;
+  overcapacityMinutes?: number;
+};
+interface DetailDTO extends Omit<SprintDetail, "members" | "tasks" | "totals"> {
+  members: MemberProjectionDTO[];
+  tasks: TaskProjectionDTO[];
+  totals: TotalsDTO;
+}
+interface SuggestionDTO extends Omit<
+  SprintSuggestion,
+  "members" | "tasks" | "totals"
+> {
+  members: MemberProjectionDTO[];
   tasks: Array<{
     task: TaskProjectionDTO;
     reason: "mandatory" | "capacity_fill";
   }>;
+  totals: TotalsDTO;
 }
 interface ErrorDTO {
   code: string;
@@ -89,13 +131,12 @@ export function createHTTPSprintsGateway(apiBaseURL: string): SprintsGateway {
       }, signal);
     },
     async detail(id, signal) {
-      return (
-        await read<ItemDTO<SprintDetail>>(
-          await fetch(`${apiBaseURL}/sprints/${encodeURIComponent(id)}`, {
-            signal,
-          }),
-        )
-      ).data;
+      const payload = await read<ItemDTO<DetailDTO>>(
+        await fetch(`${apiBaseURL}/sprints/${encodeURIComponent(id)}`, {
+          signal,
+        }),
+      );
+      return mapDetail(payload.data);
     },
     async create(input) {
       const value = (
@@ -129,10 +170,12 @@ export function createHTTPSprintsGateway(apiBaseURL: string): SprintsGateway {
       ).data;
       return {
         ...value,
+        members: value.members.map(mapMemberProjection),
         tasks: value.tasks.map((item) => ({
           ...item,
           task: mapTaskProjection(item.task),
         })),
+        totals: mapTotals(value.totals),
       };
     },
     async candidates(id, page, signal) {
@@ -141,13 +184,13 @@ export function createHTTPSprintsGateway(apiBaseURL: string): SprintsGateway {
         pageSize: "20",
         search: "",
       });
-      return read<PageResultDTO<SprintTaskProjection>>(
+      return read<PageResultDTO<TaskProjectionDTO>>(
         await fetch(
           `${apiBaseURL}/sprints/${encodeURIComponent(id)}/task-candidates?${parameters}`,
           { signal },
         ),
       ).then((payload) => ({
-        items: payload.data,
+        items: payload.data.map(mapTaskProjection),
         page: payload.page,
         pageSize: payload.pageSize,
         total: payload.total,
@@ -159,14 +202,14 @@ export function createHTTPSprintsGateway(apiBaseURL: string): SprintsGateway {
         pageSize: "20",
         search: "",
       });
-      const payload = await read<PageResultDTO<SprintTaskProjection>>(
+      const payload = await read<PageResultDTO<TaskProjectionDTO>>(
         await fetch(`${apiBaseURL}/sprints/task-candidates?${parameters}`, {
           ...request("POST", input),
           signal,
         }),
       );
       return {
-        items: payload.data,
+        items: payload.data.map(mapTaskProjection),
         page: payload.page,
         pageSize: payload.pageSize,
         total: payload.total,
@@ -231,8 +274,39 @@ function mapSprint(value: SprintDTO): Sprint {
 function mapTaskProjection(value: TaskProjectionDTO): SprintTaskProjection {
   return {
     ...value,
+    projectPriority: value.projectPriority ?? 0,
+    wbsPath: value.wbsPath ?? value.wbsOrder,
+    wbsRank: value.wbsRank ?? 0,
+    dailyPlanOrderDate: value.dailyPlanOrderDate ?? undefined,
     allocations: value.allocations ?? [],
     warnings: value.warnings ?? [],
+  };
+}
+function mapMemberProjection(
+  value: MemberProjectionDTO,
+): SprintMemberProjection {
+  return {
+    ...value,
+    dailyCapacity: value.dailyCapacity ?? [],
+    dailySummaries: value.dailySummaries ?? [],
+    totalAllocationMinutes: value.totalAllocationMinutes ?? 0,
+  };
+}
+function mapTotals(value: TotalsDTO): SprintTotals {
+  return {
+    ...value,
+    remainingMinutes: value.remainingMinutes ?? 0,
+    overcapacityMinutes: value.overcapacityMinutes ?? 0,
+    needsReviewDailyAllocation: value.needsReviewDailyAllocation ?? [],
+    dailySummaries: value.dailySummaries ?? [],
+  };
+}
+function mapDetail(value: DetailDTO): SprintDetail {
+  return {
+    ...value,
+    members: value.members.map(mapMemberProjection),
+    tasks: value.tasks.map(mapTaskProjection),
+    totals: mapTotals(value.totals),
   };
 }
 async function read<T>(response: Response): Promise<T> {

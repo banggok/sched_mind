@@ -116,27 +116,40 @@ type dailyItem struct {
 	Date    string `json:"date"`
 	Minutes int64  `json:"minutes"`
 }
+type dailySummaryItem struct {
+	Date                      string `json:"date"`
+	CapacityMinutes           int64  `json:"capacityMinutes"`
+	SelectedAllocationMinutes int64  `json:"selectedAllocationMinutes"`
+	RemainingMinutes          int64  `json:"remainingMinutes"`
+	OvercapacityMinutes       int64  `json:"overcapacityMinutes"`
+}
 type memberItem struct {
-	ID                        string      `json:"id"`
-	Name                      string      `json:"name"`
-	RoleName                  string      `json:"roleName"`
-	DailyCapacity             []dailyItem `json:"dailyCapacity"`
-	CapacityMinutes           int64       `json:"capacityMinutes"`
-	InSprintAllocationMinutes int64       `json:"inSprintAllocationMinutes"`
-	RemainingMinutes          int64       `json:"remainingMinutes"`
-	OvercapacityMinutes       int64       `json:"overcapacityMinutes"`
+	ID                        string             `json:"id"`
+	Name                      string             `json:"name"`
+	RoleName                  string             `json:"roleName"`
+	DailyCapacity             []dailyItem        `json:"dailyCapacity"`
+	DailySummaries            []dailySummaryItem `json:"dailySummaries"`
+	CapacityMinutes           int64              `json:"capacityMinutes"`
+	InSprintAllocationMinutes int64              `json:"inSprintAllocationMinutes"`
+	RemainingMinutes          int64              `json:"remainingMinutes"`
+	OvercapacityMinutes       int64              `json:"overcapacityMinutes"`
+	TotalAllocationMinutes    int64              `json:"totalAllocationMinutes"`
 }
 type taskItem struct {
 	ID                        string      `json:"id"`
 	ProjectID                 string      `json:"projectId"`
 	ProjectName               string      `json:"projectName"`
 	ProjectStatus             string      `json:"projectStatus"`
+	ProjectPriority           int         `json:"projectPriority"`
 	Name                      string      `json:"name"`
 	WBSOrder                  string      `json:"wbsOrder"`
+	WBSPath                   string      `json:"wbsPath"`
+	WBSRank                   int         `json:"wbsRank"`
 	AssigneeID                *string     `json:"assigneeId"`
 	AssigneeName              *string     `json:"assigneeName"`
 	ExecutionStart            *string     `json:"executionStart"`
 	ExecutionEnd              *string     `json:"executionEnd"`
+	DailyPlanOrderDate        *string     `json:"dailyPlanOrderDate"`
 	Completed                 bool        `json:"completed"`
 	Allocations               []dailyItem `json:"allocations"`
 	InSprintAllocationMinutes int64       `json:"inSprintAllocationMinutes"`
@@ -145,11 +158,15 @@ type taskItem struct {
 	Warnings                  []string    `json:"warnings"`
 }
 type totalsItem struct {
-	CapacityMinutes                 int64 `json:"capacityMinutes"`
-	SelectedMemberAllocationMinutes int64 `json:"selectedMemberAllocationMinutes"`
-	NeedsReviewAllocationMinutes    int64 `json:"needsReviewAllocationMinutes"`
-	AllTaskInSprintMinutes          int64 `json:"allTaskInSprintMinutes"`
-	AllTaskTotalMinutes             int64 `json:"allTaskTotalMinutes"`
+	CapacityMinutes                 int64              `json:"capacityMinutes"`
+	SelectedMemberAllocationMinutes int64              `json:"selectedMemberAllocationMinutes"`
+	RemainingMinutes                int64              `json:"remainingMinutes"`
+	OvercapacityMinutes             int64              `json:"overcapacityMinutes"`
+	NeedsReviewAllocationMinutes    int64              `json:"needsReviewAllocationMinutes"`
+	NeedsReviewDailyAllocation      []dailyItem        `json:"needsReviewDailyAllocation"`
+	AllTaskInSprintMinutes          int64              `json:"allTaskInSprintMinutes"`
+	AllTaskTotalMinutes             int64              `json:"allTaskTotalMinutes"`
+	DailySummaries                  []dailySummaryItem `json:"dailySummaries"`
 }
 type sprintSummaryItem struct {
 	ID        string  `json:"id"`
@@ -373,7 +390,7 @@ func mapSuggestion(value application.Suggestion) suggestionItem {
 func mapMembers(values []application.MemberProjection) []memberItem {
 	items := make([]memberItem, 0, len(values))
 	for _, value := range values {
-		items = append(items, memberItem{ID: value.ID, Name: value.Name, RoleName: value.RoleName, DailyCapacity: mapDaily(value.DailyCapacity), CapacityMinutes: value.CapacityMinutes, InSprintAllocationMinutes: value.InSprintAllocationMinutes, RemainingMinutes: value.RemainingMinutes, OvercapacityMinutes: value.OvercapacityMinutes})
+		items = append(items, memberItem{ID: value.ID, Name: value.Name, RoleName: value.RoleName, DailyCapacity: mapDaily(value.DailyCapacity), DailySummaries: mapDailySummaries(value.DailySummaries), CapacityMinutes: value.CapacityMinutes, InSprintAllocationMinutes: value.InSprintAllocationMinutes, RemainingMinutes: value.RemainingMinutes, OvercapacityMinutes: value.OvercapacityMinutes, TotalAllocationMinutes: value.TotalAllocationMinutes})
 	}
 	return items
 }
@@ -385,7 +402,7 @@ func mapTasks(values []application.TaskProjection) []taskItem {
 	return items
 }
 func mapTask(value application.TaskProjection) taskItem {
-	return taskItem{ID: value.ID, ProjectID: value.ProjectID, ProjectName: value.ProjectName, ProjectStatus: value.ProjectStatus, Name: value.Name, WBSOrder: value.WBSOrder, AssigneeID: value.AssigneeID, AssigneeName: value.AssigneeName, ExecutionStart: datePointer(value.ExecutionStart), ExecutionEnd: datePointer(value.ExecutionEnd), Completed: value.Completed, Allocations: mapDaily(value.Allocations), InSprintAllocationMinutes: value.InSprintAllocationMinutes, OutsideAllocationMinutes: value.OutsideAllocationMinutes, TotalAllocationMinutes: value.TotalAllocationMinutes, Warnings: append([]string{}, value.Warnings...)}
+	return taskItem{ID: value.ID, ProjectID: value.ProjectID, ProjectName: value.ProjectName, ProjectStatus: value.ProjectStatus, ProjectPriority: value.ProjectPriority, Name: value.Name, WBSOrder: value.WBSOrder, WBSPath: value.WBSPath, WBSRank: value.WBSRank, AssigneeID: value.AssigneeID, AssigneeName: value.AssigneeName, ExecutionStart: datePointer(value.ExecutionStart), ExecutionEnd: datePointer(value.ExecutionEnd), DailyPlanOrderDate: datePointer(value.DailyPlanOrderDate), Completed: value.Completed, Allocations: mapDaily(value.Allocations), InSprintAllocationMinutes: value.InSprintAllocationMinutes, OutsideAllocationMinutes: value.OutsideAllocationMinutes, TotalAllocationMinutes: value.TotalAllocationMinutes, Warnings: append([]string{}, value.Warnings...)}
 }
 func mapDaily(values []application.DailyValue) []dailyItem {
 	items := make([]dailyItem, 0, len(values))
@@ -394,8 +411,15 @@ func mapDaily(values []application.DailyValue) []dailyItem {
 	}
 	return items
 }
+func mapDailySummaries(values []application.DailySummary) []dailySummaryItem {
+	items := make([]dailySummaryItem, 0, len(values))
+	for _, value := range values {
+		items = append(items, dailySummaryItem{Date: date(value.Date), CapacityMinutes: value.CapacityMinutes, SelectedAllocationMinutes: value.SelectedAllocationMinutes, RemainingMinutes: value.RemainingMinutes, OvercapacityMinutes: value.OvercapacityMinutes})
+	}
+	return items
+}
 func mapTotals(value application.Totals) totalsItem {
-	return totalsItem{CapacityMinutes: value.CapacityMinutes, SelectedMemberAllocationMinutes: value.SelectedMemberAllocationMinutes, NeedsReviewAllocationMinutes: value.NeedsReviewAllocationMinutes, AllTaskInSprintMinutes: value.AllTaskInSprintMinutes, AllTaskTotalMinutes: value.AllTaskTotalMinutes}
+	return totalsItem{CapacityMinutes: value.CapacityMinutes, SelectedMemberAllocationMinutes: value.SelectedMemberAllocationMinutes, RemainingMinutes: value.RemainingMinutes, OvercapacityMinutes: value.OvercapacityMinutes, NeedsReviewAllocationMinutes: value.NeedsReviewAllocationMinutes, NeedsReviewDailyAllocation: mapDaily(value.NeedsReviewDailyAllocation), AllTaskInSprintMinutes: value.AllTaskInSprintMinutes, AllTaskTotalMinutes: value.AllTaskTotalMinutes, DailySummaries: mapDailySummaries(value.DailySummaries)}
 }
 func date(value time.Time) string { return value.Format("2006-01-02") }
 func datePointer(value *time.Time) *string {
@@ -445,6 +469,8 @@ func writeError(w http.ResponseWriter, err error) {
 		status, code, message, field = http.StatusNotFound, "SPRINT_TASK_NOT_FOUND", application.ErrTaskNotFound.Error(), "taskIds"
 	case errors.Is(err, application.ErrTaskUnscheduled):
 		status, code, message, field = http.StatusConflict, "SPRINT_TASK_UNSCHEDULED", application.ErrTaskUnscheduled.Error(), "taskIds"
+	case errors.Is(err, application.ErrSuggestionUnavailable):
+		status, code, message = http.StatusServiceUnavailable, "SPRINT_SUGGESTION_UNAVAILABLE", "Sprint suggestion could not be composed from the current capacity and allocation data."
 	case errors.Is(err, domain.ErrAlreadyStarted):
 		status, code, message = http.StatusConflict, "SPRINT_ALREADY_STARTED", domain.ErrAlreadyStarted.Error()
 	case errors.Is(err, application.ErrVersionConflict):

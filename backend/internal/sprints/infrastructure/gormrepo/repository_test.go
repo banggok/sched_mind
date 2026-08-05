@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	schedulingdomain "github.com/banggok/sched_mind/backend/internal/scheduling/domain"
 	"github.com/banggok/sched_mind/backend/internal/shared/listing"
 	"github.com/banggok/sched_mind/backend/internal/sprints/application"
 	"github.com/banggok/sched_mind/backend/internal/sprints/domain"
@@ -323,7 +324,7 @@ func TestDetailComposesLiveCapacityOutsideAllocationAndNeedsReview_AC17To21And36
 	}
 	allocations := []allocationTestModel{
 		{TaskID: "task-1", AssigneeID: "member-1", Timeline: "execution", AllocationDate: day.AddDate(0, 0, -1), AllocatedMinutes: "60"},
-		{TaskID: "task-1", AssigneeID: "member-1", Timeline: "execution", AllocationDate: day, AllocatedMinutes: "120"},
+		{TaskID: "task-1", AssigneeID: "member-1", Timeline: "execution", AllocationDate: day, AllocatedMinutes: "420"},
 	}
 	if err := database.Create(&allocations).Error; err != nil {
 		t.Fatal(err)
@@ -336,23 +337,45 @@ func TestDetailComposesLiveCapacityOutsideAllocationAndNeedsReview_AC17To21And36
 	if len(detail.Members) != 1 || detail.Members[0].CapacityMinutes != 1260 {
 		t.Fatalf("unexpected capacity projection: %#v", detail.Members)
 	}
-	if len(detail.Tasks) != 1 || detail.Tasks[0].InSprintAllocationMinutes != 120 || detail.Tasks[0].OutsideAllocationMinutes != 60 || detail.Tasks[0].TotalAllocationMinutes != 180 {
+	if len(detail.Tasks) != 1 || detail.Tasks[0].InSprintAllocationMinutes != 420 || detail.Tasks[0].OutsideAllocationMinutes != 60 || detail.Tasks[0].TotalAllocationMinutes != 480 {
 		t.Fatalf("unexpected task allocation: %#v", detail.Tasks)
 	}
-	if detail.Members[0].InSprintAllocationMinutes != 120 || detail.Totals.SelectedMemberAllocationMinutes != 120 || detail.ProjectionToken == "" {
+	if detail.Members[0].InSprintAllocationMinutes != 420 || detail.Members[0].RemainingMinutes != 900 || detail.Members[0].OvercapacityMinutes != 60 || detail.Totals.SelectedMemberAllocationMinutes != 420 || detail.Totals.RemainingMinutes != 900 || detail.Totals.OvercapacityMinutes != 60 || detail.ProjectionToken == "" {
 		t.Fatalf("unexpected selected utilization: %#v", detail)
+	}
+	if len(detail.Members[0].DailySummaries) != 5 || detail.Members[0].DailySummaries[0].OvercapacityMinutes != 60 {
+		t.Fatalf("daily variance must preserve overloaded and unused Dates: %#v", detail.Members[0].DailySummaries)
 	}
 
 	seedEligibleTask(t, database, "member-2", "unused-task")
 	if err := database.Model(&taskTestModel{}).Where("id = ?", "task-1").Update("assignee_id", "member-2").Error; err != nil {
 		t.Fatal(err)
 	}
+	if err := database.Model(&allocationTestModel{}).Where("task_id = ?", "task-1").Update("assignee_id", "member-2").Error; err != nil {
+		t.Fatal(err)
+	}
 	drifted, err := repository.Detail(context.Background(), sprint.ID)
 	if err != nil {
 		t.Fatalf("drifted detail: %v", err)
 	}
-	if len(drifted.Tasks[0].Warnings) == 0 || drifted.Members[0].InSprintAllocationMinutes != 0 || drifted.Totals.NeedsReviewAllocationMinutes != 120 {
+	if len(drifted.Tasks[0].Warnings) == 0 ||
+		drifted.Members[0].InSprintAllocationMinutes != 0 ||
+		drifted.Totals.NeedsReviewAllocationMinutes != 420 ||
+		len(drifted.Totals.NeedsReviewDailyAllocation) != 1 ||
+		drifted.Totals.AllTaskInSprintMinutes != 420 ||
+		drifted.Totals.AllTaskTotalMinutes != 480 {
 		t.Fatalf("drift was not separated from selected-member utilization: %#v", drifted)
+	}
+	driftedToken := drifted.ProjectionToken
+	if err := database.Model(&memberModel{}).Where("id = ?", "member-2").Update("name", "Renamed Assignee").Error; err != nil {
+		t.Fatal(err)
+	}
+	renamed, err := repository.Detail(context.Background(), sprint.ID)
+	if err != nil {
+		t.Fatalf("detail after non-Sprint Assignee rename: %v", err)
+	}
+	if renamed.Tasks[0].AssigneeName == nil || *renamed.Tasks[0].AssigneeName != "Renamed Assignee" || renamed.ProjectionToken == driftedToken {
+		t.Fatalf("live Assignee display drift must update projection token: before=%s after=%s task=%#v", driftedToken, renamed.ProjectionToken, renamed.Tasks[0])
 	}
 }
 
@@ -368,7 +391,11 @@ func TestSuggestionSelectsMandatoryZeroAllocationThenFillsWholeTasks_AC22To33(t 
 		"fill-low": day.AddDate(0, 0, 1), "later-zero": day.AddDate(0, 0, 1),
 	}
 	for taskID, end := range updates {
-		if err := database.Model(&taskTestModel{}).Where("id = ?", taskID).Updates(map[string]any{"execution_start": day, "execution_end": end}).Error; err != nil {
+		start := day
+		if taskID == "mandatory" {
+			start = day.AddDate(0, 0, -2)
+		}
+		if err := database.Model(&taskTestModel{}).Where("id = ?", taskID).Updates(map[string]any{"execution_start": start, "execution_end": end}).Error; err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -379,8 +406,10 @@ func TestSuggestionSelectsMandatoryZeroAllocationThenFillsWholeTasks_AC22To33(t 
 		t.Fatal(err)
 	}
 	allocations := []allocationTestModel{
+		{TaskID: "mandatory", AssigneeID: "member-1", Timeline: "execution", AllocationDate: day.AddDate(0, 0, -1), AllocatedMinutes: "60"},
 		{TaskID: "fill-high", AssigneeID: "member-1", Timeline: "execution", AllocationDate: day, AllocatedMinutes: "240"},
 		{TaskID: "fill-low", AssigneeID: "member-1", Timeline: "execution", AllocationDate: day, AllocatedMinutes: "240"},
+		{TaskID: "later-zero", AssigneeID: "member-1", Timeline: "execution", AllocationDate: day.AddDate(0, 0, 2), AllocatedMinutes: "60"},
 	}
 	if err := database.Create(&allocations).Error; err != nil {
 		t.Fatal(err)
@@ -401,6 +430,31 @@ func TestSuggestionSelectsMandatoryZeroAllocationThenFillsWholeTasks_AC22To33(t 
 	}
 }
 
+func TestSuggestionRejectsUnreadableCanonicalAllocationWithoutPersisting_SPD07_AC77(t *testing.T) {
+	repository, database := sprintTestRepository(t)
+	day := time.Date(2026, 8, 4, 0, 0, 0, 0, time.UTC)
+	seedEligibleTask(t, database, "member-1", "unreadable-suggestion")
+	if err := database.Create(&allocationTestModel{
+		TaskID: "unreadable-suggestion", AssigneeID: "member-1", Timeline: "execution", AllocationDate: day, AllocatedMinutes: "0",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := repository.Suggest(context.Background(), application.SuggestionInput{
+		StartDate: day, EndDate: day, MemberIDs: []string{"member-1"},
+	})
+	if !errors.Is(err, schedulingdomain.ErrDataIntegrity) {
+		t.Fatalf("unreadable canonical allocation must return a recoverable suggestion error, got %v", err)
+	}
+	var count int64
+	if err := database.Model(&sprintModel{}).Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("read-only suggestion persisted %d Sprint rows", count)
+	}
+}
+
 func TestCandidatesReturnOnlyUnselectedEligibleTasksIncludingZeroInSprintAllocation_AC40And41(t *testing.T) {
 	repository, database := sprintTestRepository(t)
 	day := time.Date(2026, 8, 4, 0, 0, 0, 0, time.UTC)
@@ -409,6 +463,17 @@ func TestCandidatesReturnOnlyUnselectedEligibleTasksIncludingZeroInSprintAllocat
 	seedEligibleTask(t, database, "member-1", "unscheduled")
 	seedEligibleTask(t, database, "member-1", "completed")
 	seedEligibleTask(t, database, "member-2", "other-member")
+	for _, allocation := range []allocationTestModel{
+		{TaskID: "selected", AssigneeID: "member-1", Timeline: "execution", AllocationDate: day, AllocatedMinutes: "60"},
+		{TaskID: "eligible-zero", AssigneeID: "member-1", Timeline: "execution", AllocationDate: day.AddDate(0, 0, 2), AllocatedMinutes: "60"},
+		{TaskID: "unscheduled", AssigneeID: "member-1", Timeline: "execution", AllocationDate: day, AllocatedMinutes: "60"},
+		{TaskID: "completed", AssigneeID: "member-1", Timeline: "execution", AllocationDate: day, AllocatedMinutes: "60"},
+		{TaskID: "other-member", AssigneeID: "member-2", Timeline: "execution", AllocationDate: day, AllocatedMinutes: "60"},
+	} {
+		if err := database.Create(&allocation).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err := database.Model(&taskTestModel{}).Where("id = ?", "unscheduled").Updates(map[string]any{"execution_start": nil, "execution_end": nil}).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -435,5 +500,168 @@ func TestCandidatesReturnOnlyUnselectedEligibleTasksIncludingZeroInSprintAllocat
 	}
 	if page.Total != 1 || len(page.Items) != 1 || page.Items[0].ID != "eligible-zero" || page.Items[0].InSprintAllocationMinutes != 0 {
 		t.Fatalf("unexpected candidate page: %#v", page)
+	}
+}
+
+func TestDetailOrdersFlatDailyPlanAcrossProjectsAndWBS_SPD01And02_AC34And78(t *testing.T) {
+	repository, database := sprintTestRepository(t)
+	day := time.Date(2026, 8, 4, 0, 0, 0, 0, time.UTC)
+	if err := database.Create(&roleTestModel{ID: "role", Name: "Engineer"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Create(&memberModel{ID: "member-1", Name: "Harry", RoleID: "role", DailyCapacity: "8.0", BufferPercentage: "0", UpdatedAt: day}).Error; err != nil {
+		t.Fatal(err)
+	}
+	for _, project := range []projectTestModel{
+		{ID: "project-high", Name: "High", Status: "open", Priority: 1, ScheduleVersion: 1},
+		{ID: "project-low", Name: "Low", Status: "open", Priority: 2, ScheduleVersion: 1},
+	} {
+		if err := database.Create(&project).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	memberID := "member-1"
+	groupID := "group-high"
+	actual := day
+	nodes := []taskTestModel{
+		{ID: groupID, ProjectID: "project-high", Name: "Group", Position: 1, UpdatedAt: day},
+		{ID: "high-first", ProjectID: "project-high", ParentID: &groupID, ParentKey: groupID, Name: "High first", Position: 1, AssigneeID: &memberID, ExecutionStart: &day, ExecutionEnd: &day, UpdatedAt: day},
+		{ID: "high-second", ProjectID: "project-high", ParentID: &groupID, ParentKey: groupID, Name: "High second", Position: 2, AssigneeID: &memberID, ExecutionStart: &day, ExecutionEnd: &day, UpdatedAt: day},
+		{ID: "completed", ProjectID: "project-high", Name: "Completed", Position: 2, AssigneeID: &memberID, ExecutionStart: &day, ExecutionEnd: &day, ActualStart: &actual, ActualEnd: &actual, UpdatedAt: day},
+		{ID: "unreadable", ProjectID: "project-high", Name: "Unreadable", Position: 3, AssigneeID: &memberID, ExecutionStart: &day, ExecutionEnd: &day, UpdatedAt: day},
+		{ID: "low", ProjectID: "project-low", Name: "Low", Position: 1, AssigneeID: &memberID, ExecutionStart: &day, ExecutionEnd: &day, UpdatedAt: day},
+	}
+	for _, node := range nodes {
+		if err := database.Create(&node).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, allocation := range []allocationTestModel{
+		{TaskID: "high-first", AssigneeID: memberID, Timeline: "execution", AllocationDate: day, AllocatedMinutes: "60"},
+		{TaskID: "high-second", AssigneeID: memberID, Timeline: "execution", AllocationDate: day, AllocatedMinutes: "60"},
+		{TaskID: "low", AssigneeID: memberID, Timeline: "execution", AllocationDate: day, AllocatedMinutes: "60"},
+		{TaskID: "completed", AssigneeID: memberID, Timeline: "execution", AllocationDate: day.AddDate(0, 0, -1), AllocatedMinutes: "60"},
+		{TaskID: "unreadable", AssigneeID: memberID, Timeline: "execution", AllocationDate: day, AllocatedMinutes: "0"},
+	} {
+		if err := database.Create(&allocation).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	sprint, err := domain.NewSprint("sprint-daily-plan", "Daily plan", day, day.AddDate(0, 0, 1), []string{memberID}, nil, day)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.Create(context.Background(), *sprint); err != nil {
+		t.Fatal(err)
+	}
+	for _, taskID := range []string{"low", "completed", "high-second", "unreadable", "high-first"} {
+		if err := database.Create(&sprintTaskModel{SprintID: sprint.ID, TaskID: taskID}).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	detail, err := repository.Detail(context.Background(), sprint.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make([]string, 0, len(detail.Tasks))
+	for _, task := range detail.Tasks {
+		got = append(got, task.ID)
+	}
+	want := []string{"high-first", "high-second", "low", "completed", "unreadable"}
+	if len(got) != len(want) {
+		t.Fatalf("unexpected task count/order: got %v want %v", got, want)
+	}
+	for index := range want {
+		if got[index] != want[index] {
+			t.Fatalf("unexpected flat daily-plan order: got %v want %v", got, want)
+		}
+	}
+	if detail.Tasks[0].WBSPath != "1.1" || detail.Tasks[1].WBSPath != "1.2" || detail.Tasks[2].WBSPath != "1" {
+		t.Fatalf("unexpected user-facing WBS paths: %#v", detail.Tasks)
+	}
+	if detail.Tasks[4].DailyPlanOrderDate != nil ||
+		len(detail.Tasks[4].Allocations) != 0 ||
+		len(detail.Tasks[4].Warnings) != 1 ||
+		detail.Tasks[4].Warnings[0] != "Execution allocation could not be resolved." {
+		t.Fatalf("unreadable Task must use deterministic Needs Review fallback without failing the detail read: %#v", detail.Tasks[4])
+	}
+	initialToken := detail.ProjectionToken
+	if err := database.Model(&taskTestModel{}).Where("id = ?", groupID).Update("position", 4).Error; err != nil {
+		t.Fatal(err)
+	}
+	reordered, err := repository.Detail(context.Background(), sprint.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reordered.ProjectionToken == initialToken || reordered.Tasks[0].WBSPath != "3.1" {
+		t.Fatalf("ancestor WBS drift must update path and projection token: before=%s after=%s tasks=%#v", initialToken, reordered.ProjectionToken, reordered.Tasks)
+	}
+}
+
+func TestDetailPreservesCrossMemberRemainingAndOvercapacity_SPD03And04_AC19And79(t *testing.T) {
+	repository, database := sprintTestRepository(t)
+	day := time.Date(2026, 8, 4, 0, 0, 0, 0, time.UTC)
+	seedEligibleTask(t, database, "member-a", "task-a")
+	seedEligibleTask(t, database, "member-b", "task-b")
+	if err := database.Model(&memberModel{}).Where("id IN ?", []string{"member-a", "member-b"}).Updates(map[string]any{"daily_capacity": "8.0", "buffer_percentage": "0"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	for _, allocation := range []allocationTestModel{
+		{TaskID: "task-a", AssigneeID: "member-a", Timeline: "execution", AllocationDate: day, AllocatedMinutes: "600"},
+		{TaskID: "task-b", AssigneeID: "member-b", Timeline: "execution", AllocationDate: day, AllocatedMinutes: "360"},
+	} {
+		if err := database.Create(&allocation).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	sprint, err := domain.NewSprint("sprint-variance", "Variance", day, day, []string{"member-a", "member-b"}, []string{"task-a", "task-b"}, day)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.Create(context.Background(), *sprint); err != nil {
+		t.Fatal(err)
+	}
+
+	detail, err := repository.Detail(context.Background(), sprint.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.Totals.CapacityMinutes != 960 || detail.Totals.SelectedMemberAllocationMinutes != 960 || detail.Totals.RemainingMinutes != 120 || detail.Totals.OvercapacityMinutes != 120 {
+		t.Fatalf("Sprint totals netted Member variance: %#v", detail.Totals)
+	}
+	if len(detail.Totals.DailySummaries) != 1 || detail.Totals.DailySummaries[0].RemainingMinutes != 120 || detail.Totals.DailySummaries[0].OvercapacityMinutes != 120 {
+		t.Fatalf("daily Sprint summary lost simultaneous variance: %#v", detail.Totals.DailySummaries)
+	}
+}
+
+func TestDetailTreatsWeekendAllocationAsFullOvercapacity_SPD03_AC19(t *testing.T) {
+	repository, database := sprintTestRepository(t)
+	day := time.Date(2026, 8, 8, 0, 0, 0, 0, time.UTC)
+	seedEligibleTask(t, database, "member-1", "weekend-task")
+	if err := database.Model(&taskTestModel{}).Where("id = ?", "weekend-task").Updates(map[string]any{"execution_start": day, "execution_end": day}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Create(&allocationTestModel{TaskID: "weekend-task", AssigneeID: "member-1", Timeline: "execution", AllocationDate: day, AllocatedMinutes: "120"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	sprint, err := domain.NewSprint("sprint-weekend", "Weekend", day, day, []string{"member-1"}, []string{"weekend-task"}, day)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.Create(context.Background(), *sprint); err != nil {
+		t.Fatal(err)
+	}
+
+	detail, err := repository.Detail(context.Background(), sprint.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(detail.Members) != 1 || len(detail.Members[0].DailySummaries) != 1 {
+		t.Fatalf("missing weekend daily summary: %#v", detail.Members)
+	}
+	daily := detail.Members[0].DailySummaries[0]
+	if daily.CapacityMinutes != 0 || daily.SelectedAllocationMinutes != 120 || daily.RemainingMinutes != 0 || daily.OvercapacityMinutes != 120 {
+		t.Fatalf("zero-capacity allocation was not fully overcapacity: %#v", daily)
 	}
 }

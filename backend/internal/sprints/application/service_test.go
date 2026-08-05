@@ -34,6 +34,15 @@ func (store *sprintStoreStub) Detail(context.Context, string) (*Detail, error) {
 func (store *sprintStoreStub) Suggest(context.Context, SuggestionInput) (*Suggestion, error) {
 	return &Suggestion{}, nil
 }
+
+type failingSuggestionStore struct {
+	sprintStoreStub
+	err error
+}
+
+func (store *failingSuggestionStore) Suggest(context.Context, SuggestionInput) (*Suggestion, error) {
+	return nil, store.err
+}
 func (store *sprintStoreStub) Candidates(context.Context, string, listing.Query) (listing.Page[TaskProjection], error) {
 	return listing.Page[TaskProjection]{}, nil
 }
@@ -119,5 +128,22 @@ func TestUpdatePassesPriorTaskSetForDriftAwareAtomicReplacement_AC46To58(t *test
 	}
 	if _, ok := store.priorTasks["new"]; ok {
 		t.Fatal("new task was incorrectly treated as retained membership")
+	}
+}
+
+func TestSuggestMapsRepositoryReadFailureToRecoverableContract_SPD07_AC77(t *testing.T) {
+	now := time.Date(2026, 8, 4, 8, 0, 0, 0, time.UTC)
+	repositoryFailure := errors.New("canonical allocation unavailable")
+	service := NewServiceWithDependencies(
+		&failingSuggestionStore{err: repositoryFailure},
+		func() time.Time { return now },
+		func() (string, error) { return "unused", nil },
+	)
+
+	_, err := service.Suggest(context.Background(), SuggestionInput{
+		StartDate: now, EndDate: now, MemberIDs: []string{"member-1"},
+	})
+	if !errors.Is(err, ErrSuggestionUnavailable) || !errors.Is(err, repositoryFailure) {
+		t.Fatalf("suggest error = %v, want stable unavailable contract preserving cause", err)
 	}
 }

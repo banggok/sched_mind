@@ -3,8 +3,10 @@ package gormrepo
 import (
 	"context"
 	"fmt"
+	"sort"
 	"time"
 
+	schedulingdomain "github.com/banggok/sched_mind/backend/internal/scheduling/domain"
 	"github.com/banggok/sched_mind/backend/internal/sprints/application"
 	"github.com/banggok/sched_mind/backend/internal/sprints/domain"
 )
@@ -35,6 +37,10 @@ func (repository *Repository) Suggest(ctx context.Context, input application.Sug
 		Order("project.priority ASC").Order("task.parent_key ASC").Order("task.position ASC").Order("task.id ASC").Scan(&taskRows).Error; err != nil {
 		return nil, fmt.Errorf("query suggestion tasks: %w", err)
 	}
+	wbsContext, wbsRows, err := repository.loadWBSContext(ctx, taskRows)
+	if err != nil {
+		return nil, err
+	}
 	taskIDs := make([]string, 0, len(taskRows))
 	for _, row := range taskRows {
 		taskIDs = append(taskIDs, row.ID)
@@ -48,9 +54,9 @@ func (repository *Repository) Suggest(ctx context.Context, input application.Sug
 			return nil, fmt.Errorf("query suggestion allocations: %w", err)
 		}
 	}
-	allocations, allocationAssignees, err := composeAllocations(allocationRows)
-	if err != nil {
-		return nil, err
+	allocations, allocationAssignees, unreadableTasks := composeAllocations(allocationRows)
+	if len(unreadableTasks) > 0 {
+		return nil, fmt.Errorf("compose sprint allocation: %w", schedulingdomain.ErrDataIntegrity)
 	}
 
 	var overrideRows []overrideProjectionRow
@@ -70,6 +76,7 @@ func (repository *Repository) Suggest(ctx context.Context, input application.Sug
 	suggestion := &application.Suggestion{}
 	capacityByMember := make(map[string]int64, len(memberRows))
 	memberIndex := make(map[string]int, len(memberRows))
+	selectedAllocationByMember := make(map[string]map[string]int64, len(memberRows))
 	for index, row := range memberRows {
 		daily, total, capacityErr := composeCapacity(row, input.StartDate, input.EndDate, overrideRows, holidayRows)
 		if capacityErr != nil {
@@ -78,32 +85,18 @@ func (repository *Repository) Suggest(ctx context.Context, input application.Sug
 		suggestion.Members = append(suggestion.Members, application.MemberProjection{ID: row.ID, Name: row.Name, RoleName: row.RoleName, DailyCapacity: daily, CapacityMinutes: total})
 		capacityByMember[row.ID] = total
 		memberIndex[row.ID] = index
+		selectedAllocationByMember[row.ID] = make(map[string]int64)
 	}
 	candidates := make([]domain.Candidate, 0, len(taskRows))
 	projections := make(map[string]application.TaskProjection, len(taskRows))
-	for order, row := range taskRows {
-		if row.AssigneeID == nil || len(allocationAssignees[row.ID]) > 1 {
+	for _, row := range taskRows {
+		projection, readable := composeTaskProjection(row, allocations[row.ID], allocationAssignees[row.ID], wbsContext[row.ID], input.StartDate, input.EndDate)
+		if !readable || row.AssigneeID == nil {
 			continue
-		}
-		if len(allocationAssignees[row.ID]) == 1 {
-			if _, consistent := allocationAssignees[row.ID][*row.AssigneeID]; !consistent {
-				continue
-			}
-		}
-		projection := application.TaskProjection{ID: row.ID, ProjectID: row.ProjectID, ProjectName: row.ProjectName, ProjectStatus: row.ProjectStatus,
-			Name: row.Name, WBSOrder: fmt.Sprintf("%s:%08d", row.ParentKey, row.Position), AssigneeID: row.AssigneeID, AssigneeName: row.AssigneeName,
-			ExecutionStart: row.ExecutionStart, ExecutionEnd: row.ExecutionEnd, Allocations: allocations[row.ID]}
-		for _, allocation := range projection.Allocations {
-			projection.TotalAllocationMinutes += allocation.Minutes
-			if !allocation.Date.Before(input.StartDate) && !allocation.Date.After(input.EndDate) {
-				projection.InSprintAllocationMinutes += allocation.Minutes
-			} else {
-				projection.OutsideAllocationMinutes += allocation.Minutes
-			}
 		}
 		projections[row.ID] = projection
 		candidates = append(candidates, domain.Candidate{TaskID: row.ID, MemberID: *row.AssigneeID, ExecutionEnd: *row.ExecutionEnd,
-			ProjectPriority: row.ProjectPriority, WBSOrder: order, InSprintAllocationMinutes: projection.InSprintAllocationMinutes})
+			ProjectPriority: row.ProjectPriority, WBSOrder: projection.WBSRank, InSprintAllocationMinutes: projection.InSprintAllocationMinutes})
 	}
 	selected := domain.Suggest(input.MemberIDs, input.EndDate, capacityByMember, candidates)
 	for _, value := range selected {
@@ -111,22 +104,28 @@ func (repository *Repository) Suggest(ctx context.Context, input application.Sug
 		suggestion.Tasks = append(suggestion.Tasks, application.SuggestedTask{Task: projection, Reason: string(value.Reason)})
 		if projection.AssigneeID != nil {
 			index := memberIndex[*projection.AssigneeID]
-			suggestion.Members[index].InSprintAllocationMinutes += projection.InSprintAllocationMinutes
+			addDailyAllocation(selectedAllocationByMember[*projection.AssigneeID], projection.Allocations, input.StartDate, input.EndDate)
+			suggestion.Members[index].TotalAllocationMinutes += projection.TotalAllocationMinutes
 		}
 		suggestion.Totals.AllTaskInSprintMinutes += projection.InSprintAllocationMinutes
 		suggestion.Totals.AllTaskTotalMinutes += projection.TotalAllocationMinutes
 	}
+	sort.SliceStable(suggestion.Tasks, func(left, right int) bool {
+		return domain.CompareDailyPlanTask(
+			domain.DailyPlanTask{TaskID: suggestion.Tasks[left].Task.ID, Completed: suggestion.Tasks[left].Task.Completed, DailyPlanOrderDate: suggestion.Tasks[left].Task.DailyPlanOrderDate, ProjectPriority: suggestion.Tasks[left].Task.ProjectPriority, WBSRank: suggestion.Tasks[left].Task.WBSRank},
+			domain.DailyPlanTask{TaskID: suggestion.Tasks[right].Task.ID, Completed: suggestion.Tasks[right].Task.Completed, DailyPlanOrderDate: suggestion.Tasks[right].Task.DailyPlanOrderDate, ProjectPriority: suggestion.Tasks[right].Task.ProjectPriority, WBSRank: suggestion.Tasks[right].Task.WBSRank},
+		) < 0
+	})
 	for index := range suggestion.Members {
 		member := &suggestion.Members[index]
+		finalizeMemberProjection(member, selectedAllocationByMember[member.ID])
 		suggestion.Totals.CapacityMinutes += member.CapacityMinutes
 		suggestion.Totals.SelectedMemberAllocationMinutes += member.InSprintAllocationMinutes
-		if member.InSprintAllocationMinutes > member.CapacityMinutes {
-			member.OvercapacityMinutes = member.InSprintAllocationMinutes - member.CapacityMinutes
-		} else {
-			member.RemainingMinutes = member.CapacityMinutes - member.InSprintAllocationMinutes
-		}
+		suggestion.Totals.RemainingMinutes += member.RemainingMinutes
+		suggestion.Totals.OvercapacityMinutes += member.OvercapacityMinutes
 	}
+	suggestion.Totals.DailySummaries = composeSprintDailyTotals(suggestion.Members)
 	pseudoSprint := domain.Sprint{ID: "suggestion", Version: 0, StartDate: input.StartDate, EndDate: input.EndDate, UpdatedAt: time.Time{}}
-	suggestion.ProjectionToken = projectionToken(pseudoSprint, memberRows, taskRows, overrideRows, allocationRows, holidayRows)
+	suggestion.ProjectionToken = projectionToken(pseudoSprint, memberRows, taskRows, wbsRows, overrideRows, allocationRows, holidayRows)
 	return suggestion, nil
 }
