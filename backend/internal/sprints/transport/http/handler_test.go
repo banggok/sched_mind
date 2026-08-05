@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -216,7 +218,13 @@ func TestHTTPCreateDetailStartAndDeletePreservesOwningEntities_AC45To47And66To72
 	}
 
 	detail := performJSON(t, handler, http.MethodGet, "/api/sprints/"+sprintID, "")
-	if detail.Code != http.StatusOK || !bytes.Contains(detail.Body.Bytes(), []byte(`"capacityMinutes":390`)) || !bytes.Contains(detail.Body.Bytes(), []byte(`"inSprintAllocationMinutes":120`)) {
+	if detail.Code != http.StatusOK ||
+		!bytes.Contains(detail.Body.Bytes(), []byte(`"capacityMinutes":390`)) ||
+		!bytes.Contains(detail.Body.Bytes(), []byte(`"inSprintAllocationMinutes":120`)) ||
+		!bytes.Contains(detail.Body.Bytes(), []byte(`"remainingMinutes":270`)) ||
+		!bytes.Contains(detail.Body.Bytes(), []byte(`"wbsPath":"1"`)) ||
+		!bytes.Contains(detail.Body.Bytes(), []byte(`"dailyPlanOrderDate":"2026-08-04"`)) ||
+		!bytes.Contains(detail.Body.Bytes(), []byte(`"dailySummaries":[{"date":"2026-08-04","capacityMinutes":390,"selectedAllocationMinutes":120,"remainingMinutes":270,"overcapacityMinutes":0}]`)) {
 		t.Fatalf("detail status=%d body=%s", detail.Code, detail.Body.String())
 	}
 
@@ -286,7 +294,13 @@ func TestHTTPRejectsInvalidDatesOverlapAndUnscheduledTaskWithoutPartialWrite_AC8
 func TestHTTPSuggestionAndCandidatePickerExposeCanonicalAllocationWithoutWriting_AC22To44(t *testing.T) {
 	database, handler := acceptanceServer(t)
 	suggestion := performJSON(t, handler, http.MethodPost, "/api/sprints/suggestion", `{"startDate":"2026-08-04","endDate":"2026-08-04","memberIds":["member-1"]}`)
-	if suggestion.Code != http.StatusOK || !bytes.Contains(suggestion.Body.Bytes(), []byte(`"reason":"mandatory"`)) || !bytes.Contains(suggestion.Body.Bytes(), []byte(`"totalAllocationMinutes":120`)) || !bytes.Contains(suggestion.Body.Bytes(), []byte(`"warnings":[]`)) {
+	if suggestion.Code != http.StatusOK ||
+		!bytes.Contains(suggestion.Body.Bytes(), []byte(`"reason":"mandatory"`)) ||
+		!bytes.Contains(suggestion.Body.Bytes(), []byte(`"totalAllocationMinutes":120`)) ||
+		!bytes.Contains(suggestion.Body.Bytes(), []byte(`"wbsPath":"1"`)) ||
+		!bytes.Contains(suggestion.Body.Bytes(), []byte(`"dailyPlanOrderDate":"2026-08-04"`)) ||
+		!bytes.Contains(suggestion.Body.Bytes(), []byte(`"dailySummaries":[{"date":"2026-08-04","capacityMinutes":390,"selectedAllocationMinutes":120,"remainingMinutes":270,"overcapacityMinutes":0}]`)) ||
+		!bytes.Contains(suggestion.Body.Bytes(), []byte(`"warnings":[]`)) {
 		t.Fatalf("suggestion status=%d body=%s", suggestion.Code, suggestion.Body.String())
 	}
 	var count int64
@@ -297,7 +311,11 @@ func TestHTTPSuggestionAndCandidatePickerExposeCanonicalAllocationWithoutWriting
 		t.Fatalf("suggestion persisted %d Sprints", count)
 	}
 	draftCandidates := performJSON(t, handler, http.MethodPost, "/api/sprints/task-candidates?page=1&pageSize=20", `{"startDate":"2026-08-04","endDate":"2026-08-04","memberIds":["member-1"],"excludedTaskIds":[]}`)
-	if draftCandidates.Code != http.StatusOK || !bytes.Contains(draftCandidates.Body.Bytes(), []byte(`"id":"task-1"`)) || !bytes.Contains(draftCandidates.Body.Bytes(), []byte(`"inSprintAllocationMinutes":120`)) {
+	if draftCandidates.Code != http.StatusOK ||
+		!bytes.Contains(draftCandidates.Body.Bytes(), []byte(`"id":"task-1"`)) ||
+		!bytes.Contains(draftCandidates.Body.Bytes(), []byte(`"inSprintAllocationMinutes":120`)) ||
+		!bytes.Contains(draftCandidates.Body.Bytes(), []byte(`"wbsPath":"1"`)) ||
+		!bytes.Contains(draftCandidates.Body.Bytes(), []byte(`"dailyPlanOrderDate":"2026-08-04"`)) {
 		t.Fatalf("draft candidates status=%d body=%s", draftCandidates.Code, draftCandidates.Body.String())
 	}
 	if err := database.Model(&acceptanceSprint{}).Count(&count).Error; err != nil {
@@ -313,7 +331,10 @@ func TestHTTPSuggestionAndCandidatePickerExposeCanonicalAllocationWithoutWriting
 	}
 	sprintID := decodeDataID(t, created)
 	candidates := performJSON(t, handler, http.MethodGet, "/api/sprints/"+sprintID+"/task-candidates?page=1&pageSize=20", "")
-	if candidates.Code != http.StatusOK || !bytes.Contains(candidates.Body.Bytes(), []byte(`"id":"task-1"`)) || !bytes.Contains(candidates.Body.Bytes(), []byte(`"inSprintAllocationMinutes":120`)) {
+	if candidates.Code != http.StatusOK ||
+		!bytes.Contains(candidates.Body.Bytes(), []byte(`"id":"task-1"`)) ||
+		!bytes.Contains(candidates.Body.Bytes(), []byte(`"inSprintAllocationMinutes":120`)) ||
+		!bytes.Contains(candidates.Body.Bytes(), []byte(`"wbsPath":"1"`)) {
 		t.Fatalf("candidates status=%d body=%s", candidates.Code, candidates.Body.String())
 	}
 	if err := database.Model(&acceptanceTask{}).Where("id = ?", "task-1").Updates(map[string]any{"execution_start": nil, "execution_end": nil}).Error; err != nil {
@@ -322,5 +343,177 @@ func TestHTTPSuggestionAndCandidatePickerExposeCanonicalAllocationWithoutWriting
 	filtered := performJSON(t, handler, http.MethodGet, "/api/sprints/"+sprintID+"/task-candidates?page=1&pageSize=20", "")
 	if filtered.Code != http.StatusOK || bytes.Contains(filtered.Body.Bytes(), []byte(`"id":"task-1"`)) {
 		t.Fatalf("unscheduled candidate remained visible: status=%d body=%s", filtered.Code, filtered.Body.String())
+	}
+}
+
+func TestHTTPSuggestionReturnsStableUnavailableErrorForUnreadableAllocation_SPD07_AC77(t *testing.T) {
+	database, handler := acceptanceServer(t)
+	if err := database.Model(&acceptanceAllocation{}).
+		Where("task_id = ? AND timeline = ?", "task-1", "execution").
+		Update("allocated_minutes", "0").Error; err != nil {
+		t.Fatal(err)
+	}
+
+	suggestion := performJSON(t, handler, http.MethodPost, "/api/sprints/suggestion", `{"startDate":"2026-08-04","endDate":"2026-08-04","memberIds":["member-1"]}`)
+	if suggestion.Code != http.StatusServiceUnavailable ||
+		!bytes.Contains(suggestion.Body.Bytes(), []byte(`"code":"SPRINT_SUGGESTION_UNAVAILABLE"`)) {
+		t.Fatalf("suggestion status=%d body=%s", suggestion.Code, suggestion.Body.String())
+	}
+	var count int64
+	if err := database.Model(&acceptanceSprint{}).Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("failed suggestion persisted %d Sprint rows", count)
+	}
+}
+
+func TestHTTPDetailUsesBoundedSetBasedQueriesAsTaskCountGrows_SPD07_AC75(t *testing.T) {
+	database, handler := acceptanceServer(t)
+	created := performJSON(t, handler, http.MethodPost, "/api/sprints", `{"name":"Query shape","startDate":"2026-08-04","endDate":"2026-08-04","memberIds":["member-1"],"taskIds":["task-1"]}`)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create status=%d body=%s", created.Code, created.Body.String())
+	}
+	sprintID := decodeDataID(t, created)
+
+	var queryCount atomic.Int64
+	if err := database.Callback().Query().Before("gorm:query").Register("test:sprint-detail-query-count", func(*gorm.DB) {
+		queryCount.Add(1)
+	}); err != nil {
+		t.Fatalf("register query counter: %v", err)
+	}
+	queryCount.Store(0)
+	single := performJSON(t, handler, http.MethodGet, "/api/sprints/"+sprintID, "")
+	if single.Code != http.StatusOK {
+		t.Fatalf("single-Task detail status=%d body=%s", single.Code, single.Body.String())
+	}
+	singleTaskQueries := queryCount.Load()
+	if singleTaskQueries == 0 {
+		t.Fatal("query counter did not observe the Sprint detail read")
+	}
+
+	day := time.Date(2026, 8, 4, 0, 0, 0, 0, time.UTC)
+	memberID := "member-1"
+	for index := 2; index <= 12; index++ {
+		taskID := "task-" + strconv.Itoa(index)
+		if err := database.Create(&acceptanceTask{
+			ID: taskID, ProjectID: "project-1", Name: "Task " + strconv.Itoa(index), Position: index,
+			AssigneeID: &memberID, ExecutionStart: &day, ExecutionEnd: &day, UpdatedAt: day,
+		}).Error; err != nil {
+			t.Fatalf("create %s: %v", taskID, err)
+		}
+		if err := database.Create(&acceptanceAllocation{
+			TaskID: taskID, AssigneeID: memberID, Timeline: "execution", AllocationDate: day, AllocatedMinutes: "60",
+		}).Error; err != nil {
+			t.Fatalf("create %s allocation: %v", taskID, err)
+		}
+		if err := database.Create(&acceptanceSprintTask{SprintID: sprintID, TaskID: taskID}).Error; err != nil {
+			t.Fatalf("attach %s: %v", taskID, err)
+		}
+	}
+
+	queryCount.Store(0)
+	many := performJSON(t, handler, http.MethodGet, "/api/sprints/"+sprintID, "")
+	if many.Code != http.StatusOK || !bytes.Contains(many.Body.Bytes(), []byte(`"id":"task-12"`)) {
+		t.Fatalf("multi-Task detail status=%d body=%s", many.Code, many.Body.String())
+	}
+	manyTaskQueries := queryCount.Load()
+	if manyTaskQueries != singleTaskQueries {
+		t.Fatalf("Sprint detail query count grew with Task cardinality: one Task=%d queries, twelve Tasks=%d queries", singleTaskQueries, manyTaskQueries)
+	}
+}
+
+func TestHTTPDetailPreservesDailyCrossMemberVarianceWithoutNetting_SPD03And04_AC19And79(t *testing.T) {
+	database, handler := acceptanceServer(t)
+	day := time.Date(2026, 8, 4, 0, 0, 0, 0, time.UTC)
+	if err := database.Model(&acceptanceMember{}).Where("id = ?", "member-1").Update("buffer_percentage", "0").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Create(&acceptanceMember{ID: "member-2", Name: "Sally", RoleID: "role-1", DailyCapacity: "8.0", BufferPercentage: "0", UpdatedAt: day}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Create(&acceptanceProject{ID: "project-2", Name: "Beta", Status: "open", Priority: 2, ScheduleVersion: 1}).Error; err != nil {
+		t.Fatal(err)
+	}
+	memberID := "member-2"
+	if err := database.Create(&acceptanceTask{ID: "task-2", ProjectID: "project-2", Name: "UI task", Position: 1, AssigneeID: &memberID, ExecutionStart: &day, ExecutionEnd: &day, UpdatedAt: day}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Model(&acceptanceAllocation{}).Where("task_id = ?", "task-1").Update("allocated_minutes", "600").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Create(&acceptanceAllocation{TaskID: "task-2", AssigneeID: memberID, Timeline: "execution", AllocationDate: day, AllocatedMinutes: "360"}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	created := performJSON(t, handler, http.MethodPost, "/api/sprints", `{"name":"Variance","startDate":"2026-08-04","endDate":"2026-08-04","memberIds":["member-1","member-2"],"taskIds":["task-1","task-2"]}`)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create status=%d body=%s", created.Code, created.Body.String())
+	}
+	detail := performJSON(t, handler, http.MethodGet, "/api/sprints/"+decodeDataID(t, created), "")
+	if detail.Code != http.StatusOK ||
+		!bytes.Contains(detail.Body.Bytes(), []byte(`"capacityMinutes":960,"selectedMemberAllocationMinutes":960,"remainingMinutes":120,"overcapacityMinutes":120`)) ||
+		!bytes.Contains(detail.Body.Bytes(), []byte(`"dailySummaries":[{"date":"2026-08-04","capacityMinutes":960,"selectedAllocationMinutes":960,"remainingMinutes":120,"overcapacityMinutes":120}]`)) ||
+		!bytes.Contains(detail.Body.Bytes(), []byte(`"name":"Harry"`)) ||
+		!bytes.Contains(detail.Body.Bytes(), []byte(`"name":"Sally"`)) {
+		t.Fatalf("daily variance was netted in HTTP detail: status=%d body=%s", detail.Code, detail.Body.String())
+	}
+}
+
+func TestHTTPDetailPreservesCrossDateVarianceWithoutNetting_SPD03_AC19And79(t *testing.T) {
+	database, handler := acceptanceServer(t)
+	day := time.Date(2026, 8, 4, 0, 0, 0, 0, time.UTC)
+	if err := database.Model(&acceptanceMember{}).Where("id = ?", "member-1").Update("buffer_percentage", "0").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Model(&acceptanceAllocation{}).Where("task_id = ?", "task-1").Update("allocated_minutes", "600").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Create(&acceptanceOverride{
+		ID: "day-two-capacity", TeamMemberID: "member-1", StartDate: day.AddDate(0, 0, 1), EndDate: day.AddDate(0, 0, 1), Capacity: "2.0", UpdatedAt: day,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	created := performJSON(t, handler, http.MethodPost, "/api/sprints", `{"name":"Cross date","startDate":"2026-08-04","endDate":"2026-08-05","memberIds":["member-1"],"taskIds":["task-1"]}`)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create status=%d body=%s", created.Code, created.Body.String())
+	}
+	detail := performJSON(t, handler, http.MethodGet, "/api/sprints/"+decodeDataID(t, created), "")
+	if detail.Code != http.StatusOK ||
+		!bytes.Contains(detail.Body.Bytes(), []byte(`"capacityMinutes":600,"selectedMemberAllocationMinutes":600,"remainingMinutes":120,"overcapacityMinutes":120`)) ||
+		!bytes.Contains(detail.Body.Bytes(), []byte(`{"date":"2026-08-04","capacityMinutes":480,"selectedAllocationMinutes":600,"remainingMinutes":0,"overcapacityMinutes":120}`)) ||
+		!bytes.Contains(detail.Body.Bytes(), []byte(`{"date":"2026-08-05","capacityMinutes":120,"selectedAllocationMinutes":0,"remainingMinutes":120,"overcapacityMinutes":0}`)) {
+		t.Fatalf("cross-Date variance was netted: status=%d body=%s", detail.Code, detail.Body.String())
+	}
+}
+
+func TestHTTPAllowsZeroCapacityAllocationAndReportsFullOvercapacity_SPD03_AC19And20(t *testing.T) {
+	database, handler := acceptanceServer(t)
+	weekend := time.Date(2026, 8, 8, 0, 0, 0, 0, time.UTC)
+	if err := database.Model(&acceptanceTask{}).Where("id = ?", "task-1").Updates(map[string]any{
+		"execution_start": weekend,
+		"execution_end":   weekend,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Where("task_id = ?", "task-1").Delete(&acceptanceAllocation{}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Create(&acceptanceAllocation{
+		TaskID: "task-1", AssigneeID: "member-1", Timeline: "execution", AllocationDate: weekend, AllocatedMinutes: "120",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	created := performJSON(t, handler, http.MethodPost, "/api/sprints", `{"name":"Weekend","startDate":"2026-08-08","endDate":"2026-08-08","memberIds":["member-1"],"taskIds":["task-1"]}`)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("zero-capacity Save was blocked: status=%d body=%s", created.Code, created.Body.String())
+	}
+	detail := performJSON(t, handler, http.MethodGet, "/api/sprints/"+decodeDataID(t, created), "")
+	if detail.Code != http.StatusOK ||
+		!bytes.Contains(detail.Body.Bytes(), []byte(`"capacityMinutes":0,"selectedMemberAllocationMinutes":120,"remainingMinutes":0,"overcapacityMinutes":120`)) ||
+		!bytes.Contains(detail.Body.Bytes(), []byte(`"dailySummaries":[{"date":"2026-08-08","capacityMinutes":0,"selectedAllocationMinutes":120,"remainingMinutes":0,"overcapacityMinutes":120}]`)) {
+		t.Fatalf("zero-capacity allocation was not fully overcapacity: status=%d body=%s", detail.Code, detail.Body.String())
 	}
 }

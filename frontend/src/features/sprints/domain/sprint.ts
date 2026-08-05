@@ -30,6 +30,14 @@ export interface DailyMinutes {
   minutes: number;
 }
 
+export interface SprintDailySummary {
+  date: string;
+  capacityMinutes: number;
+  selectedAllocationMinutes: number;
+  remainingMinutes: number;
+  overcapacityMinutes: number;
+}
+
 export interface SprintMemberProjection {
   id: string;
   name: string;
@@ -38,7 +46,9 @@ export interface SprintMemberProjection {
   inSprintAllocationMinutes: number;
   remainingMinutes: number;
   overcapacityMinutes: number;
+  totalAllocationMinutes: number;
   dailyCapacity: DailyMinutes[];
+  dailySummaries: SprintDailySummary[];
 }
 
 export interface SprintTaskProjection {
@@ -46,12 +56,16 @@ export interface SprintTaskProjection {
   projectId: string;
   projectName: string;
   projectStatus: string;
+  projectPriority: number;
   name: string;
   wbsOrder: string;
+  wbsPath: string;
+  wbsRank: number;
   assigneeId?: string;
   assigneeName?: string;
   executionStart?: string;
   executionEnd?: string;
+  dailyPlanOrderDate?: string;
   completed: boolean;
   allocations: DailyMinutes[];
   inSprintAllocationMinutes: number;
@@ -63,9 +77,13 @@ export interface SprintTaskProjection {
 export interface SprintTotals {
   capacityMinutes: number;
   selectedMemberAllocationMinutes: number;
+  remainingMinutes: number;
+  overcapacityMinutes: number;
   needsReviewAllocationMinutes: number;
+  needsReviewDailyAllocation: DailyMinutes[];
   allTaskInSprintMinutes: number;
   allTaskTotalMinutes: number;
+  dailySummaries: SprintDailySummary[];
 }
 
 export interface SprintSuggestion {

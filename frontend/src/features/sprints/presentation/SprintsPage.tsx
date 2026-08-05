@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ComponentProps,
+} from "react";
 import { Breadcrumb } from "../../../app/Breadcrumb";
 import { PageContent } from "../../../app/PageContent";
 import { Alert } from "../../../shared/presentation/Alert";
@@ -10,22 +16,25 @@ import { ListSurface } from "../../../shared/presentation/ListSurface";
 import { PaginationControls } from "../../../shared/presentation/PaginationControls";
 import { formatDateOnly } from "../../../shared/presentation/formatDateOnly";
 import type { TeamMembersGateway } from "../../team-members/application/teamMembersGateway";
-import type { WBSGateway } from "../../wbs/application/wbsGateway";
 import type { SprintsGateway } from "../application/sprintsGateway";
 import type { Sprint, SprintDetail } from "../domain/sprint";
 import { SprintFormDialog } from "./SprintFormDialog";
 import { SprintTaskReview } from "./SprintTaskReview";
 
+type SprintTaskEditorDependencies = ComponentProps<
+  typeof SprintTaskReview
+>["taskEditorDependencies"];
+
 export function SprintsPage({
   gateway,
   membersGateway,
-  wbsGateway,
   loadPublicHolidayDates,
+  taskEditorDependencies,
 }: {
   gateway: SprintsGateway;
   membersGateway: TeamMembersGateway;
-  wbsGateway: Pick<WBSGateway, "tree">;
   loadPublicHolidayDates(startDate: string, endDate: string): Promise<string[]>;
+  taskEditorDependencies?: SprintTaskEditorDependencies;
 }) {
   const [items, setItems] = useState<Sprint[]>([]);
   const [page, setPage] = useState(1);
@@ -346,7 +355,7 @@ export function SprintsPage({
           <SprintTaskReview
             detail={detail}
             gateway={gateway}
-            wbsGateway={wbsGateway}
+            taskEditorDependencies={taskEditorDependencies}
             onEdit={() => setEditing(true)}
             onClose={() => setDetail(undefined)}
             onChanged={(id) => void refreshDetail(id)}

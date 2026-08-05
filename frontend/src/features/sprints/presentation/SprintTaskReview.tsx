@@ -1,26 +1,61 @@
-import { useEffect, useRef, useState, type RefObject } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type RefObject,
+} from "react";
 import { Alert } from "../../../shared/presentation/Alert";
 import { Button } from "../../../shared/presentation/Button";
+import type { DependenciesGateway } from "../../dependencies/application/dependenciesGateway";
+import type { ProjectsGateway } from "../../projects/application/projectsGateway";
+import type { Project } from "../../projects/domain/project";
+import type { RolesGateway } from "../../roles/application/rolesGateway";
+import type { TeamMembersGateway } from "../../team-members/application/teamMembersGateway";
 import type { WBSGateway } from "../../wbs/application/wbsGateway";
-import type { WBSNode } from "../../wbs/domain/wbs";
+import { WBSPanel } from "../../wbs/presentation/WBSPanel";
 import type { SprintsGateway } from "../application/sprintsGateway";
 import type {
+  DailyMinutes,
   SprintDetail,
   SprintMemberProjection,
   SprintTaskProjection,
 } from "../domain/sprint";
+import {
+  deriveReviewProjection,
+  sortDailyPlanTasks,
+} from "./sprintTaskReviewProjection";
+
+interface SprintTaskEditorDependencies {
+  projectsGateway: Pick<ProjectsGateway, "get">;
+  wbsGateway: WBSGateway;
+  dependenciesGateway: DependenciesGateway;
+  rolesGateway: RolesGateway;
+  membersGateway: TeamMembersGateway;
+  loadPublicHolidayDates?(
+    startDate: string,
+    endDate: string,
+  ): Promise<string[]>;
+}
+
+interface EditingTask {
+  request: number;
+  project: Project;
+  taskId: string;
+}
 
 export function SprintTaskReview({
   detail,
   gateway,
-  wbsGateway,
+  taskEditorDependencies,
   onEdit,
   onClose,
   onChanged,
 }: {
   detail: SprintDetail;
   gateway: Pick<SprintsGateway, "suggest" | "candidates" | "update">;
-  wbsGateway: Pick<WBSGateway, "tree">;
+  taskEditorDependencies?: SprintTaskEditorDependencies;
   onEdit(): void;
   onClose(): void;
   onChanged(id: string): void;
@@ -28,58 +63,63 @@ export function SprintTaskReview({
   const [members, setMembers] = useState(detail.members);
   const [tasks, setTasks] = useState(detail.tasks);
   const [candidates, setCandidates] = useState<SprintTaskProjection[]>();
-  const [trees, setTrees] = useState<Record<string, WBSNode[]>>({});
   const [loading, setLoading] = useState(false);
   const [candidateLoading, setCandidateLoading] = useState(false);
   const [candidateFeedback, setCandidateFeedback] = useState("");
   const [candidateFocusRequest, setCandidateFocusRequest] = useState(0);
   const [error, setError] = useState("");
-  const treeRequest = useRef(0);
+  const [openingTaskId, setOpeningTaskId] = useState("");
+  const [editingTask, setEditingTask] = useState<EditingTask>();
+  const suggestionRequest = useRef(0);
+  const candidateRequest = useRef(0);
+  const taskEditorRequest = useRef(0);
+  const suggestionController = useRef<AbortController | null>(null);
+  const candidateController = useRef<AbortController | null>(null);
+  const projectionTokenRef = useRef(detail.projectionToken);
   const candidateTitleRef = useRef<HTMLHeadingElement>(null);
-  const selectedMemberIDs = new Set(members.map((member) => member.id));
-  const needsReview = tasks.filter(
-    (task) =>
-      task.warnings.length > 0 ||
-      !task.assigneeId ||
-      !selectedMemberIDs.has(task.assigneeId),
+
+  const review = useMemo(
+    () =>
+      deriveReviewProjection(
+        members,
+        tasks,
+        detail.sprint.startDate,
+        detail.sprint.endDate,
+      ),
+    [detail.sprint.endDate, detail.sprint.startDate, members, tasks],
   );
+  const visibleDates = useMemo(
+    () => reviewDates(detail.sprint.startDate, detail.sprint.endDate),
+    [detail.sprint.endDate, detail.sprint.startDate],
+  );
+
+  useLayoutEffect(() => {
+    projectionTokenRef.current = detail.projectionToken;
+    suggestionRequest.current += 1;
+    candidateRequest.current += 1;
+    taskEditorRequest.current += 1;
+    suggestionController.current?.abort();
+    candidateController.current?.abort();
+    suggestionController.current = null;
+    candidateController.current = null;
+    setOpeningTaskId("");
+    setEditingTask(undefined);
+    return () => {
+      taskEditorRequest.current += 1;
+      suggestionController.current?.abort();
+      candidateController.current?.abort();
+    };
+  }, [detail.projectionToken]);
 
   useEffect(() => {
     setMembers(detail.members);
     setTasks(detail.tasks);
     setCandidates(undefined);
     setCandidateFeedback("");
-  }, [detail]);
-
-  useEffect(() => {
-    const projectIDs = [...new Set(tasks.map((task) => task.projectId))];
-    const request = ++treeRequest.current;
-    if (projectIDs.length === 0) {
-      setTrees({});
-      return;
-    }
-    const controller = new AbortController();
-    void Promise.all(
-      projectIDs.map(
-        async (projectID) =>
-          [
-            projectID,
-            await wbsGateway.tree(projectID, controller.signal),
-          ] as const,
-      ),
-    )
-      .then((entries) => {
-        if (request === treeRequest.current)
-          setTrees(Object.fromEntries(entries));
-      })
-      .catch((reason: unknown) => {
-        if (!(reason instanceof DOMException && reason.name === "AbortError"))
-          setError(
-            "Project structure could not be loaded. Task names remain available.",
-          );
-      });
-    return () => controller.abort();
-  }, [tasks, wbsGateway]);
+    setLoading(false);
+    setCandidateLoading(false);
+    setError("");
+  }, [detail.members, detail.projectionToken, detail.tasks]);
 
   useEffect(() => {
     if (!candidates) return;
@@ -88,39 +128,120 @@ export function SprintTaskReview({
   }, [candidates, candidateFocusRequest]);
 
   async function generateSuggestion() {
+    candidateRequest.current += 1;
+    candidateController.current?.abort();
+    candidateController.current = null;
+    suggestionController.current?.abort();
+    const controller = new AbortController();
+    suggestionController.current = controller;
+    const request = ++suggestionRequest.current;
+    const projectionToken = detail.projectionToken;
     setLoading(true);
+    setCandidateLoading(false);
+    setCandidates(undefined);
+    setCandidateFeedback("");
     setError("");
     try {
-      const value = await gateway.suggest({
-        startDate: detail.sprint.startDate,
-        endDate: detail.sprint.endDate,
-        memberIds: detail.members.map((member) => member.id),
-      });
+      const value = await gateway.suggest(
+        {
+          startDate: detail.sprint.startDate,
+          endDate: detail.sprint.endDate,
+          memberIds: detail.members.map((member) => member.id),
+        },
+        controller.signal,
+      );
+      if (
+        request !== suggestionRequest.current ||
+        projectionToken !== projectionTokenRef.current
+      )
+        return;
       setMembers(value.members);
       setTasks(value.tasks.map((item) => item.task));
-      setCandidates(undefined);
-      setCandidateFeedback("");
     } catch {
+      if (
+        controller.signal.aborted ||
+        request !== suggestionRequest.current ||
+        projectionToken !== projectionTokenRef.current
+      )
+        return;
       setError(
-        "Task suggestion could not be generated. The current review is unchanged.",
+        "Task suggestion could not be generated. The current Sprint Planning selection is unchanged.",
       );
     } finally {
-      setLoading(false);
+      if (suggestionController.current === controller) {
+        suggestionController.current = null;
+      }
+      if (
+        !controller.signal.aborted &&
+        request === suggestionRequest.current &&
+        projectionToken === projectionTokenRef.current
+      ) {
+        setLoading(false);
+      }
+    }
+  }
+
+  async function openTask(task: SprintTaskProjection) {
+    if (!taskEditorDependencies || openingTaskId) return;
+    const request = ++taskEditorRequest.current;
+    setOpeningTaskId(task.id);
+    setEditingTask(undefined);
+    setError("");
+    try {
+      const project = await taskEditorDependencies.projectsGateway.get(
+        task.projectId,
+      );
+      if (request !== taskEditorRequest.current) return;
+      setEditingTask({ request, project, taskId: task.id });
+    } catch {
+      if (request !== taskEditorRequest.current) return;
+      setError("The selected Task could not be opened. Please try again.");
+    } finally {
+      if (request === taskEditorRequest.current) setOpeningTaskId("");
     }
   }
 
   async function loadCandidates() {
+    candidateController.current?.abort();
+    const controller = new AbortController();
+    candidateController.current = controller;
+    const request = ++candidateRequest.current;
+    const projectionToken = detail.projectionToken;
     setCandidateLoading(true);
     setCandidates(undefined);
     setCandidateFeedback("");
     setError("");
     try {
-      const page = await gateway.candidates(detail.sprint.id, 1);
+      const page = await gateway.candidates(
+        detail.sprint.id,
+        1,
+        controller.signal,
+      );
+      if (
+        request !== candidateRequest.current ||
+        projectionToken !== projectionTokenRef.current
+      )
+        return;
       setCandidates(page.items);
     } catch {
+      if (
+        controller.signal.aborted ||
+        request !== candidateRequest.current ||
+        projectionToken !== projectionTokenRef.current
+      )
+        return;
       setError("Task candidates could not be loaded. Please try again.");
     } finally {
-      setCandidateLoading(false);
+      if (candidateController.current === controller) {
+        candidateController.current = null;
+      }
+      if (
+        !controller.signal.aborted &&
+        request === candidateRequest.current &&
+        projectionToken === projectionTokenRef.current
+      ) {
+        setCandidateLoading(false);
+      }
     }
   }
 
@@ -133,113 +254,141 @@ export function SprintTaskReview({
         startDate: detail.sprint.startDate,
         endDate: detail.sprint.endDate,
         memberIds: detail.members.map((member) => member.id),
-        taskIds: tasks.map((task) => task.id),
+        taskIds: review.tasks.map((task) => task.id),
         version: detail.sprint.version,
       });
       onChanged(detail.sprint.id);
     } catch {
-      setError("Task Review could not be saved. Your selection is preserved.");
+      setError(
+        "Sprint Planning could not be saved. Your selection is preserved.",
+      );
     } finally {
       setLoading(false);
     }
   }
 
   return (
-    <section
-      className="mt-6 rounded-panel border border-border-strong bg-surface p-5"
-      aria-labelledby="sprint-task-review-title"
-    >
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <p className="text-sm font-bold text-brand">Task Review</p>
-          <h2 id="sprint-task-review-title" className="text-xl font-black">
-            {detail.sprint.name}
-          </h2>
-          <p className="mt-1 text-sm text-muted">
-            Manage selected Tasks in their Project structure.
+    <>
+      <section
+        className="mt-6 rounded-panel border border-border-strong bg-surface p-5"
+        aria-labelledby="sprint-planning-title"
+      >
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-sm font-bold text-brand">Sprint Planning</p>
+            <h2 id="sprint-planning-title" className="text-xl font-black">
+              {detail.sprint.name}
+            </h2>
+            <p className="mt-1 text-sm text-muted">
+              Execute Tasks in earliest positive allocation-date order across
+              Projects. Same-Date tie-breakers are display order, not an exact
+              intra-Day sequence.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button onClick={onEdit}>Edit Details & Members</Button>
+            <Button onClick={onClose}>Close Sprint Planning</Button>
+          </div>
+        </div>
+        {error ? (
+          <Alert tone="danger" className="mt-4">
+            {error}
+          </Alert>
+        ) : null}
+        <div className="mt-4 flex flex-wrap gap-2">
+          <Button loading={loading} onClick={() => void generateSuggestion()}>
+            {tasks.length ? "Regenerate Suggestion" : "Generate Suggestion"}
+          </Button>
+          <Button
+            loading={candidateLoading}
+            disabled={loading}
+            onClick={() => void loadCandidates()}
+          >
+            Add Task
+          </Button>
+          <Button
+            variant="primary"
+            loading={loading}
+            onClick={() => void save()}
+          >
+            Save Sprint Planning
+          </Button>
+        </div>
+        {candidateLoading ? (
+          <p className="mt-4 text-sm text-muted" role="status">
+            Loading eligible Tasks…
           </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Button onClick={onEdit}>Edit Details & Members</Button>
-          <Button onClick={onClose}>Close Review</Button>
-        </div>
-      </div>
-      {error ? (
-        <Alert tone="danger" className="mt-4">
-          {error}
-        </Alert>
-      ) : null}
-      <div className="mt-4 flex flex-wrap gap-2">
-        <Button loading={loading} onClick={() => void generateSuggestion()}>
-          {tasks.length ? "Regenerate Suggestion" : "Generate Suggestion"}
-        </Button>
-        <Button
-          loading={candidateLoading}
-          disabled={loading}
-          onClick={() => void loadCandidates()}
-        >
-          Add Task
-        </Button>
-        <Button variant="primary" loading={loading} onClick={() => void save()}>
-          Save Task Review
-        </Button>
-      </div>
-      {candidateLoading ? (
-        <p className="mt-4 text-sm text-muted" role="status">
-          Loading eligible Tasks…
-        </p>
-      ) : candidates ? (
-        <CandidatePicker
-          headingRef={candidateTitleRef}
-          candidates={candidates}
-          selectedTasks={tasks}
-          feedback={candidateFeedback}
-          onAdd={(candidate) => {
-            setTasks((current) => [...current, candidate]);
-            setCandidateFeedback(
-              `${candidate.name} from ${candidate.projectName} was added to the Sprint review.`,
-            );
-            setCandidateFocusRequest((current) => current + 1);
-          }}
+        ) : candidates ? (
+          <CandidatePicker
+            headingRef={candidateTitleRef}
+            candidates={candidates}
+            selectedTasks={review.tasks}
+            feedback={candidateFeedback}
+            onAdd={(candidate) => {
+              setTasks((current) =>
+                sortDailyPlanTasks([...current, candidate]),
+              );
+              setCandidateFeedback(
+                `${candidate.name} from ${candidate.projectName} was added to Sprint Planning.`,
+              );
+              setCandidateFocusRequest((current) => current + 1);
+            }}
+          />
+        ) : null}
+
+        {review.members.map((member) => (
+          <MemberDailyPlan
+            key={member.id}
+            member={member}
+            tasks={review.tasks.filter(
+              (task) =>
+                task.assigneeId === member.id &&
+                !review.needsReviewTaskIDs.has(task.id),
+            )}
+            dates={visibleDates}
+            sprintStart={detail.sprint.startDate}
+            sprintEnd={detail.sprint.endDate}
+            onOpenTask={
+              taskEditorDependencies ? (task) => void openTask(task) : undefined
+            }
+            openingTaskId={openingTaskId}
+            onRemove={(id) =>
+              setTasks((current) => current.filter((task) => task.id !== id))
+            }
+          />
+        ))}
+
+        {review.needsReviewTasks.length ? (
+          <NeedsReviewDailyPlan
+            tasks={review.needsReviewTasks}
+            dates={visibleDates}
+            sprintStart={detail.sprint.startDate}
+            sprintEnd={detail.sprint.endDate}
+            onOpenTask={
+              taskEditorDependencies ? (task) => void openTask(task) : undefined
+            }
+            openingTaskId={openingTaskId}
+            onRemove={(id) =>
+              setTasks((current) => current.filter((task) => task.id !== id))
+            }
+          />
+        ) : null}
+      </section>
+      {editingTask && taskEditorDependencies ? (
+        <WBSPanel
+          key={editingTask.request}
+          project={editingTask.project}
+          gateway={taskEditorDependencies.wbsGateway}
+          dependenciesGateway={taskEditorDependencies.dependenciesGateway}
+          rolesGateway={taskEditorDependencies.rolesGateway}
+          membersGateway={taskEditorDependencies.membersGateway}
+          loadPublicHolidayDates={taskEditorDependencies.loadPublicHolidayDates}
+          initialNodeId={editingTask.taskId}
+          onMutated={() => void generateSuggestion()}
+          onClose={() => setEditingTask(undefined)}
         />
       ) : null}
-      {members.map((member) => (
-        <MemberTaskTree
-          key={member.id}
-          member={member}
-          tasks={tasks.filter(
-            (task) =>
-              task.assigneeId === member.id && !needsReview.includes(task),
-          )}
-          trees={trees}
-          onRemove={(id) =>
-            setTasks((current) => current.filter((task) => task.id !== id))
-          }
-        />
-      ))}
-      {needsReview.length ? (
-        <MemberTaskTree
-          member={{
-            id: "needs-review",
-            name: "Needs Review",
-            roleName: "",
-            capacityMinutes: 0,
-            inSprintAllocationMinutes: needsReview.reduce(
-              (total, task) => total + task.inSprintAllocationMinutes,
-              0,
-            ),
-            remainingMinutes: 0,
-            overcapacityMinutes: 0,
-            dailyCapacity: [],
-          }}
-          tasks={needsReview}
-          trees={trees}
-          onRemove={(id) =>
-            setTasks((current) => current.filter((task) => task.id !== id))
-          }
-        />
-      ) : null}
-    </section>
+    </>
   );
 }
 
@@ -286,20 +435,19 @@ function CandidatePicker({
               key={candidate.id}
               className="flex items-center justify-between gap-3 rounded-control border border-border-subtle p-3"
             >
-              <span>
-                <strong>
-                  {candidate.projectName} / {candidate.name}
+              <span className="min-w-0">
+                <span className="block text-sm text-muted">
+                  {candidate.projectName}
+                </span>
+                <strong className="block max-w-[50ch] whitespace-normal break-words">
+                  {candidate.name}
                 </strong>
                 <span className="block text-sm text-muted">
                   {candidate.assigneeName ?? "Unassigned"}
                 </span>
                 <span className="block text-sm text-muted">
-                  {candidate.executionStart ?? "Unscheduled"} –{" "}
-                  {candidate.executionEnd ?? "Unscheduled"}
-                </span>
-                <span className="block text-sm text-muted">
-                  {hours(candidate.inSprintAllocationMinutes)} in Sprint ·{" "}
-                  {hours(candidate.totalAllocationMinutes)} total
+                  {formatOptionalDate(candidate.executionStart)} –{" "}
+                  {formatOptionalDate(candidate.executionEnd)}
                 </span>
               </span>
               <Button
@@ -317,22 +465,25 @@ function CandidatePicker({
   );
 }
 
-function MemberTaskTree({
+function MemberDailyPlan({
   member,
   tasks,
-  trees,
+  dates,
+  sprintStart,
+  sprintEnd,
+  onOpenTask,
+  openingTaskId,
   onRemove,
 }: {
   member: SprintMemberProjection;
   tasks: SprintTaskProjection[];
-  trees: Record<string, WBSNode[]>;
+  dates: string[];
+  sprintStart: string;
+  sprintEnd: string;
+  onOpenTask?(task: SprintTaskProjection): void;
+  openingTaskId?: string;
   onRemove(id: string): void;
 }) {
-  const projects = [
-    ...new Map(
-      tasks.map((task) => [task.projectId, task.projectName]),
-    ).entries(),
-  ];
   return (
     <section
       className="mt-5 rounded-panel border border-border-subtle p-4"
@@ -342,141 +493,260 @@ function MemberTaskTree({
         {member.name}
       </h3>
       <p className="text-sm text-muted">
-        {hours(member.inSprintAllocationMinutes)} allocated ·{" "}
-        {hours(member.capacityMinutes)} capacity
+        Capacity: {hours(member.capacityMinutes)}
       </p>
-      {projects.length === 0 ? (
+      <DailyPlanTable
+        identity={`${member.name} daily working plan`}
+        memberName={member.name}
+        dates={dates}
+        sprintStart={sprintStart}
+        sprintEnd={sprintEnd}
+        dailyCapacity={member.dailyCapacity}
+        tasks={tasks}
+        onOpenTask={onOpenTask}
+        openingTaskId={openingTaskId}
+        onRemove={onRemove}
+      />
+      {tasks.length === 0 ? (
         <p className="mt-3 text-sm text-muted">No selected Tasks.</p>
-      ) : (
-        <ul
-          className="mt-3 space-y-3"
-          aria-label={`${member.name} Project structure`}
-        >
-          {projects.map(([projectID, projectName]) => {
-            const projectTasks = tasks.filter(
-              (task) => task.projectId === projectID,
-            );
-            const selected = new Set(projectTasks.map((task) => task.id));
-            const filtered = filterTree(trees[projectID] ?? [], selected);
-            return (
-              <li
-                key={projectID}
-                className="rounded-control bg-surface-muted p-3"
-              >
-                <div className="font-black">{projectName}</div>
-                {filtered.length ? (
-                  <ul className="mt-2 border-l border-border-strong pl-4">
-                    {filtered.map((node) => (
-                      <TreeNode
-                        key={node.id}
-                        node={node}
-                        tasks={projectTasks}
-                        onRemove={onRemove}
-                      />
-                    ))}
-                  </ul>
-                ) : (
-                  <FallbackTasks tasks={projectTasks} onRemove={onRemove} />
-                )}
-              </li>
-            );
-          })}
-        </ul>
-      )}
+      ) : null}
     </section>
   );
 }
 
-function TreeNode({
-  node,
+function NeedsReviewDailyPlan({
   tasks,
+  dates,
+  sprintStart,
+  sprintEnd,
+  onOpenTask,
+  openingTaskId,
   onRemove,
 }: {
-  node: WBSNode;
   tasks: SprintTaskProjection[];
+  dates: string[];
+  sprintStart: string;
+  sprintEnd: string;
+  onOpenTask?(task: SprintTaskProjection): void;
+  openingTaskId?: string;
   onRemove(id: string): void;
 }) {
-  const task = tasks.find((item) => item.id === node.id);
   return (
-    <li className="mt-2">
-      <div className="flex items-start justify-between gap-3">
-        <span>
-          <strong>{node.name}</strong>
-          {task ? (
-            <>
-              <span className="block text-sm text-muted">
-                {task.assigneeName ?? "Unassigned"} ·{" "}
-                {task.executionStart ?? "Unscheduled"} –{" "}
-                {task.executionEnd ?? "Unscheduled"}
-              </span>
-              <span className="block text-sm text-muted">
-                {hours(task.inSprintAllocationMinutes)} in Sprint ·{" "}
-                {hours(task.outsideAllocationMinutes)} outside ·{" "}
-                {hours(task.totalAllocationMinutes)} total
-              </span>
-            </>
-          ) : (
-            <span className="ml-2 text-xs text-muted">Group</span>
-          )}
-        </span>
-        {task ? (
-          <Button
-            compact
-            aria-label={`Remove ${task.name} from Sprint`}
-            onClick={() => onRemove(task.id)}
-          >
-            Remove
-          </Button>
-        ) : null}
-      </div>
-      {task?.warnings.map((warning) => (
-        <Alert key={warning} tone="warning" className="mt-2">
-          {warning}
-        </Alert>
-      ))}
-      {task && task.allocations.length ? (
-        <details className="mt-2 text-sm">
-          <summary className="cursor-pointer font-bold">
-            Daily Execution allocation
-          </summary>
-          <ul className="mt-1">
-            {task.allocations.map((allocation) => (
-              <li key={allocation.date}>
-                {allocation.date}: {hours(allocation.minutes)}
-              </li>
+    <section
+      className="mt-5 rounded-panel border border-warning p-4"
+      aria-labelledby="review-needs-review"
+    >
+      <h3 id="review-needs-review" className="font-black">
+        Needs Review
+      </h3>
+      <p className="text-sm text-muted">
+        These Tasks remain Sprint members, but their allocation is excluded from
+        selected-member utilization.
+      </p>
+      <div
+        className="mt-3 overflow-x-auto rounded-control border border-border-subtle"
+        role="region"
+        aria-label="Needs Review daily allocation table"
+        tabIndex={0}
+      >
+        <table className="min-w-max border-collapse text-sm">
+          <thead>
+            <tr>
+              <th className="sticky left-0 z-10 min-w-80 bg-surface px-3 py-2 text-left">
+                Task context
+              </th>
+              {dates.map((date) => (
+                <DateHeader
+                  key={date}
+                  date={date}
+                  sprintStart={sprintStart}
+                  sprintEnd={sprintEnd}
+                />
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {tasks.map((task) => (
+              <TaskRow
+                key={task.id}
+                task={task}
+                memberName="Needs Review"
+                dates={dates}
+                onOpenTask={onOpenTask}
+                openingTaskId={openingTaskId}
+                onRemove={onRemove}
+              />
             ))}
-          </ul>
-        </details>
-      ) : null}
-      {node.children.length ? (
-        <ul className="border-l border-border-subtle pl-4">
-          {node.children.map((child) => (
-            <TreeNode
-              key={child.id}
-              node={child}
-              tasks={tasks}
-              onRemove={onRemove}
-            />
-          ))}
-        </ul>
-      ) : null}
-    </li>
+          </tbody>
+        </table>
+      </div>
+    </section>
   );
 }
 
-function FallbackTasks({
+function DailyPlanTable({
+  identity,
+  memberName,
+  dates,
+  sprintStart,
+  sprintEnd,
+  dailyCapacity,
   tasks,
+  onOpenTask,
+  openingTaskId,
   onRemove,
 }: {
+  identity: string;
+  memberName: string;
+  dates: string[];
+  sprintStart: string;
+  sprintEnd: string;
+  dailyCapacity: DailyMinutes[];
   tasks: SprintTaskProjection[];
+  onOpenTask?(task: SprintTaskProjection): void;
+  openingTaskId?: string;
   onRemove(id: string): void;
 }) {
+  const capacityByDate = new Map(
+    dailyCapacity.map((capacity) => [capacity.date, capacity.minutes]),
+  );
+  const zeroCapacityDates = new Set(
+    dates.filter((date) => (capacityByDate.get(date) ?? 0) === 0),
+  );
   return (
-    <ul className="mt-2 border-l border-border-strong pl-4">
-      {tasks.map((task) => (
-        <li key={task.id} className="mt-2 flex justify-between gap-3">
-          <span>
-            <strong>{task.name}</strong>
+    <div
+      className="mt-3 overflow-x-auto rounded-control border border-border-subtle"
+      role="region"
+      aria-label={identity}
+      tabIndex={0}
+    >
+      <table
+        className="min-w-max border-collapse text-sm"
+        aria-label={identity}
+      >
+        <thead>
+          <tr>
+            <th className="sticky left-0 z-10 min-w-80 bg-surface px-3 py-2 text-left">
+              Task context
+            </th>
+            {dates.map((date) => (
+              <DateHeader
+                key={date}
+                date={date}
+                sprintStart={sprintStart}
+                sprintEnd={sprintEnd}
+                noCapacity={zeroCapacityDates.has(date)}
+                memberName={memberName}
+              />
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <th
+              scope="row"
+              className="sticky left-0 z-10 bg-surface px-3 py-2 text-left font-bold"
+            >
+              Capacity
+            </th>
+            {dates.map((date) => {
+              const value = capacityByDate.get(date) ?? 0;
+              const noCapacity = zeroCapacityDates.has(date);
+              return (
+                <td
+                  key={date}
+                  data-date={date}
+                  data-no-capacity={noCapacity ? "true" : undefined}
+                  className={`border-l border-border-subtle px-3 py-2 text-right ${
+                    noCapacity ? "bg-warning-soft text-warning" : ""
+                  }`.trim()}
+                  aria-label={`${memberName}, ${formatReviewDate(date)}, Daily Capacity: ${hours(
+                    value,
+                  )}${noCapacity ? ", no capacity" : ""}`}
+                >
+                  {noCapacity ? (
+                    <strong>
+                      <span className="block">0h</span>
+                    </strong>
+                  ) : (
+                    hours(value)
+                  )}
+                </td>
+              );
+            })}
+          </tr>
+          {tasks.map((task) => (
+            <TaskRow
+              key={task.id}
+              task={task}
+              memberName={memberName}
+              dates={dates}
+              onOpenTask={onOpenTask}
+              openingTaskId={openingTaskId}
+              onRemove={onRemove}
+              zeroCapacityDates={zeroCapacityDates}
+            />
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function TaskRow({
+  task,
+  memberName,
+  dates,
+  onOpenTask,
+  openingTaskId,
+  onRemove,
+  zeroCapacityDates = new Set<string>(),
+}: {
+  task: SprintTaskProjection;
+  memberName: string;
+  dates: string[];
+  onOpenTask?(task: SprintTaskProjection): void;
+  openingTaskId?: string;
+  onRemove(id: string): void;
+  zeroCapacityDates?: Set<string>;
+}) {
+  const allocationByDate = new Map(
+    task.allocations.map((value) => [value.date, value.minutes]),
+  );
+  return (
+    <tr data-task-id={task.id}>
+      <th
+        scope="row"
+        className="sticky left-0 z-10 w-[50ch] min-w-[50ch] max-w-[50ch] bg-surface px-3 py-3 text-left align-top"
+      >
+        <span className="flex items-start justify-between gap-3">
+          <span className="min-w-0">
+            {onOpenTask ? (
+              <button
+                type="button"
+                className="block max-w-[50ch] whitespace-normal break-words text-left font-bold text-brand-strong underline-offset-4 hover:underline disabled:cursor-wait disabled:text-disabled"
+                disabled={Boolean(openingTaskId)}
+                aria-busy={openingTaskId === task.id ? "true" : undefined}
+                onClick={() => onOpenTask(task)}
+              >
+                {task.name}
+              </button>
+            ) : (
+              <strong className="block max-w-[50ch] whitespace-normal break-words">
+                {task.name}
+              </strong>
+            )}
+            <span className="block text-xs text-muted">
+              {task.projectName} ({task.projectStatus})
+            </span>
+            <span className="block text-xs text-muted">
+              {task.assigneeName ?? "Unassigned"} ·{" "}
+              {formatOptionalDate(task.executionStart)} –{" "}
+              {formatOptionalDate(task.executionEnd)}
+            </span>
+            {task.completed ? (
+              <span className="mt-1 block text-xs font-bold">Completed</span>
+            ) : null}
           </span>
           <Button
             compact
@@ -485,21 +755,120 @@ function FallbackTasks({
           >
             Remove
           </Button>
-        </li>
-      ))}
-    </ul>
+        </span>
+        {task.warnings.map((warning) => (
+          <Alert key={warning} tone="warning" className="mt-2">
+            {warning}
+          </Alert>
+        ))}
+      </th>
+      {dates.map((date) => {
+        const minutes = allocationByDate.get(date) ?? 0;
+        const noCapacity = zeroCapacityDates.has(date);
+        return (
+          <td
+            key={date}
+            data-date={date}
+            data-no-capacity={noCapacity ? "true" : undefined}
+            className={`border-l border-border-subtle px-3 py-3 text-right align-top ${
+              noCapacity ? "bg-warning-soft" : ""
+            }`.trim()}
+            aria-label={`${memberName}, ${task.name}, ${task.projectName}, ${formatReviewDate(
+              date,
+            )}, Sprint allocation: ${hours(minutes)}`}
+          >
+            {minutes > 0 ? hours(minutes) : "—"}
+          </td>
+        );
+      })}
+    </tr>
   );
 }
 
-function filterTree(nodes: WBSNode[], selected: Set<string>): WBSNode[] {
-  return nodes.flatMap((node) => {
-    const children = filterTree(node.children, selected);
-    return selected.has(node.id) || children.length
-      ? [{ ...node, children }]
-      : [];
-  });
+function DateHeader({
+  date,
+  sprintStart,
+  sprintEnd,
+  noCapacity = false,
+  memberName,
+}: {
+  date: string;
+  sprintStart: string;
+  sprintEnd: string;
+  noCapacity?: boolean;
+  memberName?: string;
+}) {
+  let context = "Sprint Date";
+  if (date === sprintStart && date === sprintEnd)
+    context = "Sprint Start & End";
+  else if (date === sprintStart) context = "Sprint Start";
+  else if (date === sprintEnd) context = "Sprint End";
+  return (
+    <th
+      scope="col"
+      data-date={date}
+      data-no-capacity={noCapacity ? "true" : undefined}
+      aria-label={
+        noCapacity
+          ? `${memberName ?? "Member"}, ${formatReviewDate(
+              date,
+            )}, daily capacity 0h, no capacity`
+          : undefined
+      }
+      className={`min-w-28 border-l border-border-subtle px-3 py-2 text-right ${
+        noCapacity ? "bg-warning-soft text-warning" : ""
+      }`.trim()}
+    >
+      <span className="block">{formatReviewDate(date)}</span>
+      <span className="block text-xs font-normal text-muted">{context}</span>
+      {noCapacity ? (
+        <span className="block text-xs font-bold">No capacity</span>
+      ) : null}
+    </th>
+  );
+}
+
+function reviewDates(sprintStart: string, sprintEnd: string): string[] {
+  return dateRange(sprintStart, sprintEnd);
+}
+
+function dateRange(start: string, end: string) {
+  const values: string[] = [];
+  const current = new Date(`${start}T00:00:00Z`);
+  const last = new Date(`${end}T00:00:00Z`);
+  while (current <= last) {
+    values.push(current.toISOString().slice(0, 10));
+    current.setUTCDate(current.getUTCDate() + 1);
+  }
+  return values;
 }
 
 function hours(minutes: number) {
   return `${(minutes / 60).toFixed(minutes % 60 === 0 ? 0 : 1)}h`;
+}
+
+const reviewMonthLabels = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+] as const;
+
+function formatReviewDate(value: string) {
+  const [year, month, day] = value.split("-");
+  const monthLabel = reviewMonthLabels[Number(month) - 1];
+  if (!year || !day || !monthLabel) return value;
+  return `${day} ${monthLabel} ${year}`;
+}
+
+function formatOptionalDate(value: string | undefined) {
+  return value ? formatReviewDate(value) : "Unscheduled";
 }

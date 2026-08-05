@@ -7,15 +7,25 @@ type DailyValue struct {
 	Minutes int64
 }
 
+type DailySummary struct {
+	Date                      time.Time
+	CapacityMinutes           int64
+	SelectedAllocationMinutes int64
+	RemainingMinutes          int64
+	OvercapacityMinutes       int64
+}
+
 type MemberProjection struct {
 	ID                        string
 	Name                      string
 	RoleName                  string
 	DailyCapacity             []DailyValue
+	DailySummaries            []DailySummary
 	CapacityMinutes           int64
 	InSprintAllocationMinutes int64
 	RemainingMinutes          int64
 	OvercapacityMinutes       int64
+	TotalAllocationMinutes    int64
 }
 
 type TaskProjection struct {
@@ -23,12 +33,16 @@ type TaskProjection struct {
 	ProjectID                 string
 	ProjectName               string
 	ProjectStatus             string
+	ProjectPriority           int
 	Name                      string
 	WBSOrder                  string
+	WBSPath                   string
+	WBSRank                   int
 	AssigneeID                *string
 	AssigneeName              *string
 	ExecutionStart            *time.Time
 	ExecutionEnd              *time.Time
+	DailyPlanOrderDate        *time.Time
 	Completed                 bool
 	Allocations               []DailyValue
 	InSprintAllocationMinutes int64
@@ -40,9 +54,13 @@ type TaskProjection struct {
 type Totals struct {
 	CapacityMinutes                 int64
 	SelectedMemberAllocationMinutes int64
+	RemainingMinutes                int64
+	OvercapacityMinutes             int64
 	NeedsReviewAllocationMinutes    int64
+	NeedsReviewDailyAllocation      []DailyValue
 	AllTaskInSprintMinutes          int64
 	AllTaskTotalMinutes             int64
+	DailySummaries                  []DailySummary
 }
 
 type Detail struct {

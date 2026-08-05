@@ -27,6 +27,9 @@ This directory supplies the concrete decisions needed to apply that baseline:
 - [`assignee-recommendation-implementation-evidence.md`](assignee-recommendation-implementation-evidence.md)
   records US-6.5 batch simulation, ranking, freshness, and percentage-preservation
   traceability.
+- [`sprint-daily-plan-implementation-evidence.md`](sprint-daily-plan-implementation-evidence.md)
+  records US-8.1 daily-plan ordering, per-Date no-netting projection, simplified
+  Member-capacity grid, API mapping, and local-validation traceability.
 
 Project-specific rules may override a generic recommendation only when the
 exception is explicit, justified, and documented here. Mandatory dependency,

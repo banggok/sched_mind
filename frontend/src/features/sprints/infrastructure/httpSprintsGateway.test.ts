@@ -104,14 +104,35 @@ describe("HTTP Sprints gateway", () => {
     );
   });
 
-  it("normalizes nullable Task collections before Task Review rendering", async () => {
+  it("normalizes nullable Task collections before Sprint Planning rendering", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue(
         new Response(
           JSON.stringify({
             data: {
-              members: [],
+              members: [
+                {
+                  id: "member-1",
+                  name: "Harry",
+                  roleName: "Engineer",
+                  dailyCapacity: [{ date: "2026-08-04", minutes: 480 }],
+                  dailySummaries: [
+                    {
+                      date: "2026-08-04",
+                      capacityMinutes: 480,
+                      selectedAllocationMinutes: 120,
+                      remainingMinutes: 360,
+                      overcapacityMinutes: 0,
+                    },
+                  ],
+                  capacityMinutes: 480,
+                  inSprintAllocationMinutes: 120,
+                  remainingMinutes: 360,
+                  overcapacityMinutes: 0,
+                  totalAllocationMinutes: 120,
+                },
+              ],
               tasks: [
                 {
                   reason: "mandatory",
@@ -120,8 +141,12 @@ describe("HTTP Sprints gateway", () => {
                     projectId: "project-1",
                     projectName: "Alpha",
                     projectStatus: "open",
+                    projectPriority: 2,
                     name: "API",
                     wbsOrder: "1",
+                    wbsPath: "1.2",
+                    wbsRank: 3,
+                    dailyPlanOrderDate: "2026-08-04",
                     completed: false,
                     allocations: null,
                     inSprintAllocationMinutes: 0,
@@ -134,9 +159,13 @@ describe("HTTP Sprints gateway", () => {
               totals: {
                 capacityMinutes: 0,
                 selectedMemberAllocationMinutes: 0,
+                remainingMinutes: 0,
+                overcapacityMinutes: 0,
                 needsReviewAllocationMinutes: 0,
+                needsReviewDailyAllocation: null,
                 allTaskInSprintMinutes: 0,
                 allTaskTotalMinutes: 0,
+                dailySummaries: null,
               },
               projectionToken: "projection-1",
             },
@@ -153,8 +182,28 @@ describe("HTTP Sprints gateway", () => {
       memberIds: ["member-1"],
     });
 
-    expect(suggestion.tasks[0]?.task.warnings).toEqual([]);
-    expect(suggestion.tasks[0]?.task.allocations).toEqual([]);
+    expect(suggestion.members[0]).toMatchObject({
+      totalAllocationMinutes: 120,
+      dailySummaries: [
+        {
+          date: "2026-08-04",
+          capacityMinutes: 480,
+          selectedAllocationMinutes: 120,
+          remainingMinutes: 360,
+          overcapacityMinutes: 0,
+        },
+      ],
+    });
+    expect(suggestion.tasks[0]?.task).toMatchObject({
+      projectPriority: 2,
+      wbsPath: "1.2",
+      wbsRank: 3,
+      dailyPlanOrderDate: "2026-08-04",
+      warnings: [],
+      allocations: [],
+    });
+    expect(suggestion.totals.needsReviewDailyAllocation).toEqual([]);
+    expect(suggestion.totals.dailySummaries).toEqual([]);
   });
 
   it("retains structured overlap details from the stable API error_AC65", async () => {

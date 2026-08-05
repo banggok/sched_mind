@@ -16,6 +16,8 @@ var (
 	ErrTaskNotEligible = errors.New("sprint task is not eligible")
 )
 
+var ErrSuggestionUnavailable = errors.New("sprint suggestion is unavailable")
+
 type OverlapMember struct {
 	ID   string
 	Name string

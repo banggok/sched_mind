@@ -97,8 +97,15 @@ Execution End is on or before Sprint End, even when overcapacity results, then
 fill remaining in-period capacity from later Tasks deterministically. Sprint
 never reserves capacity, invokes scheduling, or changes Project/WBS/Task data.
 Saved Task membership survives schedule drift; invalid current conditions are
-shown under Needs Review instead of being removed silently. Same-Member Sprint
-date ranges cannot overlap inclusively. Exact behaviour belongs to US-8.1.
+shown under Needs Review instead of being removed silently. Readable Needs Review
+allocation is excluded from selected-member utilization. Sprint Planning uses the
+complete canonical Execution allocation to order rows, but the visible daily
+grid contains only the inclusive Sprint Date range. Positive allocation before
+Sprint Start or after Sprint End creates no visible Date column or allocation
+cell. The page shows Member capacity only; Task allocation remains on Task rows,
+while Sprint summaries and aggregate allocation/remaining/overcapacity rows are
+intentionally absent. Same-Member Sprint date ranges cannot overlap inclusively.
+Exact behaviour belongs to US-8.1.
 
 ## Terminology and current invariants
 
@@ -268,6 +275,21 @@ belongs to US-7.1.
 
 Sprints are accessed under the visible Project navigation group beside Projects.
 This menu grouping is navigational only. Sprint List, the two-step modal
-Details/Members form, and the main-page Task Review workspace belong to US-8.1;
-Home remains the root page. Task Review groups by Member, then renders Project
-as level `0` with the authoritative WBS hierarchy down to selected Tasks.
+Details/Members form, and the main-page Sprint Planning workspace belong to US-8.1;
+Home remains the root page. Sprint Planning groups by selected Member and renders
+flat Task rows across Projects in canonical daily allocation order. Project
+Name/status remains visible on every row; WBS path/rank remains an internal
+ordering input and is not displayed. Each Member shows period and per-Date
+capacity only. A Date with `0h` Member Daily Capacity marks that Member's whole
+Date column and carries one textual `No capacity` state in the header; Remaining
+Capacity is not used for this marker. Task allocation stays visible per Task for
+Sprint Dates only, every Sprint Date shares one horizontal grid, and
+Sprint/remaining/overcapacity summaries are not rendered.
+Task Name opens the same shared Edit Task controller used by Home while the
+active page remains Sprints. Closing the Task dialog leaves Sprint Planning
+unchanged; saving the Task regenerates the local suggestion and returns to the
+same Sprint Planning workspace. The regenerated Task membership is not persisted
+until Save Sprint Planning.
+Suggestion projection failure is recoverable through the stable
+`SPRINT_SUGGESTION_UNAVAILABLE` API contract and must not persist partial Sprint
+state.

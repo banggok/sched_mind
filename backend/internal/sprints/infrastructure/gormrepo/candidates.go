@@ -34,6 +34,8 @@ func (repository *Repository) candidates(ctx context.Context, startDate, endDate
 		Where("task.execution_start IS NOT NULL AND task.execution_end IS NOT NULL").
 		Where("task.actual_start IS NULL AND task.actual_end IS NULL").
 		Where("project.status IN ?", []string{"open", "locked"}).
+		Where("EXISTS (?)", repository.database.Table("task_schedule_allocations AS readable_allocation").Select("1").Where("readable_allocation.task_id = task.id AND readable_allocation.timeline = ? AND readable_allocation.assignee_id = task.assignee_id", "execution")).
+		Where("NOT EXISTS (?)", repository.database.Table("task_schedule_allocations AS mismatched_allocation").Select("1").Where("mismatched_allocation.task_id = task.id AND mismatched_allocation.timeline = ? AND mismatched_allocation.assignee_id <> task.assignee_id", "execution")).
 		Where("NOT EXISTS (?)", repository.database.Table("wbs_nodes AS child").Select("1").Where("child.project_id = task.project_id AND child.parent_id = task.id"))
 	if len(excludedTaskIDs) > 0 {
 		statement = statement.Where("task.id NOT IN ?", excludedTaskIDs)
@@ -52,6 +54,10 @@ func (repository *Repository) candidates(ctx context.Context, startDate, endDate
 		Limit(query.PageSize).Offset((query.Page - 1) * query.PageSize).Scan(&rows).Error; err != nil {
 		return listing.Page[application.TaskProjection]{}, fmt.Errorf("query sprint task candidates: %w", err)
 	}
+	wbsContext, _, err := repository.loadWBSContext(ctx, rows)
+	if err != nil {
+		return listing.Page[application.TaskProjection]{}, err
+	}
 	taskIDs := make([]string, 0, len(rows))
 	for _, row := range rows {
 		taskIDs = append(taskIDs, row.ID)
@@ -63,32 +69,13 @@ func (repository *Repository) candidates(ctx context.Context, startDate, endDate
 			return listing.Page[application.TaskProjection]{}, fmt.Errorf("query candidate allocations: %w", err)
 		}
 	}
-	allocations, allocationAssignees, err := composeAllocations(allocationRows)
-	if err != nil {
-		return listing.Page[application.TaskProjection]{}, err
-	}
+	allocations, allocationAssignees, _ := composeAllocations(allocationRows)
 	items := make([]application.TaskProjection, 0, len(rows))
 	for _, row := range rows {
-		if row.AssigneeID == nil || len(allocationAssignees[row.ID]) > 1 {
-			continue
+		item, readable := composeTaskProjection(row, allocations[row.ID], allocationAssignees[row.ID], wbsContext[row.ID], startDate, endDate)
+		if readable {
+			items = append(items, item)
 		}
-		if len(allocationAssignees[row.ID]) == 1 {
-			if _, matches := allocationAssignees[row.ID][*row.AssigneeID]; !matches {
-				continue
-			}
-		}
-		item := application.TaskProjection{ID: row.ID, ProjectID: row.ProjectID, ProjectName: row.ProjectName, ProjectStatus: row.ProjectStatus,
-			Name: row.Name, WBSOrder: fmt.Sprintf("%s:%08d", row.ParentKey, row.Position), AssigneeID: row.AssigneeID, AssigneeName: row.AssigneeName,
-			ExecutionStart: row.ExecutionStart, ExecutionEnd: row.ExecutionEnd, Allocations: allocations[row.ID]}
-		for _, allocation := range item.Allocations {
-			item.TotalAllocationMinutes += allocation.Minutes
-			if !allocation.Date.Before(startDate) && !allocation.Date.After(endDate) {
-				item.InSprintAllocationMinutes += allocation.Minutes
-			} else {
-				item.OutsideAllocationMinutes += allocation.Minutes
-			}
-		}
-		items = append(items, item)
 	}
 	return listing.Page[application.TaskProjection]{Items: items, Page: query.Page, PageSize: query.PageSize, Total: total}, nil
 }

@@ -202,8 +202,15 @@ export function App() {
         <SprintsPage
           gateway={sprintsGateway}
           membersGateway={teamMembersGateway}
-          wbsGateway={wbsGateway}
           loadPublicHolidayDates={publicHolidaysGateway.calendar}
+          taskEditorDependencies={{
+            projectsGateway,
+            wbsGateway,
+            dependenciesGateway,
+            rolesGateway,
+            membersGateway: teamMembersGateway,
+            loadPublicHolidayDates: publicHolidaysGateway.calendar,
+          }}
         />
       ) : activePage === "projects" ? (
         <ProjectsPage

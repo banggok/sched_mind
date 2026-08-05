@@ -77,7 +77,10 @@ func (service *Service) Suggest(ctx context.Context, input SuggestionInput) (*Su
 	}
 	suggestion, err := service.store.Suggest(ctx, input)
 	if err != nil {
-		return nil, fmt.Errorf("suggest sprint tasks: %w", err)
+		if errors.Is(err, ErrMemberNotFound) {
+			return nil, fmt.Errorf("suggest sprint tasks: %w", err)
+		}
+		return nil, fmt.Errorf("suggest sprint tasks: %w", errors.Join(ErrSuggestionUnavailable, err))
 	}
 	if suggestion == nil {
 		return nil, errors.New("suggest sprint tasks: repository returned nil without error")
