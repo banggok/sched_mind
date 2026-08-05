@@ -176,6 +176,10 @@ func (repository *Repository) DeleteIfNoActiveTask(ctx context.Context, id strin
 			Delete(&capacityOverrideModel{}).Error; err != nil {
 			return fmt.Errorf("soft delete capacity overrides: %w", err)
 		}
+		if err := tx.Where("member_id = ?", id).
+			Delete(&sprintMemberModel{}).Error; err != nil {
+			return fmt.Errorf("delete sprint member relations: %w", err)
+		}
 		result := tx.Delete(&member)
 		if result.Error != nil {
 			return mapConstraintError(result.Error)

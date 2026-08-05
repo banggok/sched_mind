@@ -6,6 +6,7 @@ import (
 	portfoliohttp "github.com/banggok/sched_mind/backend/internal/portfolio/transport/http"
 	projecthttp "github.com/banggok/sched_mind/backend/internal/projects/transport/http"
 	publicholidayhttp "github.com/banggok/sched_mind/backend/internal/publicholidays/transport/http"
+	sprinthttp "github.com/banggok/sched_mind/backend/internal/sprints/transport/http"
 	wbshttp "github.com/banggok/sched_mind/backend/internal/wbs/transport/http"
 	"net/http"
 
@@ -24,6 +25,7 @@ func NewRouter(
 	wbsService wbshttp.Service,
 	dependencyService dependencyhttp.Service,
 	portfolioService portfoliohttp.Service,
+	sprintService sprinthttp.Service,
 ) http.Handler {
 	mux := http.NewServeMux()
 	systemhealthhttp.Register(mux)
@@ -35,6 +37,7 @@ func NewRouter(
 	wbshttp.New(wbsService).Register(mux)
 	dependencyhttp.New(dependencyService).Register(mux)
 	portfoliohttp.New(portfolioService).Register(mux)
+	sprinthttp.New(sprintService).Register(mux)
 
 	return schedulingimpact.CaptureToken(mux)
 }

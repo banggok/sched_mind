@@ -30,12 +30,18 @@ describe("HTTP WBS gateway tree cache", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("invalidates the confirmed tree after mutation", async () => {
+  it("returns the confirmed created node identity and invalidates the tree", async () => {
     const fetchMock = vi.fn(
       (_url: string | URL | Request, init?: RequestInit) =>
         Promise.resolve(
           init?.method
-            ? new Response(null, { status: 204 })
+            ? new Response(
+                JSON.stringify({ data: taskResponse(null, "new-task") }),
+                {
+                  status: 201,
+                  headers: { "Content-Type": "application/json" },
+                },
+              )
             : new Response(JSON.stringify({ data: [] }), {
                 status: 200,
                 headers: { "Content-Type": "application/json" },
@@ -50,10 +56,76 @@ describe("HTTP WBS gateway tree cache", () => {
     await gateway.tree("project");
     await gateway.tree("project");
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    await gateway.create("project", undefined, "Task", false);
+    const created = await gateway.create("project", undefined, "Task", false);
+    expect(created.id).toBe("new-task");
+    expect(created.projectId).toBe("project");
+    expect(created.name).toBe("Build API");
+    expect(created.parentId).toBeUndefined();
+    expect(created.executable.executionTimeline).toEqual({
+      start: "2026-08-01",
+      end: "2026-08-03",
+    });
     expect(confirmedChange).toHaveBeenCalledTimes(1);
     await gateway.tree("project");
     expect(fetchMock).toHaveBeenCalledTimes(3);
+    unsubscribe?.();
+  });
+
+  it("preserves the confirmed parent identity for a newly created child", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: { ...taskResponse(null, "new-child"), parentId: "group" },
+        }),
+        {
+          status: 201,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const gateway = createHTTPWBSGateway("/api");
+
+    const created = await gateway.create("project", "group", "Child", false);
+
+    expect(created.id).toBe("new-child");
+    expect(created.parentId).toBe("group");
+  });
+
+  it("invalidates cached projections after confirmed create even when the response is malformed", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ data: [taskResponse()] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response("not-json", {
+          status: 201,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ data: [] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    const gateway = createHTTPWBSGateway("/api");
+    const confirmedChange = vi.fn();
+    const unsubscribe = gateway.subscribeToConfirmedChanges?.(confirmedChange);
+
+    await gateway.tree("project");
+    await expect(
+      gateway.create("project", undefined, "Task", false),
+    ).rejects.toBeInstanceOf(Error);
+    await expect(gateway.tree("project")).resolves.toEqual([]);
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(confirmedChange).toHaveBeenCalledTimes(1);
     unsubscribe?.();
   });
 

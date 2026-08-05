@@ -27,6 +27,8 @@ import (
 	rolepostgres "github.com/banggok/sched_mind/backend/internal/roles/infrastructure/postgres"
 	schedulingapplication "github.com/banggok/sched_mind/backend/internal/scheduling/application"
 	schedulinggormrepo "github.com/banggok/sched_mind/backend/internal/scheduling/infrastructure/gormrepo"
+	sprintapplication "github.com/banggok/sched_mind/backend/internal/sprints/application"
+	sprintgormrepo "github.com/banggok/sched_mind/backend/internal/sprints/infrastructure/gormrepo"
 	teammemberapplication "github.com/banggok/sched_mind/backend/internal/teammembers/application"
 	teammembergormrepo "github.com/banggok/sched_mind/backend/internal/teammembers/infrastructure/gormrepo"
 	teammemberpostgres "github.com/banggok/sched_mind/backend/internal/teammembers/infrastructure/postgres"
@@ -161,10 +163,12 @@ func run(config *configuration) (runError error) {
 	dependencyService := dependencyapplication.NewService(dependencyRepository, schedulingService)
 	portfolioRepository := portfoliogormrepo.New(database)
 	portfolioService := portfolioapplication.NewService(portfolioRepository)
+	sprintRepository := sprintgormrepo.New(database)
+	sprintService := sprintapplication.NewService(sprintRepository)
 
 	server := &http.Server{
 		Addr:    config.address,
-		Handler: httpapi.NewRouter(roleService, teamMemberService, capacityOverrideService, publicHolidayService, projectService, wbsService, dependencyService, portfolioService),
+		Handler: httpapi.NewRouter(roleService, teamMemberService, capacityOverrideService, publicHolidayService, projectService, wbsService, dependencyService, portfolioService, sprintService),
 	}
 
 	signalContext, stopSignals := signal.NotifyContext(

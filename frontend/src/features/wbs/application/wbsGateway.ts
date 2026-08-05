@@ -20,7 +20,7 @@ export interface WBSGateway {
     parentId: string | undefined,
     name: string,
     confirmConversion: boolean,
-  ): Promise<void>;
+  ): Promise<WBSNode>;
   rename(projectId: string, id: string, name: string): Promise<void>;
   reorder(
     projectId: string,

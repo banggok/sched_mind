@@ -58,6 +58,32 @@ func TestDeleteSoftDeletesMemberAndCapacityOverrides(t *testing.T) {
 	}
 }
 
+func TestDeleteRemovesSprintMembershipWithoutBlockingOrDeletingRetainedTaskRelation_AC57(t *testing.T) {
+	database := openTestDatabase(t)
+	now := time.Now().UTC()
+	if err := database.Create(&roleModel{ID: "role", Name: "Backend"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	member := teamMemberModel{ID: "member", Name: "Harry", RoleID: "role", DailyCapacity: "8.0", BufferPercentage: "20.0", CreatedAt: now, UpdatedAt: now}
+	if err := database.Create(&member).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Create(&sprintMemberModel{SprintID: "sprint-1", MemberID: member.ID}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if err := New(database).DeleteIfNoActiveTask(context.Background(), member.ID); err != nil {
+		t.Fatalf("sprint membership must not block member deletion: %v", err)
+	}
+	var relationCount int64
+	if err := database.Model(&sprintMemberModel{}).Where("member_id = ?", member.ID).Count(&relationCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if relationCount != 0 {
+		t.Fatalf("sprint member relations remaining = %d", relationCount)
+	}
+}
+
 func TestDeleteRejectsActiveAssignmentProjection(t *testing.T) {
 	database := openTestDatabase(t)
 	now := time.Now().UTC()

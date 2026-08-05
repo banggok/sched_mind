@@ -13,6 +13,7 @@ func MigrateTestSchema(database *gorm.DB) error {
 			&assignmentProjectModel{},
 			&assignmentWBSNodeModel{},
 			&capacityOverrideModel{},
+			&sprintMemberModel{},
 		)
 	})
 }

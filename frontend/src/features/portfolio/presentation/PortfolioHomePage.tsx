@@ -15,7 +15,10 @@ import { EmptyState } from "../../../shared/presentation/EmptyState";
 import { FormField } from "../../../shared/presentation/FormField";
 import { ListSkeleton } from "../../../shared/presentation/ListSkeleton";
 import { Toast } from "../../../shared/presentation/Toast";
-import { subscribeScheduleProjectionVersion } from "../../../shared/infrastructure/scheduleProjectionClock";
+import {
+  currentScheduleProjectionVersion,
+  subscribeScheduleProjectionVersion,
+} from "../../../shared/infrastructure/scheduleProjectionClock";
 import {
   WBSOperationError,
   type WBSGateway,
@@ -79,6 +82,11 @@ type WBSOpenRequest = {
   moveNodeId?: string;
 };
 export type HomeProjectCommandKind = "lock" | "close" | "reopen" | "delete";
+export type HomeRowFocusRequest = {
+  key: number;
+  rowId: string;
+  minimumProjectionVersion?: number;
+};
 type RoleOption = { key: string; label: string };
 type GridColumn = {
   key: "wbs" | "name" | "role" | "assignee" | "effort" | "start" | "end";
@@ -94,12 +102,16 @@ export function PortfolioHomePage({
   onOpenProject,
   onProjectCommand,
   onOpenWBS,
+  focusRequest,
+  onFocusRequestHandled,
 }: {
   gateway: PortfolioGateway;
   wbsGateway: WBSGateway;
   onOpenProject(projectId: string): void;
   onProjectCommand(kind: HomeProjectCommandKind, projectId: string): void;
   onOpenWBS(request: WBSOpenRequest): void;
+  focusRequest?: HomeRowFocusRequest;
+  onFocusRequestHandled?(key: number): void;
 }) {
   const [projects, setProjects] = useState<PortfolioProject[]>([]);
   const [filters, setFilters] = useState<SavedPortfolioFilter[]>([]);
@@ -119,6 +131,8 @@ export function PortfolioHomePage({
   const [validRange, setValidRange] = useState<ValidRange>(currentMonthRange);
   const [queryRange] = useState<ValidRange>(portfolioQueryRange);
   const [portfolio, setPortfolio] = useState<PortfolioProjectionResult>();
+  const [portfolioProjectionVersion, setPortfolioProjectionVersion] =
+    useState<number>();
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [metadataLoading, setMetadataLoading] = useState(true);
   const [projectionLoading, setProjectionLoading] = useState(true);
@@ -133,6 +147,9 @@ export function PortfolioHomePage({
   const [toast, setToast] = useState("");
   const [actionBusyRowID, setActionBusyRowID] = useState("");
   const [pendingDelete, setPendingDelete] = useState<PortfolioRow>();
+  const [localFocusRequest, setLocalFocusRequest] =
+    useState<HomeRowFocusRequest>();
+  const localFocusRequestVersion = useRef(0);
   const activeFilterIDRef = useRef(activeFilterID);
   const metadataInitializedRef = useRef(false);
 
@@ -206,6 +223,7 @@ export function PortfolioHomePage({
       return;
     }
     const controller = new AbortController();
+    const requestedProjectionVersion = currentScheduleProjectionVersion();
     setProjectionLoading(true);
     setProjectionError("");
     void gateway
@@ -216,7 +234,10 @@ export function PortfolioHomePage({
         queryRange.to,
         controller.signal,
       )
-      .then(setPortfolio)
+      .then((result) => {
+        setPortfolio(result);
+        setPortfolioProjectionVersion(requestedProjectionVersion);
+      })
       .catch((reason: unknown) => {
         if (!isAbort(reason))
           setProjectionError("Portfolio timeline could not be loaded.");
@@ -264,6 +285,51 @@ export function PortfolioHomePage({
     () => visiblePortfolioRows(roleAdjustedRows, collapsed),
     [collapsed, roleAdjustedRows],
   );
+  const activeFocusRequest = focusRequest ?? localFocusRequest;
+  const projectionReadyFocusRequest =
+    activeFocusRequest?.minimumProjectionVersion === undefined ||
+    (portfolioProjectionVersion !== undefined &&
+      portfolioProjectionVersion >= activeFocusRequest.minimumProjectionVersion)
+      ? activeFocusRequest
+      : undefined;
+  const visibleFocusRequest = useMemo(
+    () =>
+      focusRequestForRoleAdjustedRows(
+        projectionReadyFocusRequest,
+        portfolio?.rows ?? [],
+        roleAdjustedRows,
+      ),
+    [portfolio?.rows, projectionReadyFocusRequest, roleAdjustedRows],
+  );
+
+  useEffect(() => {
+    if (!projectionReadyFocusRequest || !portfolio) return;
+    const target = portfolio.rows.find(
+      (row) => row.id === projectionReadyFocusRequest.rowId,
+    );
+    if (!target) return;
+    const byID = new Map(portfolio.rows.map((row) => [row.id, row]));
+    const ancestors = new Set<string>();
+    const projectRow = portfolio.rows.find(
+      (row) => row.kind === "project" && row.projectId === target.projectId,
+    );
+    if (projectRow) ancestors.add(projectRow.id);
+    let parentID = target.parentId;
+    while (parentID) {
+      ancestors.add(parentID);
+      parentID = byID.get(parentID)?.parentId;
+    }
+    setCollapsed((current) => {
+      if (![...ancestors].some((id) => current.has(id))) return current;
+      const next = new Set(current);
+      ancestors.forEach((id) => next.delete(id));
+      return next;
+    });
+  }, [portfolio, projectionReadyFocusRequest]);
+
+  useEffect(() => {
+    if (focusRequest) setLocalFocusRequest(undefined);
+  }, [focusRequest]);
   const restrictiveRoleFilter =
     roleFilterActive && effectiveRoleKeys.length < roleOptions.length;
   const filterProjectDraftSet = useMemo(
@@ -441,12 +507,15 @@ export function PortfolioHomePage({
     row: PortfolioRow,
     action: () => Promise<void>,
     successMessage: string,
+    focusRetainedRow = false,
   ): Promise<boolean> {
     if (actionBusyRowID) return false;
     setActionBusyRowID(row.id);
     try {
       await action();
       setReloadProjection((value) => value + 1);
+      if (focusRetainedRow)
+        requestLocalRowFocus(row.id, currentScheduleProjectionVersion());
       setToast(successMessage);
       return true;
     } catch (reason: unknown) {
@@ -457,10 +526,20 @@ export function PortfolioHomePage({
             ? reason.message
             : "The WBS item could not be updated.",
       );
+      if (focusRetainedRow) requestLocalRowFocus(row.id);
       return false;
     } finally {
       setActionBusyRowID("");
     }
+  }
+
+  function requestLocalRowFocus(
+    rowId: string,
+    minimumProjectionVersion?: number,
+  ) {
+    const key = localFocusRequestVersion.current - 1;
+    localFocusRequestVersion.current = key;
+    setLocalFocusRequest({ key, rowId, minimumProjectionVersion });
   }
 
   async function confirmWBSDelete() {
@@ -542,6 +621,12 @@ export function PortfolioHomePage({
                 collapsed={collapsed}
                 restrictiveRoleFilter={restrictiveRoleFilter}
                 busyRowID={actionBusyRowID}
+                focusRequest={visibleFocusRequest}
+                onFocusRequestHandled={(key) => {
+                  if (localFocusRequest?.key === key)
+                    setLocalFocusRequest(undefined);
+                  else onFocusRequestHandled?.(key);
+                }}
                 onToggle={(id) =>
                   setCollapsed((current) => {
                     const next = new Set(current);
@@ -558,6 +643,7 @@ export function PortfolioHomePage({
                     row,
                     () => wbsGateway.reorder(row.projectId, row.id, direction),
                     "Item reordered.",
+                    true,
                   )
                 }
                 onDelete={setPendingDelete}
@@ -951,6 +1037,8 @@ function Gantt({
   collapsed,
   restrictiveRoleFilter,
   busyRowID,
+  focusRequest,
+  onFocusRequestHandled,
   onToggle,
   onOpenProject,
   onProjectCommand,
@@ -969,6 +1057,8 @@ function Gantt({
   collapsed: Set<string>;
   restrictiveRoleFilter: boolean;
   busyRowID: string;
+  focusRequest?: HomeRowFocusRequest;
+  onFocusRequestHandled?(key: number): void;
   onToggle(id: string): void;
   onOpenProject(projectId: string): void;
   onProjectCommand(kind: HomeProjectCommandKind, projectId: string): void;
@@ -979,6 +1069,8 @@ function Gantt({
   const leftBodyRef = useRef<HTMLDivElement>(null);
   const timelineHeaderRef = useRef<HTMLDivElement>(null);
   const timelineBodyRef = useRef<HTMLDivElement>(null);
+  const rowNameRefs = useRef(new Map<string, HTMLButtonElement>());
+  const handledFocusRequestKey = useRef<number | undefined>(undefined);
   const [columns, setColumns] = useState(initialColumns);
   const [resizingColumn, setResizingColumn] = useState<{
     index: number;
@@ -991,10 +1083,76 @@ function Gantt({
   }));
 
   useEffect(() => {
-    setRowWindow({ start: 0, end: Math.min(rows.length, maximumRenderedRows) });
-    if (leftBodyRef.current) leftBodyRef.current.scrollTop = 0;
-    if (timelineBodyRef.current) timelineBodyRef.current.scrollTop = 0;
+    const timeline = timelineBodyRef.current;
+    const viewportHeight = timeline?.clientHeight ?? 0;
+    const currentScrollTop =
+      timeline?.scrollTop ?? leftBodyRef.current?.scrollTop ?? 0;
+    const retainedScrollTop = clamp(
+      currentScrollTop,
+      0,
+      Math.max(0, rows.length * rowHeight - viewportHeight),
+    );
+    const nextWindow = rowWindowForViewport(
+      rows.length,
+      retainedScrollTop,
+      viewportHeight,
+    );
+
+    if (timeline && timeline.scrollTop !== retainedScrollTop)
+      timeline.scrollTop = retainedScrollTop;
+    if (
+      leftBodyRef.current &&
+      leftBodyRef.current.scrollTop !== retainedScrollTop
+    )
+      leftBodyRef.current.scrollTop = retainedScrollTop;
+    setRowWindow((current) =>
+      current.start === nextWindow.start && current.end === nextWindow.end
+        ? current
+        : nextWindow,
+    );
   }, [rows]);
+
+  useEffect(() => {
+    if (!focusRequest || handledFocusRequestKey.current === focusRequest.key)
+      return;
+    const targetIndex = rows.findIndex((row) => row.id === focusRequest.rowId);
+    if (targetIndex < 0) return;
+    const timeline = timelineBodyRef.current;
+    const viewportHeight = timeline?.clientHeight ?? 0;
+    const currentScrollTop =
+      timeline?.scrollTop ?? leftBodyRef.current?.scrollTop ?? 0;
+    const targetTop = targetIndex * rowHeight;
+    const targetBottom = targetTop + rowHeight;
+    const targetScrollTop =
+      targetTop < currentScrollTop
+        ? targetTop
+        : targetBottom > currentScrollTop + viewportHeight
+          ? Math.max(0, targetBottom - viewportHeight)
+          : currentScrollTop;
+    const nextWindow = rowWindowForViewport(
+      rows.length,
+      targetScrollTop,
+      viewportHeight,
+    );
+
+    if (timeline) timeline.scrollTop = targetScrollTop;
+    if (leftBodyRef.current) leftBodyRef.current.scrollTop = targetScrollTop;
+    setRowWindow((current) =>
+      current.start === nextWindow.start && current.end === nextWindow.end
+        ? current
+        : nextWindow,
+    );
+  }, [focusRequest, rows]);
+
+  useEffect(() => {
+    if (!focusRequest || handledFocusRequestKey.current === focusRequest.key)
+      return;
+    const target = rowNameRefs.current.get(focusRequest.rowId);
+    if (!target) return;
+    target.focus({ preventScroll: true });
+    handledFocusRequestKey.current = focusRequest.key;
+    onFocusRequestHandled?.(focusRequest.key);
+  }, [focusRequest, onFocusRequestHandled, rowWindow, rows]);
 
   useEffect(() => {
     if (!resizingColumn) return;
@@ -1094,17 +1252,9 @@ function Gantt({
   const months = monthSegments(days);
 
   function updateRowWindow(scrollTop: number, clientHeight: number) {
-    const visibleCount = Math.max(1, Math.ceil(clientHeight / rowHeight));
-    const start = Math.max(0, Math.floor(scrollTop / rowHeight) - rowOverscan);
-    const end = Math.min(
-      rows.length,
-      Math.max(
-        start + maximumRenderedRows,
-        start + visibleCount + rowOverscan * 2,
-      ),
-    );
+    const next = rowWindowForViewport(rows.length, scrollTop, clientHeight);
     setRowWindow((current) =>
-      current.start === start && current.end === end ? current : { start, end },
+      current.start === next.start && current.end === next.end ? current : next,
     );
   }
 
@@ -1286,6 +1436,10 @@ function Gantt({
                     <span className="w-5 shrink-0" />
                   )}
                   <button
+                    ref={(element) => {
+                      if (element) rowNameRefs.current.set(row.id, element);
+                      else rowNameRefs.current.delete(row.id);
+                    }}
                     type="button"
                     className="min-w-0 truncate text-left font-semibold hover:text-brand-strong hover:underline"
                     title={row.name}
@@ -1953,6 +2107,31 @@ function visiblePortfolioRows(
   return visible;
 }
 
+function focusRequestForRoleAdjustedRows(
+  request: HomeRowFocusRequest | undefined,
+  authoritativeRows: PortfolioRow[],
+  roleAdjustedRows: PortfolioRow[],
+): HomeRowFocusRequest | undefined {
+  if (!request) return undefined;
+  const target = authoritativeRows.find((row) => row.id === request.rowId);
+  if (!target) return request;
+  const includedIDs = new Set(roleAdjustedRows.map((row) => row.id));
+  if (includedIDs.has(target.id)) return request;
+
+  const byID = new Map(authoritativeRows.map((row) => [row.id, row]));
+  let ancestorID = target.parentId;
+  while (ancestorID) {
+    if (includedIDs.has(ancestorID)) return { ...request, rowId: ancestorID };
+    ancestorID = byID.get(ancestorID)?.parentId;
+  }
+  const project = authoritativeRows.find(
+    (row) => row.kind === "project" && row.projectId === target.projectId,
+  );
+  return project && includedIDs.has(project.id)
+    ? { ...request, rowId: project.id }
+    : request;
+}
+
 function autoRange(rows: PortfolioRow[]): ValidRange {
   const taskDates = rows.filter(
     (row) => row.kind === "task" && row.start && row.end,
@@ -2283,6 +2462,25 @@ function sameStrings(left: string[], right: string[]): boolean {
     left.length === right.length &&
     left.every((value, index) => value === right[index])
   );
+}
+
+function rowWindowForViewport(
+  rowCount: number,
+  scrollTop: number,
+  clientHeight: number,
+): { start: number; end: number } {
+  const visibleCount = Math.max(1, Math.ceil(clientHeight / rowHeight));
+  const start = Math.max(0, Math.floor(scrollTop / rowHeight) - rowOverscan);
+  return {
+    start,
+    end: Math.min(
+      rowCount,
+      Math.max(
+        start + maximumRenderedRows,
+        start + visibleCount + rowOverscan * 2,
+      ),
+    ),
+  };
 }
 
 function clamp(value: number, minimum: number, maximum: number): number {

@@ -20,6 +20,16 @@ func dependencyTestDB(t *testing.T) (*Repository, *gorm.DB) {
 	if err := db.AutoMigrate(&projectModel{}, &nodeModel{}, &dependencyLinkModel{}); err != nil {
 		t.Fatal(err)
 	}
+	if err := db.Exec("PRAGMA foreign_keys = ON").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`CREATE TABLE sprint_tasks (
+		sprint_id TEXT NOT NULL,
+		task_id TEXT NOT NULL REFERENCES wbs_nodes(id) ON DELETE CASCADE,
+		PRIMARY KEY (sprint_id, task_id)
+	)`).Error; err != nil {
+		t.Fatal(err)
+	}
 	return New(db), db
 }
 func TestMoveConversionRetargetsDependenciesAndPreservesPercentage_US63_AC24(t *testing.T) {
@@ -71,6 +81,9 @@ func TestDeleteTaskCleansDependenciesAtomically(t *testing.T) {
 	if err := db.Create(&dependencyLinkModel{ID: "ab", BlockingTaskID: "a", BlockedTaskID: "b"}).Error; err != nil {
 		t.Fatal(err)
 	}
+	if err := db.Exec("INSERT INTO sprint_tasks (sprint_id, task_id) VALUES (?, ?), (?, ?)", "sprint-1", "a", "sprint-1", "b").Error; err != nil {
+		t.Fatal(err)
+	}
 	if err := repo.Delete(context.Background(), "project", "b", now, func(context.Context, string) error { return nil }, func(context.Context, []string) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
@@ -80,6 +93,18 @@ func TestDeleteTaskCleansDependenciesAtomically(t *testing.T) {
 	}
 	if count != 0 {
 		t.Fatalf("dependency count=%d", count)
+	}
+	if err := db.Table("sprint_tasks").Where("task_id = ?", "b").Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("deleted Task Sprint relation count=%d", count)
+	}
+	if err := db.Table("sprint_tasks").Where("task_id = ?", "a").Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("unrelated Task Sprint relation count=%d, want 1", count)
 	}
 }
 
@@ -173,6 +198,9 @@ func TestDeleteTaskRollsBackNodeAndDependenciesWhenInvalidationFails(t *testing.
 	if err := db.Create(&dependencyLinkModel{ID: "ab", BlockingTaskID: "a", BlockedTaskID: "b"}).Error; err != nil {
 		t.Fatal(err)
 	}
+	if err := db.Exec("INSERT INTO sprint_tasks (sprint_id, task_id) VALUES (?, ?)", "sprint-1", "b").Error; err != nil {
+		t.Fatal(err)
+	}
 
 	invalidationFailure := errors.New("schedule invalidation failed")
 	err := repo.Delete(
@@ -200,5 +228,12 @@ func TestDeleteTaskRollsBackNodeAndDependenciesWhenInvalidationFails(t *testing.
 	}
 	if dependencyCount != 1 {
 		t.Fatalf("rolled-back dependency count=%d, want 1", dependencyCount)
+	}
+	var sprintTaskCount int64
+	if err := db.Table("sprint_tasks").Where("task_id = ?", "b").Count(&sprintTaskCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if sprintTaskCount != 1 {
+		t.Fatalf("rolled-back Sprint Task relation count=%d, want 1", sprintTaskCount)
 	}
 }

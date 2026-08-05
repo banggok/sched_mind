@@ -53,6 +53,13 @@ type capacityOverrideModel struct {
 	DeletedAt    gorm.DeletedAt `gorm:"index"`
 }
 
+type sprintMemberModel struct {
+	SprintID string `gorm:"primaryKey"`
+	MemberID string `gorm:"primaryKey;index"`
+}
+
+func (sprintMemberModel) TableName() string { return "sprint_members" }
+
 func (capacityOverrideModel) TableName() string {
 	return "capacity_overrides"
 }

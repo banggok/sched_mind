@@ -28,6 +28,8 @@ export function WBSPanel({
   initialNodeId,
   initialCreateParentId,
   initialMoveNodeId,
+  onCreated,
+  onMutated,
   onClose,
 }: {
   project: Project;
@@ -42,6 +44,8 @@ export function WBSPanel({
   initialNodeId?: string;
   initialCreateParentId?: string | null;
   initialMoveNodeId?: string;
+  onCreated?(node: WBSNode): void;
+  onMutated?(nodeId: string): void;
   onClose(): void;
 }) {
   const [tree, setTree] = useState<WBSNode[]>([]);
@@ -158,13 +162,17 @@ export function WBSPanel({
   ]);
 
   const all = flatten(tree);
-  const mutate = async (action: () => Promise<void>) => {
+  const mutate = async <Result,>(
+    action: () => Promise<Result>,
+    onSuccess?: (result: Result) => void,
+  ) => {
     if (busy) return;
     setBusy(true);
     setOperationError("");
     try {
-      await action();
+      const result = await action();
       dependenciesGateway?.invalidateAll();
+      onSuccess?.(result);
       onClose();
     } catch (reason: unknown) {
       if (
@@ -186,12 +194,14 @@ export function WBSPanel({
     if (!draft) return;
     const selected = draft.node;
     if (draft.mode === "create")
-      void mutate(() =>
-        gateway.create(project.id, draft.parentId, name, false),
+      void mutate(
+        () => gateway.create(project.id, draft.parentId, name, false),
+        onCreated,
       );
     else if (selected)
-      void mutate(() =>
-        gateway.move(project.id, selected.id, target || undefined, false),
+      void mutate(
+        () => gateway.move(project.id, selected.id, target || undefined, false),
+        () => onMutated?.(selected.id),
       );
   };
 
@@ -311,23 +321,27 @@ export function WBSPanel({
                   conversion
                     ? () => {
                         if (draft.mode === "create")
-                          void mutate(() =>
-                            gateway.create(
-                              project.id,
-                              draft.parentId,
-                              name,
-                              true,
-                            ),
+                          void mutate(
+                            () =>
+                              gateway.create(
+                                project.id,
+                                draft.parentId,
+                                name,
+                                true,
+                              ),
+                            onCreated,
                           );
                         else if (draft.node) {
                           const selected = draft.node;
-                          void mutate(() =>
-                            gateway.move(
-                              project.id,
-                              selected.id,
-                              target || undefined,
-                              true,
-                            ),
+                          void mutate(
+                            () =>
+                              gateway.move(
+                                project.id,
+                                selected.id,
+                                target || undefined,
+                                true,
+                              ),
+                            () => onMutated?.(selected.id),
                           );
                         }
                       }
@@ -354,10 +368,12 @@ export function WBSPanel({
           onClose={onClose}
           onChanged={() => {
             dependenciesGateway?.invalidateAll();
+            onMutated?.(detail.id);
             onClose();
           }}
           onReopened={() => {
             dependenciesGateway?.invalidateAll();
+            onMutated?.(detail.id);
             onClose();
           }}
         />
