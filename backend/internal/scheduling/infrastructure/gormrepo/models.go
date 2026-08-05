@@ -21,6 +21,7 @@ type taskModel struct {
 	ID, ProjectID, ParentKey, Name string
 	ParentID                       *string
 	Position                       int
+	RoleID                         *string
 	AssigneeID                     *string
 	EffortMinutes                  *int
 	LagDays                        int
@@ -41,6 +42,8 @@ func (taskModel) TableName() string { return "wbs_nodes" }
 
 type memberModel struct {
 	ID               string
+	Name             string
+	RoleID           string
 	DailyCapacity    string
 	BufferPercentage string
 	DeletedAt        *time.Time

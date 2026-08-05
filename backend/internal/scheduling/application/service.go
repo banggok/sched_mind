@@ -3,11 +3,13 @@ package application
 import (
 	"context"
 
+	schedulingdomain "github.com/banggok/sched_mind/backend/internal/scheduling/domain"
 	"github.com/banggok/sched_mind/backend/internal/shared/schedulingimpact"
 )
 
 type Store interface {
 	RecalculatePortfolio(context.Context, []string) error
+	RecommendAssignees(context.Context, schedulingdomain.AssigneeRecommendationInput) (*schedulingdomain.AssigneeRecommendationResult, error)
 	RecalculateMemberSchedule(context.Context, string) error
 	MarkProjectUnscheduled(context.Context, string, string) error
 }
@@ -17,6 +19,20 @@ type Service struct {
 }
 
 func NewService(store Store) *Service { return &Service{store: store} }
+
+func (service *Service) RecommendAssignees(ctx context.Context, input schedulingdomain.AssigneeRecommendationInput) (*schedulingdomain.AssigneeRecommendationResult, error) {
+	if err := input.Validate(); err != nil {
+		return nil, err
+	}
+	value, err := service.store.RecommendAssignees(ctx, input)
+	if err != nil {
+		return nil, err
+	}
+	if value == nil {
+		return nil, schedulingdomain.ErrAssigneeRecommendationUnavailable
+	}
+	return value, nil
+}
 
 func (service *Service) RecalculateActiveProjects(ctx context.Context) error {
 	enabled, ownerProjectID, _, _ := schedulingimpact.Operation(ctx)

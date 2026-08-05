@@ -5,12 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	schedulingdomain "github.com/banggok/sched_mind/backend/internal/scheduling/domain"
 	"github.com/banggok/sched_mind/backend/internal/wbs/application"
 	"github.com/banggok/sched_mind/backend/internal/wbs/domain"
 )
@@ -20,6 +22,7 @@ type reopenServiceStub struct {
 	reopen     func(context.Context, string, string) (*domain.Node, error)
 	executable func(context.Context, string, string, application.WriteExecutableInput) (*domain.Node, error)
 	preview    func(context.Context, string, string, application.PreviewExecutableInput) (*application.SchedulePreview, error)
+	recommend  func(context.Context, string, string, schedulingdomain.AssigneeRecommendationInput) (*schedulingdomain.AssigneeRecommendationResult, error)
 }
 
 func (s reopenServiceStub) Reopen(ctx context.Context, projectID, id string) (*domain.Node, error) {
@@ -38,6 +41,13 @@ func (s reopenServiceStub) PreviewExecutableSchedule(ctx context.Context, projec
 		return nil, errors.New("unexpected preview call")
 	}
 	return s.preview(ctx, projectID, id, input)
+}
+
+func (s reopenServiceStub) RecommendAssignees(ctx context.Context, projectID, id string, input schedulingdomain.AssigneeRecommendationInput) (*schedulingdomain.AssigneeRecommendationResult, error) {
+	if s.recommend == nil {
+		return nil, errors.New("unexpected recommendation call")
+	}
+	return s.recommend(ctx, projectID, id, input)
 }
 
 func reopenMux(service Service) http.Handler {
@@ -467,4 +477,124 @@ func TestExecutablePreviewMapsUnavailableStateToStableConflict(t *testing.T) {
 	reopenMux(service).ServeHTTP(response, request)
 
 	assertErrorCode(t, response, http.StatusConflict, "SCHEDULE_PREVIEW_UNAVAILABLE")
+}
+
+func TestAssigneeRecommendationEndpointMapsOneBatchAndExactDraft_D01_D03_D06_D15_D17_AC3_AC11_AC12_AC25_AC33(t *testing.T) {
+	calls := 0
+	finish := time.Date(2026, 8, 11, 0, 0, 0, 0, time.UTC)
+	reason := "NO_POSITIVE_CAPACITY"
+	service := reopenServiceStub{recommend: func(_ context.Context, projectID, taskID string, input schedulingdomain.AssigneeRecommendationInput) (*schedulingdomain.AssigneeRecommendationResult, error) {
+		calls++
+		if projectID != "project" || taskID != "task" {
+			t.Fatalf("scope=%s/%s", projectID, taskID)
+		}
+		if input.RoleID != "role" || input.EffortMinutes != 480 || input.LagDays != 2 || input.CapacityAllocationPercentage != 40 {
+			t.Fatalf("input=%#v", input)
+		}
+		if input.ExecutionStart == nil || input.ExecutionStart.Format("2006-01-02") != "2026-08-10" {
+			t.Fatalf("execution start=%v", input.ExecutionStart)
+		}
+		return &schedulingdomain.AssigneeRecommendationResult{
+			CalculatedOnDate:        time.Date(2026, 8, 5, 0, 0, 0, 0, time.UTC),
+			ProjectScheduleVersions: map[string]int64{"project": 12},
+			Mode:                    schedulingdomain.RecommendationManualAdvisory,
+			Items: []schedulingdomain.AssigneeRecommendationItem{
+				{
+					MemberID: "member", MemberName: "Dewi", RoleID: "role",
+					RankGroup: schedulingdomain.RecommendationFeasible, ExecutionEnd: &finish,
+					RemainingExecutionCapacityMinutes: 240,
+				},
+				{
+					MemberID: "none", MemberName: "Gabby", RoleID: "role",
+					RankGroup: schedulingdomain.RecommendationNoCompletion, ReasonCode: &reason,
+				},
+			},
+		}, nil
+	}}
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/projects/project/wbs/task/assignee-recommendations",
+		strings.NewReader(`{"roleId":"role","effortHours":8,"capacityAllocationPercentage":40,"lag":2,"executionStart":"2026-08-10","executionEnd":"2026-12-31"}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	reopenMux(service).ServeHTTP(response, request)
+	if response.Code != http.StatusOK || calls != 1 {
+		t.Fatalf("status=%d calls=%d body=%s", response.Code, calls, response.Body.String())
+	}
+	var payload struct {
+		Data assigneeRecommendationResultItem `json:"data"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Data.Mode != "manual-advisory" || payload.Data.CalculatedOnDate != "2026-08-05" || payload.Data.Snapshot.ProjectScheduleVersions["project"] != 12 {
+		t.Fatalf("metadata=%#v", payload.Data)
+	}
+	if len(payload.Data.Items) != 2 || payload.Data.Items[0].RemainingExecutionCapacityHours != 4 || payload.Data.Items[1].ReasonCode == nil || *payload.Data.Items[1].ReasonCode != reason {
+		t.Fatalf("items=%#v", payload.Data.Items)
+	}
+}
+
+func TestAssigneeRecommendationEndpointRejectsIncompleteOrBrowserToday_D03_D17_AC3_AC34(t *testing.T) {
+	for name, body := range map[string]string{
+		"missing percentage": `{"roleId":"role","effortHours":8,"lag":0}`,
+		"invalid effort":     `{"roleId":"role","effortHours":0.25,"capacityAllocationPercentage":40,"lag":0}`,
+		"invalid end":        `{"roleId":"role","effortHours":8,"capacityAllocationPercentage":40,"lag":0,"executionEnd":"not-a-date"}`,
+		"browser today":      `{"roleId":"role","effortHours":8,"capacityAllocationPercentage":40,"lag":0,"today":"2026-08-05"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			calls := 0
+			service := reopenServiceStub{recommend: func(context.Context, string, string, schedulingdomain.AssigneeRecommendationInput) (*schedulingdomain.AssigneeRecommendationResult, error) {
+				calls++
+				return nil, nil
+			}}
+			request := httptest.NewRequest(http.MethodPost, "/api/projects/project/wbs/task/assignee-recommendations", strings.NewReader(body))
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			reopenMux(service).ServeHTTP(response, request)
+			if response.Code != http.StatusBadRequest || calls != 0 {
+				t.Fatalf("status=%d calls=%d body=%s", response.Code, calls, response.Body.String())
+			}
+			if name != "browser today" && !strings.Contains(response.Body.String(), "ASSIGNEE_RECOMMENDATION_INPUT_INVALID") {
+				t.Fatalf("body=%s", response.Body.String())
+			}
+			if name == "browser today" && !strings.Contains(response.Body.String(), "INVALID_REQUEST") {
+				t.Fatalf("body=%s", response.Body.String())
+			}
+		})
+	}
+}
+
+func TestAssigneeRecommendationEndpointMapsStableErrors_D17_AC31(t *testing.T) {
+	cases := []struct {
+		name   string
+		err    error
+		status int
+		code   string
+	}{
+		{name: "not recommendable", err: schedulingdomain.ErrTaskNotRecommendable, status: http.StatusConflict, code: "TASK_NOT_RECOMMENDABLE"},
+		{name: "stale", err: schedulingdomain.ErrAssigneeRecommendationStale, status: http.StatusConflict, code: "ASSIGNEE_RECOMMENDATION_STALE"},
+		{name: "unavailable", err: fmt.Errorf("%w: database secret", schedulingdomain.ErrAssigneeRecommendationUnavailable), status: http.StatusServiceUnavailable, code: "ASSIGNEE_RECOMMENDATION_UNAVAILABLE"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			service := reopenServiceStub{recommend: func(context.Context, string, string, schedulingdomain.AssigneeRecommendationInput) (*schedulingdomain.AssigneeRecommendationResult, error) {
+				return nil, testCase.err
+			}}
+			request := httptest.NewRequest(
+				http.MethodPost,
+				"/api/projects/project/wbs/task/assignee-recommendations",
+				strings.NewReader(`{"roleId":"role","effortHours":8,"capacityAllocationPercentage":40,"lag":0}`),
+			)
+			response := httptest.NewRecorder()
+			reopenMux(service).ServeHTTP(response, request)
+			if response.Code != testCase.status || !strings.Contains(response.Body.String(), testCase.code) {
+				t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+			}
+			if testCase.code == "ASSIGNEE_RECOMMENDATION_UNAVAILABLE" && strings.Contains(response.Body.String(), "database secret") {
+				t.Fatalf("unsafe infrastructure detail body=%s", response.Body.String())
+			}
+		})
+	}
 }

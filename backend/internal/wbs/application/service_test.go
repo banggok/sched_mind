@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	schedulingdomain "github.com/banggok/sched_mind/backend/internal/scheduling/domain"
 	"github.com/banggok/sched_mind/backend/internal/wbs/domain"
 )
 
@@ -281,3 +282,62 @@ func TestPreviewExecutableScheduleUsesDraftWithoutCallingConfirmedMutation(t *te
 }
 
 func ptrString(value string) *string { return &value }
+
+type recommendationSchedulerStub struct {
+	schedulerSpy
+	input  *schedulingdomain.AssigneeRecommendationInput
+	result *schedulingdomain.AssigneeRecommendationResult
+	err    error
+}
+
+func (stub *recommendationSchedulerStub) RecommendAssignees(_ context.Context, input schedulingdomain.AssigneeRecommendationInput) (*schedulingdomain.AssigneeRecommendationResult, error) {
+	copy := input
+	stub.input = &copy
+	return stub.result, stub.err
+}
+
+func TestRecommendAssigneesUsesApplicationClockAndConfirmedTaskScope_D08_D17_AC9_AC12_AC34(t *testing.T) {
+	now := time.Date(2026, 8, 5, 23, 45, 0, 0, time.FixedZone("APP_TIMEZONE", 7*60*60))
+	result := &schedulingdomain.AssigneeRecommendationResult{Mode: schedulingdomain.RecommendationManualAdvisory}
+	scheduler := &recommendationSchedulerStub{result: result}
+	service := NewServiceWithDependencies(
+		reopenStoreStub{},
+		scheduler,
+		func() time.Time { return now },
+		func() (string, error) { return "unused", nil },
+	)
+
+	value, err := service.RecommendAssignees(context.Background(), "project", "task", schedulingdomain.AssigneeRecommendationInput{
+		RoleID:                       "role",
+		EffortMinutes:                480,
+		LagDays:                      1,
+		CapacityAllocationPercentage: 40,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value != result || scheduler.input == nil {
+		t.Fatalf("value=%#v input=%#v", value, scheduler.input)
+	}
+	if scheduler.input.ProjectID != "project" || scheduler.input.TaskID != "task" || !scheduler.input.CalculatedOn.Equal(now) {
+		t.Fatalf("scoped input=%#v", scheduler.input)
+	}
+}
+
+func TestRecommendAssigneesWithoutSchedulerCapabilityReturnsStableUnavailable_D17_AC31(t *testing.T) {
+	service := NewServiceWithDependencies(
+		reopenStoreStub{},
+		&schedulerSpy{},
+		time.Now,
+		func() (string, error) { return "unused", nil },
+	)
+
+	_, err := service.RecommendAssignees(context.Background(), "project", "task", schedulingdomain.AssigneeRecommendationInput{
+		RoleID:                       "role",
+		EffortMinutes:                480,
+		CapacityAllocationPercentage: 100,
+	})
+	if !errors.Is(err, schedulingdomain.ErrAssigneeRecommendationUnavailable) {
+		t.Fatalf("error=%v", err)
+	}
+}

@@ -39,6 +39,12 @@ export interface WBSGateway {
     id: string,
     input: ExecutableInput,
   ): Promise<void>;
+  recommendAssignees?(
+    projectId: string,
+    id: string,
+    input: AssigneeRecommendationInput,
+    signal?: AbortSignal,
+  ): Promise<AssigneeRecommendationResult>;
   previewExecutableSchedule(
     projectId: string,
     id: string,
@@ -92,4 +98,36 @@ export interface AllocationGroups {
   execution: AllocationRow[];
   commitment: AllocationRow[];
   actual: AllocationRow[];
+}
+
+export interface AssigneeRecommendationInput {
+  roleId: string;
+  effortHours: number;
+  lagDays: number;
+  capacityAllocationPercentage: number;
+  executionStart?: string;
+}
+
+export type AssigneeRecommendationMode = "automatic" | "manual-advisory";
+export type AssigneeRecommendationRankGroup =
+  "feasible" | "overcapacity" | "no-completion";
+
+export interface AssigneeRecommendationItem {
+  memberId: string;
+  memberName: string;
+  roleId: string;
+  rankGroup: AssigneeRecommendationRankGroup;
+  executionEnd?: string;
+  remainingExecutionCapacityHours: number;
+  incrementalOvercapacityHours: number;
+  reasonCode?: string;
+}
+
+export interface AssigneeRecommendationResult {
+  calculatedOnDate: string;
+  snapshot: {
+    projectScheduleVersions: Record<string, number>;
+  };
+  mode: AssigneeRecommendationMode;
+  items: AssigneeRecommendationItem[];
 }

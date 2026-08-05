@@ -27,6 +27,7 @@ import (
 	rolepostgres "github.com/banggok/sched_mind/backend/internal/roles/infrastructure/postgres"
 	schedulingapplication "github.com/banggok/sched_mind/backend/internal/scheduling/application"
 	schedulinggormrepo "github.com/banggok/sched_mind/backend/internal/scheduling/infrastructure/gormrepo"
+	"github.com/banggok/sched_mind/backend/internal/shared/identity"
 	sprintapplication "github.com/banggok/sched_mind/backend/internal/sprints/application"
 	sprintgormrepo "github.com/banggok/sched_mind/backend/internal/sprints/infrastructure/gormrepo"
 	teammemberapplication "github.com/banggok/sched_mind/backend/internal/teammembers/application"
@@ -158,7 +159,12 @@ func run(config *configuration) (runError error) {
 	projectRepository := projectgormrepo.New(database)
 	projectService := projectapplication.NewService(projectRepository, schedulingService)
 	wbsRepository := wbsgormrepo.New(database)
-	wbsService := wbsapplication.NewService(wbsRepository, schedulingService)
+	wbsService := wbsapplication.NewServiceWithDependencies(
+		wbsRepository,
+		schedulingService,
+		func() time.Time { return time.Now().In(config.location) },
+		identity.NewUUID,
+	)
 	dependencyRepository := dependencygormrepo.New(database)
 	dependencyService := dependencyapplication.NewService(dependencyRepository, schedulingService)
 	portfolioRepository := portfoliogormrepo.New(database)

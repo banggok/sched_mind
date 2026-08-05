@@ -12,7 +12,7 @@ symbols and automated evidence without redefining those rules.
 
 | Delta | Implemented scope |
 | --- | --- |
-| D1 | Persisted integer percentage, default/omission/reset, conversion, API, form, lifecycle, and allocation display. |
+| D1 | Persisted integer percentage, default/omission/preservation, conversion, API, form, lifecycle, and allocation display. |
 | D2 | Independently rounded daily limits, concurrent ordered allocation, safe blocker reconciliation, and priority-aware immutable manual allocation. |
 | D3 | Actual completion ignores planned percentage; Reopen returns to the persisted planned value. |
 | D4 | Actual-Date-only and Actual-versus-Actual allocation, progressive balancing, backfill, equalized overcapacity, and immutable prior Actual rows. |
@@ -29,8 +29,8 @@ Unless a narrower command is shown, backend evidence is executed by
 | AC-1 | `domain.New`; WBS mapping and migration default | `TestCapacityAllocationPercentageRangeAndDefault_US63_AC1_AC2` | `TestCreateTaskAcceptanceDefaultsCapacityPercentageAndSkipsUnneededScheduler_US63_AC1_US6_AC29_US4_AC23` |
 | AC-2 | `ValidateExecutable`; `parseCapacityAllocation`; form validation | `TestCapacityAllocationPercentageRangeAndDefault_US63_AC1_AC2`; `TestExecutableUpdateDistinguishesOmittedPercentageFromExplicitZero_US63_AC2_AC4` | WBS dialog invalid-value workflow prevents gateway mutation. |
 | AC-3 | migration `000022_add_task_capacity_allocation.up.sql` | PostgreSQL 16 startup migration passed against a schema at version 21 with a pre-feature Task; the row became `100` and its planned dates were unchanged. The guarded down migration also rejected a custom `50` value without dropping the column. | Live HTTP smoke test returned `capacityAllocationPercentage: 100` for the migrated Task and for a newly created WBS. |
-| AC-4 | HTTP raw-message distinction and repository preserve-existing behavior | `TestExecutableUpdateDistinguishesOmittedPercentageFromExplicitZero_US63_AC2_AC4`; `TestUpdateExecutablePreservesOmittedPercentageAndResetsOnAssigneeChange_US63_AC4_AC5` | Create HTTP acceptance plus update HTTP boundary test. |
-| AC-5 | repository Assignee reset and WBS draft reset | `TestUpdateExecutablePreservesOmittedPercentageAndResetsOnAssigneeChange_US63_AC4_AC5` | WBS dialog Assignee-change preview workflow verifies visible reset and current request. |
+| AC-4 | HTTP raw-message distinction and repository preserve-existing behavior | `TestExecutableUpdateDistinguishesOmittedPercentageFromExplicitZero_US63_AC2_AC4`; `TestUpdateExecutablePreservesPercentageOnFirstSelectionChangeAndClear_US65_AC13_AC14_AC15` | Create HTTP acceptance plus update HTTP boundary test. |
+| AC-5 | repository and WBS draft preserve the Task-level percentage on Assignee first-select/change/clear | `TestUpdateExecutablePreservesPercentageOnFirstSelectionChangeAndClear_US65_AC13_AC14_AC15` | `WBSDetailDialog assignee recommendation` component workflow verifies visible preservation and exact recommendation input. |
 | AC-6 | `taskDailyLimit` applies percentage after timeline capacity | `TestTaskDailyLimitRoundsHalfUpAndKeepsPositiveMinimum_US63_AC6_AC7` | Concurrent scheduling repository workflow persists rounded rows. |
 | AC-7 | `taskDailyLimit` zero/minimum branch | `TestTaskDailyLimitRoundsHalfUpAndKeepsPositiveMinimum_US63_AC6_AC7` | Allocation workflow observes positive `0.5h` minimum. |
 | AC-8 | ready sorting precedes daily limit allocation | `TestConcurrentSameAssigneeAllocationUsesDailyLimits_US63_AC9_AC11_AC15` | Automatic scheduling acceptance preserves Project/WBS order. |

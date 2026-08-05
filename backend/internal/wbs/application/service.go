@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	schedulingdomain "github.com/banggok/sched_mind/backend/internal/scheduling/domain"
 	"github.com/banggok/sched_mind/backend/internal/shared/identity"
 	"github.com/banggok/sched_mind/backend/internal/shared/schedulingimpact"
 	"github.com/banggok/sched_mind/backend/internal/wbs/domain"
@@ -77,6 +78,10 @@ type Store interface {
 	Delete(context.Context, string, string, time.Time, func(context.Context, string) error, func(context.Context, []string) error) error
 }
 
+type AssigneeRecommender interface {
+	RecommendAssignees(context.Context, schedulingdomain.AssigneeRecommendationInput) (*schedulingdomain.AssigneeRecommendationResult, error)
+}
+
 type Scheduler interface {
 	RecalculateProjectSchedule(context.Context, string) error
 	RecalculateProjectForecast(context.Context, string) error
@@ -89,20 +94,23 @@ func (NoopScheduler) RecalculateProjectForecast(context.Context, string) error {
 func (NoopScheduler) InvalidatePortfolio(context.Context, []string) error      { return nil }
 
 type Service struct {
-	store     Store
-	scheduler Scheduler
-	now       func() time.Time
-	newID     func() (string, error)
+	store       Store
+	scheduler   Scheduler
+	recommender AssigneeRecommender
+	now         func() time.Time
+	newID       func() (string, error)
 }
 
 func NewService(store Store, scheduler Scheduler) *Service {
 	if scheduler == nil {
 		scheduler = NoopScheduler{}
 	}
-	return &Service{store: store, scheduler: scheduler, now: func() time.Time { return time.Now().UTC() }, newID: identity.NewUUID}
+	recommender, _ := scheduler.(AssigneeRecommender)
+	return &Service{store: store, scheduler: scheduler, recommender: recommender, now: func() time.Time { return time.Now().UTC() }, newID: identity.NewUUID}
 }
 func NewServiceWithDependencies(store Store, scheduler Scheduler, now func() time.Time, newID func() (string, error)) *Service {
-	return &Service{store: store, scheduler: scheduler, now: now, newID: newID}
+	recommender, _ := scheduler.(AssigneeRecommender)
+	return &Service{store: store, scheduler: scheduler, recommender: recommender, now: now, newID: newID}
 }
 
 func (s *Service) Tree(ctx context.Context, projectID string) ([]domain.Node, error) {
@@ -185,6 +193,26 @@ func (s *Service) PreviewExecutableSchedule(ctx context.Context, p, id string, i
 	}
 	return value, nil
 }
+func (s *Service) RecommendAssignees(ctx context.Context, projectID, taskID string, input schedulingdomain.AssigneeRecommendationInput) (*schedulingdomain.AssigneeRecommendationResult, error) {
+	if s.recommender == nil {
+		return nil, schedulingdomain.ErrAssigneeRecommendationUnavailable
+	}
+	input.ProjectID = projectID
+	input.TaskID = taskID
+	input.CalculatedOn = s.now()
+	if err := input.Validate(); err != nil {
+		return nil, err
+	}
+	value, err := s.recommender.RecommendAssignees(ctx, input)
+	if err != nil {
+		return nil, fmt.Errorf("recommend assignees: %w", err)
+	}
+	if value == nil {
+		return nil, errors.New("recommend assignees: scheduler returned nil")
+	}
+	return value, nil
+}
+
 func (s *Service) Complete(ctx context.Context, p, id string, actualStart, actualEnd time.Time) (*domain.Node, error) {
 	ctx = schedulingimpact.WithOperation(ctx, p, schedulingimpact.ModeActualDate)
 	value, err := s.store.Complete(ctx, p, id, actualStart, actualEnd, s.now(), s.scheduler.InvalidatePortfolio)
