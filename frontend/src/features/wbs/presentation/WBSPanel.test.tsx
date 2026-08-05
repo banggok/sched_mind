@@ -65,7 +65,7 @@ function gateway(tree: WBSNode[]): WBSGateway {
     allocations: vi
       .fn()
       .mockResolvedValue({ execution: [], commitment: [], actual: [] }),
-    create: vi.fn().mockResolvedValue(undefined),
+    create: vi.fn().mockResolvedValue(node("created", "Created")),
     rename: vi.fn().mockResolvedValue(undefined),
     reorder: vi.fn().mockResolvedValue(undefined),
     move: vi.fn().mockResolvedValue(undefined),
@@ -199,6 +199,7 @@ describe("WBS direct Home action controller", () => {
     vi.mocked(options.membersGateway.list).mockClear();
     const group = node("group", "Development", [node("task", "Backend API")]);
     const api = gateway([group]);
+    const onMutated = vi.fn();
     const onClose = vi.fn();
     render(
       <WBSPanel
@@ -206,6 +207,7 @@ describe("WBS direct Home action controller", () => {
         gateway={api}
         {...options}
         initialNodeId="group"
+        onMutated={onMutated}
         onClose={onClose}
       />,
     );
@@ -219,7 +221,42 @@ describe("WBS direct Home action controller", () => {
     );
     expect(options.rolesGateway.list).not.toHaveBeenCalled();
     expect(options.membersGateway.list).not.toHaveBeenCalled();
+    expect(onMutated).toHaveBeenCalledWith("group");
+    expect(onMutated.mock.invocationCallOrder[0]).toBeLessThan(
+      onClose.mock.invocationCallOrder[0],
+    );
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not report a Group edit mutation when rename fails", async () => {
+    const group = node("group", "Development", [node("task", "Backend API")]);
+    const api = gateway([group]);
+    vi.mocked(api.rename).mockRejectedValue(
+      new Error("Group could not be updated. Try again."),
+    );
+    const onMutated = vi.fn();
+    const onClose = vi.fn();
+    render(
+      <WBSPanel
+        project={project}
+        gateway={api}
+        {...options}
+        initialNodeId="group"
+        onMutated={onMutated}
+        onClose={onClose}
+      />,
+    );
+
+    const dialog = await screen.findByRole("dialog", { name: "Development" });
+    const name = within(dialog).getByLabelText("Name");
+    fireEvent.change(name, { target: { value: "Delivery" } });
+    fireEvent.submit(name.closest("form")!);
+
+    expect(
+      await within(dialog).findByText("Group could not be updated. Try again."),
+    ).toBeTruthy();
+    expect(onMutated).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
   });
 
   it("opens Move to with destinations from the full authoritative tree", async () => {
@@ -228,6 +265,7 @@ describe("WBS direct Home action controller", () => {
       node("nested", "Nested"),
     ]);
     const api = gateway([source, destination]);
+    const onMutated = vi.fn();
     const onClose = vi.fn();
     render(
       <WBSPanel
@@ -235,6 +273,7 @@ describe("WBS direct Home action controller", () => {
         gateway={api}
         {...options}
         initialMoveNodeId="source"
+        onMutated={onMutated}
         onClose={onClose}
       />,
     );
@@ -254,6 +293,10 @@ describe("WBS direct Home action controller", () => {
         false,
       ),
     );
+    expect(onMutated).toHaveBeenCalledWith("source");
+    expect(onMutated.mock.invocationCallOrder[0]).toBeLessThan(
+      onClose.mock.invocationCallOrder[0],
+    );
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
@@ -268,6 +311,7 @@ describe("WBS direct Home action controller", () => {
       notifyConfirmedChange = listener;
       return () => undefined;
     };
+    const onMutated = vi.fn();
 
     render(
       <WBSPanel
@@ -275,6 +319,7 @@ describe("WBS direct Home action controller", () => {
         gateway={api}
         {...options}
         initialMoveNodeId="source"
+        onMutated={onMutated}
         onClose={() => undefined}
       />,
     );
@@ -294,6 +339,7 @@ describe("WBS direct Home action controller", () => {
       screen.getByText(/selected WBS item no longer exists/),
     ).not.toBeNull();
     expect(api.move).not.toHaveBeenCalled();
+    expect(onMutated).not.toHaveBeenCalled();
   });
 
   it("keeps the shared Group dialog read-only for a Locked Project", async () => {
@@ -360,8 +406,11 @@ describe("WBS direct Home action controller", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it("returns to Home after an Add Task request succeeds", async () => {
+  it("reports the created row identity before returning Home after Add Task", async () => {
     const api = gateway([]);
+    const created = node("new-task", "API");
+    vi.mocked(api.create).mockResolvedValue(created);
+    const onCreated = vi.fn();
     const onClose = vi.fn();
     render(
       <WBSPanel
@@ -369,6 +418,7 @@ describe("WBS direct Home action controller", () => {
         gateway={api}
         {...options}
         initialCreateParentId={null}
+        onCreated={onCreated}
         onClose={onClose}
       />,
     );
@@ -386,17 +436,83 @@ describe("WBS direct Home action controller", () => {
         false,
       ),
     );
+    expect(onCreated).toHaveBeenCalledWith(created);
+    expect(onCreated.mock.invocationCallOrder[0]).toBeLessThan(
+      onClose.mock.invocationCallOrder[0],
+    );
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not report a created row when Add Task fails or is cancelled", async () => {
+    const api = gateway([]);
+    vi.mocked(api.create).mockRejectedValue(
+      new Error("The Task could not be created. Try again."),
+    );
+    const onCreated = vi.fn();
+    const onClose = vi.fn();
+    render(
+      <WBSPanel
+        project={project}
+        gateway={api}
+        {...options}
+        initialCreateParentId={null}
+        onCreated={onCreated}
+        onClose={onClose}
+      />,
+    );
+
+    const dialog = await screen.findByRole("dialog", { name: "Add Task" });
+    fireEvent.change(within(dialog).getByLabelText("Name"), {
+      target: { value: "API" },
+    });
+    fireEvent.submit(within(dialog).getByLabelText("Name").closest("form")!);
+
+    expect(
+      await within(dialog).findByText(
+        "The Task could not be created. Try again.",
+      ),
+    ).toBeTruthy();
+    expect(onCreated).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(onCreated).not.toHaveBeenCalled();
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not report a created row when Add Task is dismissed with Escape", async () => {
+    const onCreated = vi.fn();
+    const onClose = vi.fn();
+    render(
+      <WBSPanel
+        project={project}
+        gateway={gateway([])}
+        {...options}
+        initialCreateParentId={null}
+        onCreated={onCreated}
+        onClose={onClose}
+      />,
+    );
+
+    const dialog = await screen.findByRole("dialog", { name: "Add Task" });
+    const name = within(dialog).getByLabelText("Name");
+    await waitFor(() => expect(document.activeElement).toBe(name));
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    expect(onCreated).not.toHaveBeenCalled();
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it("shows explicit conversion confirmation for direct Add Child", async () => {
     const task = node("task", "Backend API");
+    const created = node("converted-child", "API tests");
     const api = gateway([task]);
     vi.mocked(api.create)
       .mockRejectedValueOnce(
         new WBSOperationError("WBS_CONVERSION_REQUIRED", "technical message"),
       )
-      .mockResolvedValueOnce(undefined);
+      .mockResolvedValueOnce(created);
+    const onCreated = vi.fn();
     const onClose = vi.fn();
     render(
       <WBSPanel
@@ -404,6 +520,7 @@ describe("WBS direct Home action controller", () => {
         gateway={api}
         {...options}
         initialCreateParentId="task"
+        onCreated={onCreated}
         onClose={onClose}
       />,
     );
@@ -432,6 +549,7 @@ describe("WBS direct Home action controller", () => {
         true,
       ),
     );
+    expect(onCreated).toHaveBeenCalledWith(created);
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 });

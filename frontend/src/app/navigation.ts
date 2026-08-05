@@ -34,6 +34,13 @@ export const navigationItems = [
     group: "project",
     groupLabel: "Project",
   },
+  {
+    id: "sprints",
+    label: "Sprints",
+    href: "#sprints",
+    group: "project",
+    groupLabel: "Project",
+  },
 ] as const;
 
 export type ApplicationPage = (typeof navigationItems)[number]["id"];

@@ -5,7 +5,8 @@
 > presentation, canonical Home orchestration of Project/WBS actions, and removal
 > of the standalone Project Structure entry point. It does not replace the
 > mutation rules owned by US-3.1, US-3.3, US-4.1, US-4.2, US-5.1, US-6.1, or
-> US-6.2.
+> US-6.2. US-8.1 separately owns the Sprints destination under the Project
+> navigation group; Home remains the first/default route.
 >
 > **UX reference:** GanttPRO is a non-normative interaction reference for the
 > split project-grid/timeline layout, hierarchical rows, summary bars, dependency
@@ -137,25 +138,25 @@ Reference pages:
 
 ## 5. Terminology
 
-| Term | Definition |
-| --- | --- |
-| Home | Default application page containing the Portfolio Gantt Workspace. |
-| Portfolio Gantt | Combined read-only view of selected active Projects, their WBS rows, and schedule bars. |
-| Project Grid | Hierarchical left panel containing Project, Group, and Task rows and fixed data columns. |
-| Timeline | Right panel containing daily calendar columns, bars, and dependency arrows. |
-| Active Project | A Project with status Open or Locked. |
-| Selected Project | An active Project checked in the current Filter draft. |
-| Selected Role | A Task Role checked in the current Filter draft. |
-| Selected Projection | Either Execution or Commitment. |
-| Working-Day Anchor | Earliest complete scheduled Start among selected Projects for the selected projection. |
-| Visible Range | Calendar-date interval currently rendered in the timeline. |
-| System View | Non-persisted logical view `All Active Projects`. |
-| Saved Filter | Globally persisted name and selected active Project IDs. |
-| Configuration Draft | Current saved-filter, projection, Project, and Role selection inside the Configure Gantt modal. Project selection may differ from persisted saved-filter content until Save; Role selection is session-only. |
-| Row Actions | Icon-only quick creation and overflow controls rendered inside the Name cell and revealed on hover or keyboard focus. |
-| Restrictive Role Filter | Applied Role selection that does not include every currently available Role option, including `No role`; it may hide siblings. |
-| Move Up / Move Down | Adjacent-sibling reorder within the same parent; parent never changes. |
-| Move to | Existing WBS move operation that changes parent within the same Project and moves the complete subtree; user does not choose sibling position. |
+| Term                    | Definition                                                                                                                                                                                                   |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Home                    | Default application page containing the Portfolio Gantt Workspace.                                                                                                                                           |
+| Portfolio Gantt         | Combined read-only view of selected active Projects, their WBS rows, and schedule bars.                                                                                                                      |
+| Project Grid            | Hierarchical left panel containing Project, Group, and Task rows and fixed data columns.                                                                                                                     |
+| Timeline                | Right panel containing daily calendar columns, bars, and dependency arrows.                                                                                                                                  |
+| Active Project          | A Project with status Open or Locked.                                                                                                                                                                        |
+| Selected Project        | An active Project checked in the current Filter draft.                                                                                                                                                       |
+| Selected Role           | A Task Role checked in the current Filter draft.                                                                                                                                                             |
+| Selected Projection     | Either Execution or Commitment.                                                                                                                                                                              |
+| Working-Day Anchor      | Earliest complete scheduled Start among selected Projects for the selected projection.                                                                                                                       |
+| Visible Range           | Calendar-date interval currently rendered in the timeline.                                                                                                                                                   |
+| System View             | Non-persisted logical view `All Active Projects`.                                                                                                                                                            |
+| Saved Filter            | Globally persisted name and selected active Project IDs.                                                                                                                                                     |
+| Configuration Draft     | Current saved-filter, projection, Project, and Role selection inside the Configure Gantt modal. Project selection may differ from persisted saved-filter content until Save; Role selection is session-only. |
+| Row Actions             | Icon-only quick creation and overflow controls rendered inside the Name cell and revealed on hover or keyboard focus.                                                                                        |
+| Restrictive Role Filter | Applied Role selection that does not include every currently available Role option, including `No role`; it may hide siblings.                                                                               |
+| Move Up / Move Down     | Adjacent-sibling reorder within the same parent; parent never changes.                                                                                                                                       |
+| Move to                 | Existing WBS move operation that changes parent within the same Project and moves the complete subtree; user does not choose sibling position.                                                               |
 
 ---
 
@@ -172,6 +173,9 @@ Reference pages:
   selected.
 - The **Projects** page remains available for Project listing, search,
   pagination, Add Project, Project configuration, and lifecycle management.
+- The **Project** navigation group may also contain **Sprints** as owned by
+  US-8.1. This does not change Home as the first/default route or make Sprint a
+  Project child.
 - Project lifecycle actions are also available from eligible active Project rows
   on Home; both surfaces invoke the same application commands.
 - Remove the standalone **Project Structure** action, page, or panel from the
@@ -393,15 +397,15 @@ Columns appear in this order:
 
 ### 9.1 Column Semantics
 
-| Column | Project | Group | Task |
-| --- | --- | --- | --- |
-| WBS | Blank | Derived hierarchy number | Derived hierarchy number |
-| Task / Group Name | Project Name | Group Name | Task Name |
-| Role | Blank | Blank | Task Role or blank |
-| Assignee | Blank | Blank | Assignee Name or blank |
-| Effort | Recursive known Task Effort sum | Recursive known Task Effort sum | Direct Task Effort |
-| Start Date | Earliest recursive complete selected-projection Start | Earliest recursive complete selected-projection Start | Selected-projection Start |
-| End Date | Latest recursive complete selected-projection End | Latest recursive complete selected-projection End | Selected-projection End |
+| Column            | Project                                               | Group                                                 | Task                      |
+| ----------------- | ----------------------------------------------------- | ----------------------------------------------------- | ------------------------- |
+| WBS               | Blank                                                 | Derived hierarchy number                              | Derived hierarchy number  |
+| Task / Group Name | Project Name                                          | Group Name                                            | Task Name                 |
+| Role              | Blank                                                 | Blank                                                 | Task Role or blank        |
+| Assignee          | Blank                                                 | Blank                                                 | Assignee Name or blank    |
+| Effort            | Recursive known Task Effort sum                       | Recursive known Task Effort sum                       | Direct Task Effort        |
+| Start Date        | Earliest recursive complete selected-projection Start | Earliest recursive complete selected-projection Start | Selected-projection Start |
+| End Date          | Latest recursive complete selected-projection End     | Latest recursive complete selected-projection End     | Selected-projection End   |
 
 ### 9.2 Row Actions in Name
 
@@ -821,6 +825,15 @@ After a successful mutation:
 - include cross-Project transitive impacts from US-6.2;
 - preserve the applied saved filter, Project selection, Role selection, and
   unaffected expanded/collapsed rows where IDs still exist;
+- after Add Task or Add Child, use the confirmed created identity to reveal its
+  ancestor path, scroll the refreshed row into view, and move keyboard focus to
+  that row's Name action;
+- after a successful Project/Group/Task Edit, Move Up, Move Down, or Move to
+  that retains the entity, wait for the post-mutation projection, then reveal,
+  scroll to, and focus the retained ID's Name action;
+- when the preserved Role selection intentionally excludes that new row, move
+  focus to its nearest visible ancestor and resolve the focus request so a
+  later filter change cannot unexpectedly steal focus;
 - keep Home as the route and visible background;
 - do not hard reload the application;
 - do not let an older read response overwrite the confirmed mutation.
@@ -882,7 +895,6 @@ It selects every current Open and Locked Project.
   without confirmation because it is a low-impact local draft.
 - Discarding a draft never changes backend data.
 
-
 ### 17.4 Role Filter
 
 - Role options derive from Task Role IDs in the selected active Projects.
@@ -940,7 +952,7 @@ Rules:
 - Trim leading and trailing whitespace.
 - Reject empty normalized Name.
 - Name is unique case-insensitively.
-- `Team A`, `team a`, and ` TEAM A ` conflict.
+- `Team A`, `team a`, and `TEAM A` conflict.
 - Reserved system-view name `All Active Projects` and its case-insensitive
   normalized equivalent are rejected.
 - A practical maximum length must be enforced consistently by domain, database,
@@ -1371,15 +1383,15 @@ Keyboard users can:
     one date.
 56. Task bar spans intervening non-working dates without claiming daily
     allocation.
-56A. Same-date Finish-to-Start chains render ordered non-overlapping slots in
-     the shared date cell; the slots show sequence rather than exact hours.
+    56A. Same-date Finish-to-Start chains render ordered non-overlapping slots in
+    the shared date cell; the slots show sequence rather than exact hours.
 57. Project/Group use visually and semantically distinct read-only summary bars.
 58. No bar can be dragged, resized, or edited regardless of Automatic Scheduling
     state.
 59. Effective dependencies display as one read-only arrow per endpoint pair.
-59A. A same-date dependency arrow connects forward from predecessor end to
-     successor start and does not visually imply that the successor starts
-     before the predecessor finishes.
+    59A. A same-date dependency arrow connects forward from predecessor end to
+    successor start and does not visually imply that the successor starts
+    before the predecessor finishes.
 60. Manual/automatic/shared source is accessible and does not create duplicate
     arrows.
 61. Hidden, collapsed, filtered, unscheduled, or out-of-range endpoints produce
@@ -1572,6 +1584,14 @@ Keyboard users can:
   scheduled/unscheduled state.
 - Public Holiday and dependency source are understandable without colour.
 - Focus survives projection refresh when the focused entity still exists.
+- Successful Add Task/Add Child focuses the newly created row after that row is
+  available in the refreshed projection, including outside the current virtual
+  row window.
+- Successful Edit, Move Up/Down, and Move to focus the retained row Name only
+  after the confirmed post-mutation projection is rendered; the stale row or
+  disabled overflow trigger is not accepted as focus evidence.
+- A Role filter that excludes the new row preserves its selection, focuses the
+  nearest visible ancestor, and leaves no pending focus request.
 
 ---
 

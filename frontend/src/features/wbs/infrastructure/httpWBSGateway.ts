@@ -82,11 +82,33 @@ export function createHTTPWBSGateway(baseURL: string): WBSGateway {
       return mapAllocationGroups(data);
     },
     create: async (projectId, parentId, name, confirmConversion) => {
-      await request(
-        path(projectId),
+      const response = await schedulingImpactFetch(
+        `${baseURL}${path(projectId)}`,
         json("POST", { parentId, name, confirmConversion }),
       );
+      if (!response.ok) {
+        const body: unknown = await response.json().catch(() => undefined);
+        throw operationError(body);
+      }
+
+      // The command may already be persisted even when its response cannot be
+      // decoded. Invalidate before parsing so Home and WBS cannot retain stale
+      // projections after a confirmed success.
       invalidateAll(true);
+      const payload: unknown = await response.json();
+      if (!isRecord(payload) || !("data" in payload)) {
+        throw new Error(invalidResponseMessage);
+      }
+      const created = mapNode(payload.data);
+      const expectedParentID = parentId ?? undefined;
+      if (
+        created.id.trim() === "" ||
+        created.projectId !== projectId ||
+        created.parentId !== expectedParentID
+      ) {
+        throw new Error(invalidResponseMessage);
+      }
+      return created;
     },
     rename: async (projectId, id, name) => {
       await request(`${path(projectId)}/${id}`, json("PUT", { name }));

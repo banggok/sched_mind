@@ -222,8 +222,11 @@ adalah task yang WBS level `0` atau Project root-nya belum berstatus `Closed`.
 Jika minimal satu active-assignment projection tersedia, penghapusan ditolak
 untuk menjaga pekerjaan aktif.
 
-Jika tidak memiliki task aktif, Team Member dan seluruh Capacity Override
-miliknya di-soft-delete dalam satu transaksi. Assignment dan persisted timeline
+Jika tidak memiliki task aktif, Team Member, seluruh Capacity Override miliknya,
+dan seluruh relasi Sprint Member di-soft-delete/dihapus dalam satu transaksi.
+Sprint membership saja tidak boleh memblokir penghapusan Member. Sprint Task
+yang tetap tersimpan tidak dihapus; pada pembacaan Sprint berikutnya Task tersebut
+mengikuti warning `Needs Review` milik US-8.1. Assignment dan persisted timeline
 untuk Project yang sudah `Closed` tetap dipertahankan. Nama Team Member yang
 soft-deleted boleh digunakan kembali. Restore belum termasuk scope.
 
@@ -546,7 +549,7 @@ dapat menghalangi penghapusan
 
 **Given** Team Member tidak memiliki task aktif
 **When** Engineering Lead mengonfirmasi penghapusan
-**Then** sistem melakukan soft delete pada Team Member dan seluruh Capacity Override miliknya dalam satu transaksi
+**Then** sistem melakukan soft delete pada Team Member dan seluruh Capacity Override miliknya serta menghapus seluruh relasi Sprint Member dalam satu transaksi
 **And** Team Member tidak lagi muncul dalam daftar
 **And** sistem menampilkan notifikasi keberhasilan.
 
@@ -573,7 +576,7 @@ Team member is assigned to one or more tasks and cannot be deleted
 **Given** Team Member tidak memiliki task aktif dan memiliki Capacity Override
 **When** Engineering Lead mengonfirmasi penghapusan
 **Then** sistem menerima penghapusan
-**And** Team Member serta seluruh Capacity Override miliknya di-soft-delete secara atomik
+**And** Team Member serta seluruh Capacity Override miliknya di-soft-delete dan seluruh relasi Sprint Member dihapus secara atomik
 **And** data tersebut tidak tersedia pada operational list, detail, selector, atau scheduling input baru.
 
 ---
@@ -1324,7 +1327,8 @@ Team Member tidak memiliki task aktif dan boleh memiliki Capacity Override.
 
 1. API mengembalikan `204`.
 2. Team Member dan seluruh Capacity Override miliknya di-soft-delete.
-3. Team Member tidak muncul pada daftar.
+3. Seluruh relasi Sprint Member miliknya dihapus tanpa menghapus Sprint Task.
+4. Team Member tidak muncul pada daftar.
 
 ---
 
@@ -1374,7 +1378,8 @@ Harry memiliki minimal satu Capacity Override.
 
 1. API mengembalikan `204`.
 2. Harry dan seluruh Capacity Override miliknya tidak tersedia pada operational query.
-3. Unscoped historical persistence mempertahankan Member dan Override beserta deletion timestamp.
+3. Seluruh relasi Sprint Member Harry dihapus; retained Sprint Task mengikuti Needs Review pada US-8.1.
+4. Unscoped historical persistence mempertahankan Member dan Override beserta deletion timestamp.
 
 ---
 

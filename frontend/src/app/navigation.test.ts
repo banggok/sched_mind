@@ -20,6 +20,12 @@ describe("application navigation", () => {
       label: "Projects",
       groupLabel: "Project",
     });
+    expect(getNavigationItem("sprints")).toMatchObject({
+      label: "Sprints",
+      href: "#sprints",
+      groupLabel: "Project",
+    });
+    expect(navigationItems[0]?.id).toBe("home");
     expect(new Set(navigationItems.map((item) => item.groupLabel))).toEqual(
       new Set(["Home", "Team Configuration", "Project"]),
     );

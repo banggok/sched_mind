@@ -26,7 +26,11 @@ import { createHTTPPortfolioGateway } from "../features/portfolio/infrastructure
 import {
   PortfolioHomePage,
   type HomeProjectCommandKind,
+  type HomeRowFocusRequest,
 } from "../features/portfolio/presentation/PortfolioHomePage";
+import { createHTTPSprintsGateway } from "../features/sprints/infrastructure/httpSprintsGateway";
+import { SprintsPage } from "../features/sprints/presentation/SprintsPage";
+import { currentScheduleProjectionVersion } from "../shared/infrastructure/scheduleProjectionClock";
 
 const apiBaseURL = requiredEnvironment(
   "VITE_API_BASE_URL",
@@ -39,6 +43,7 @@ const projectsGateway = createHTTPProjectsGateway(apiBaseURL);
 const wbsGateway = createHTTPWBSGateway(apiBaseURL);
 const dependenciesGateway = createHTTPDependenciesGateway(apiBaseURL);
 const portfolioGateway = createHTTPPortfolioGateway(apiBaseURL);
+const sprintsGateway = createHTTPSprintsGateway(apiBaseURL);
 const rolesGateway = createHTTPRolesGateway(
   apiBaseURL,
   teamMembersGateway.invalidateListCache,
@@ -51,15 +56,19 @@ type WBSRequest = {
   createParentId?: string | null;
   moveNodeId?: string;
 };
+type ProjectEditRequest = { key: number; project: Project };
 
 export function App() {
   const [route, setRoute] = useState(window.location.hash);
   const [capacityMember, setCapacityMember] = useState<TeamMember>();
   const [wbsRequest, setWBSRequest] = useState<WBSRequest>();
-  const [projectToEdit, setProjectToEdit] = useState<Project>();
+  const [projectToEdit, setProjectToEdit] = useState<ProjectEditRequest>();
   const [projectCommand, setProjectCommand] = useState<ProjectCommandState>();
+  const [homeRowFocusRequest, setHomeRowFocusRequest] =
+    useState<HomeRowFocusRequest>();
   const [homeOverlayError, setHomeOverlayError] = useState("");
   const overlayRequestVersion = useRef(0);
+  const homeRowFocusRequestVersion = useRef(0);
   const activePageRef = useRef<ApplicationPage>("home");
   useEffect(() => {
     const updateRoute = () => setRoute(window.location.hash);
@@ -70,16 +79,7 @@ export function App() {
       window.removeEventListener("popstate", updateRoute);
     };
   }, []);
-  const activePage: ApplicationPage =
-    route === "#projects"
-      ? "projects"
-      : route === "#team-members"
-        ? "team-members"
-        : route === "#public-holidays"
-          ? "public-holidays"
-          : route === "#roles"
-            ? "roles"
-            : "home";
+  const activePage = applicationPageForRoute(route);
 
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0, behavior: "auto" });
@@ -89,6 +89,7 @@ export function App() {
       setProjectToEdit(undefined);
       setProjectCommand(undefined);
       setWBSRequest(undefined);
+      setHomeRowFocusRequest(undefined);
       setHomeOverlayError("");
     }
   }, [activePage]);
@@ -98,7 +99,7 @@ export function App() {
     try {
       const project = await projectsGateway.get(projectID);
       if (!isCurrentHomeOverlayRequest(requestVersion)) return;
-      setProjectToEdit(project);
+      setProjectToEdit({ key: requestVersion, project });
     } catch {
       showHomeOverlayLoadFailure(requestVersion);
     }
@@ -144,17 +145,39 @@ export function App() {
     setProjectToEdit(undefined);
     setProjectCommand(undefined);
     setWBSRequest(undefined);
+    setHomeRowFocusRequest(undefined);
     return requestVersion;
   }
   function isCurrentHomeOverlayRequest(requestVersion: number): boolean {
     return (
       requestVersion === overlayRequestVersion.current &&
-      activePageRef.current === "home"
+      activePageRef.current === "home" &&
+      applicationPageForRoute(window.location.hash) === "home"
     );
   }
   function showHomeOverlayLoadFailure(requestVersion: number) {
     if (!isCurrentHomeOverlayRequest(requestVersion)) return;
     setHomeOverlayError("The selected Project could not be loaded. Try again.");
+  }
+  function focusHomeRow(rowId: string, minimumProjectionVersion?: number) {
+    const key = homeRowFocusRequestVersion.current + 1;
+    homeRowFocusRequestVersion.current = key;
+    setHomeRowFocusRequest({ key, rowId, minimumProjectionVersion });
+  }
+  function finishHomeOverlayRequest(
+    requestVersion: number,
+    rowId?: string,
+    waitForConfirmedProjection = false,
+  ) {
+    if (!isCurrentHomeOverlayRequest(requestVersion)) return;
+    overlayRequestVersion.current += 1;
+    if (rowId)
+      focusHomeRow(
+        rowId,
+        waitForConfirmedProjection
+          ? currentScheduleProjectionVersion()
+          : undefined,
+      );
   }
 
   return (
@@ -168,6 +191,19 @@ export function App() {
             void openProjectCommand(kind, projectID)
           }
           onOpenWBS={(request) => void openWBS(request)}
+          focusRequest={homeRowFocusRequest}
+          onFocusRequestHandled={(key) =>
+            setHomeRowFocusRequest((current) =>
+              current?.key === key ? undefined : current,
+            )
+          }
+        />
+      ) : activePage === "sprints" ? (
+        <SprintsPage
+          gateway={sprintsGateway}
+          membersGateway={teamMembersGateway}
+          wbsGateway={wbsGateway}
+          loadPublicHolidayDates={publicHolidaysGateway.calendar}
         />
       ) : activePage === "projects" ? (
         <ProjectsPage
@@ -212,17 +248,48 @@ export function App() {
           initialNodeId={wbsRequest.nodeId}
           initialCreateParentId={wbsRequest.createParentId}
           initialMoveNodeId={wbsRequest.moveNodeId}
-          onClose={() => setWBSRequest(undefined)}
+          onCreated={(node) => {
+            finishHomeOverlayRequest(wbsRequest.key, node.id, true);
+          }}
+          onMutated={(nodeId) => {
+            finishHomeOverlayRequest(wbsRequest.key, nodeId, true);
+          }}
+          onClose={() => {
+            finishHomeOverlayRequest(
+              wbsRequest.key,
+              wbsRequest.nodeId ?? wbsRequest.moveNodeId,
+            );
+            setWBSRequest((current) =>
+              current?.key === wbsRequest.key ? undefined : current,
+            );
+          }}
         />
       ) : null}
       {activePage === "home" && projectToEdit ? (
         <ProjectsPage
           gateway={projectsGateway}
           dialogOnly
-          initialEditProject={projectToEdit}
+          initialEditProject={projectToEdit.project}
           returnPageOnClose="home"
-          onReturnToPage={() => setProjectToEdit(undefined)}
-          onOverlayComplete={() => setProjectToEdit(undefined)}
+          onReturnToPage={() => {
+            finishHomeOverlayRequest(
+              projectToEdit.key,
+              projectToEdit.project.id,
+            );
+            setProjectToEdit((current) =>
+              current?.key === projectToEdit.key ? undefined : current,
+            );
+          }}
+          onOverlayComplete={() => {
+            finishHomeOverlayRequest(
+              projectToEdit.key,
+              projectToEdit.project.id,
+              true,
+            );
+            setProjectToEdit((current) =>
+              current?.key === projectToEdit.key ? undefined : current,
+            );
+          }}
           loadPublicHolidayDates={publicHolidaysGateway.calendar}
           renderProjectSummary={(project) => (
             <ProjectWBSSummary
@@ -258,4 +325,18 @@ function requiredEnvironment(name: string, value: string | undefined): string {
     throw new Error(`${name} environment variable is required`);
   }
   return value.replace(/\/+$/, "");
+}
+
+function applicationPageForRoute(route: string): ApplicationPage {
+  return route === "#sprints"
+    ? "sprints"
+    : route === "#projects"
+      ? "projects"
+      : route === "#team-members"
+        ? "team-members"
+        : route === "#public-holidays"
+          ? "public-holidays"
+          : route === "#roles"
+            ? "roles"
+            : "home";
 }

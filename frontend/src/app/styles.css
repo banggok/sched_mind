@@ -24,6 +24,8 @@
   --color-danger-soft: #fff1f2;
   --color-success: #047857;
   --color-success-soft: #ecfdf5;
+  --color-warning: #92400e;
+  --color-warning-soft: #fffbeb;
   --color-status-online: #34d399;
   --color-status-offline: #f43f5e;
   --radius-action: 0.5rem;

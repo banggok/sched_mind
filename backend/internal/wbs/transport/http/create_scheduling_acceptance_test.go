@@ -39,6 +39,12 @@ type createAcceptanceWBSRecord struct {
 
 func (createAcceptanceWBSRecord) TableName() string { return "wbs_nodes" }
 
+type createAcceptanceDependencyRecord struct {
+	ID, BlockingTaskID, BlockedTaskID string
+}
+
+func (createAcceptanceDependencyRecord) TableName() string { return "task_dependencies" }
+
 type createSchedulerSpy struct {
 	scheduleCalls   int
 	forecastCalls   int
@@ -176,5 +182,81 @@ func TestCreateTaskAcceptanceDefaultsCapacityPercentageAndSkipsUnneededScheduler
 	}
 	if completed.ActualEnd == nil || !completed.ActualEnd.Equal(actualEnd) {
 		t.Fatalf("completed Task changed: %#v", completed)
+	}
+}
+
+func TestDeleteTaskAcceptanceRemovesOnlyItsSprintRelationsAtomically_US81_AC56(t *testing.T) {
+	database, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.AutoMigrate(&createAcceptanceProjectRecord{}, &createAcceptanceWBSRecord{}, &createAcceptanceDependencyRecord{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Exec("PRAGMA foreign_keys = ON").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Exec(`CREATE TABLE sprint_tasks (
+		sprint_id TEXT NOT NULL,
+		task_id TEXT NOT NULL REFERENCES wbs_nodes(id) ON DELETE CASCADE,
+		PRIMARY KEY (sprint_id, task_id)
+	)`).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Date(2026, 8, 4, 9, 0, 0, 0, time.UTC)
+	if err := database.Create(&createAcceptanceProjectRecord{ID: "project", Status: "open"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	nodes := []createAcceptanceWBSRecord{
+		{ID: "retained", ProjectID: "project", Name: "Retained", NameKey: "retained", Position: 1, CreatedAt: now, UpdatedAt: now},
+		{ID: "deleted", ProjectID: "project", Name: "Deleted", NameKey: "deleted", Position: 2, CreatedAt: now, UpdatedAt: now},
+	}
+	if err := database.Create(&nodes).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Exec("INSERT INTO sprint_tasks (sprint_id, task_id) VALUES (?, ?), (?, ?)", "sprint-1", "retained", "sprint-1", "deleted").Error; err != nil {
+		t.Fatal(err)
+	}
+
+	service := application.NewServiceWithDependencies(
+		wbsgormrepo.New(database),
+		application.NoopScheduler{},
+		func() time.Time { return now.Add(time.Hour) },
+		func() (string, error) { return "unused", nil },
+	)
+	mux := http.NewServeMux()
+	New(service).Register(mux)
+	request := httptest.NewRequest(http.MethodDelete, "/api/projects/project/wbs/deleted", nil)
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+
+	var count int64
+	if err := database.Model(&createAcceptanceWBSRecord{}).Where("id = ?", "deleted").Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("deleted Task count=%d", count)
+	}
+	if err := database.Table("sprint_tasks").Where("task_id = ?", "deleted").Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("deleted Task Sprint relation count=%d", count)
+	}
+	if err := database.Model(&createAcceptanceWBSRecord{}).Where("id = ?", "retained").Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("retained Task count=%d, want 1", count)
+	}
+	if err := database.Table("sprint_tasks").Where("task_id = ?", "retained").Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("retained Task Sprint relation count=%d, want 1", count)
 	}
 }

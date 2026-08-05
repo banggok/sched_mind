@@ -143,6 +143,7 @@ WBS commands.
 - Delete is a hard delete for a leaf that has no descendants and is allowed only while the Project is Open, subject to completed-task restrictions.
 - Deleting a leaf may cause its parent to have no remaining children; that parent then automatically becomes an Executable WBS.
 - Deleting a WBS must not cascade-delete descendants because deletion of a node with descendants is prohibited.
+- Hard-deleting an eligible leaf Task removes every Sprint Task relation for that Task in the same transaction. This relation cleanup does not delete or mutate any Sprint and does not change scheduler-impact eligibility.
 - When Automatic Scheduling is ON, confirmed deletion triggers the concrete portfolio scheduler from US-6.1 only when the deleted Task has scheduling impact: Assignee, Effort, non-zero Lag, generated Execution/Commitment state, an automatic unscheduled projection, or dependency endpoints. Deleting a Name-only or Role-only unfinished Task with no dependency does not invoke scheduling. The presence of completed Tasks elsewhere in the Project does not change this trigger rule.
 - When Automatic Scheduling is OFF, remaining manual dates stay unchanged.
 
@@ -186,6 +187,7 @@ WBS commands.
 33. Move to changes parent only, offers no sibling-position input, and resolves all valid destinations from the full authoritative Project tree.
 34. A completed Task in an Open Project may be reordered or moved under existing BAU, but cannot Add Child or Delete; its executable data and Actual Date remain immutable.
 35. Active WBS acceptance-level tests exercise `Home → row action/dialog → confirm → refreshed Home` and prove that no Projects/Project Structure background navigation occurs.
+36. Successful eligible Task deletion atomically removes every Sprint Task relation for that Task; any delete failure preserves both the Task and its Sprint relations.
 
 ---
 
@@ -208,6 +210,7 @@ WBS commands.
 - Delete a Name-only unfinished leaf from a Project that also contains a completed Task and verify deletion succeeds without scheduler invocation or changes to remaining Task state.
 - Delete a Task with scheduling input, generated projection, or dependency endpoints while Automatic Scheduling is ON and verify affected Execution/Commitment dates are recalculated.
 - Delete with Automatic Scheduling OFF and verify remaining manual dates are unchanged.
+- Delete a Task associated with Planned and Started Sprints and verify all Sprint Task relations are removed in the same transaction without deleting either Sprint.
 - Edit executable attributes, including Capacity Allocation Percentage.
 - Enter complete Actual Date and verify allocation.
 
@@ -233,7 +236,7 @@ WBS commands.
 - Executable-to-Grouping conversion preserves executable data in the first child.
 - Grouping-to-Executable conversion does not invent executable field values.
 - Actual Start and Actual End persist atomically.
-- Failed move or delete leaves hierarchy and dates unchanged.
+- Failed move or delete leaves hierarchy, dates, and Sprint Task relations unchanged.
 - Older in-flight list/tree responses cannot restore stale hierarchy after mutation.
 
 ---
@@ -373,7 +376,8 @@ Delete invokes scheduling only when the removed Task has scheduling input,
 generated projection, or dependency endpoints. Deleting a Name-only or
 Role-only unfinished Task without dependencies is a pure structural mutation:
 it hard-deletes the leaf, compacts sibling positions, and leaves existing Task,
-dependency, allocation, and timeline state unchanged. Rename and Role-only
+dependency, allocation, and timeline state unchanged, while any Sprint Task
+relations for the deleted Task are removed atomically. Rename and Role-only
 changes do not invoke scheduling when Assignee is unchanged. Cancelled, failed,
 and manual-mode mutations do not invoke it. Actual Date and Reopen Task follow
 the US-6.2 cross-project impact/recalculation contract. WBS mutation and required scheduling must
@@ -452,6 +456,7 @@ the WBS feature.
   destination from the authoritative full tree.
 - Completed Task may reorder/move but cannot Add Child/Delete.
 - Delete remains confirmed and backend-authoritative.
+- Successful eligible Task deletion atomically removes Sprint Task relations owned by US-8.1; rollback preserves both Task and relations.
 - No acceptance workflow navigates through or renders the removed Project
   Structure page.
 

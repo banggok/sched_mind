@@ -115,6 +115,7 @@ const icons: Record<ApplicationPage, ReactNode> = {
   "team-members": <TeamMembersIcon />,
   "public-holidays": <CalendarIcon />,
   projects: <ProjectIcon />,
+  sprints: <SprintIcon />,
 };
 
 function HomeIcon() {
@@ -147,6 +148,23 @@ function ProjectIcon() {
     >
       <path d="M4 6.5h6l2 2h8v10H4z" />
       <path d="M4 9h16" />
+    </svg>
+  );
+}
+
+function SprintIcon() {
+  return (
+    <svg
+      className="size-5"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <rect x="4" y="4" width="16" height="16" rx="3" />
+      <path d="M8 2v4M16 2v4M4 9h16M8 13h3M8 17h6" />
     </svg>
   );
 }

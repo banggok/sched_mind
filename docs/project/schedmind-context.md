@@ -31,6 +31,11 @@ future context are not permission to implement them.
 > evidence. Detailed traceability is maintained in
 > [`task-capacity-allocation-implementation-evidence.md`](task-capacity-allocation-implementation-evidence.md).
 
+> **Approved Sprint target — 2026-08-03:** US-8.1 adds standalone Sprint
+> grouping under the Project navigation group. Sprint persists selected Members
+> and Tasks, reads live Execution capacity/allocation, and never changes the
+> scheduler, Project, WBS, Task, or capacity source data.
+
 The current product manages:
 
 - Roles used to classify Members and Tasks;
@@ -59,6 +64,7 @@ Detailed rules are owned by:
 - [US-6.2 Locked Project and Completed Task Scheduling](../../user_story/US-6.2-locked-project-and-completed-task-scheduling.md)
 - [US-6.3 Task Capacity Allocation Percentage](../../user_story/US-6.3-task-capacity-allocation.md)
 - [US-7.1 Home Portfolio Gantt Workspace](../../user_story/US-7.1-home-portfolio-gantt.md)
+- [US-8.1 Manage Sprints](../../user_story/US-8.1-manage-sprints.md)
 
 The primary product actor in these stories is the Engineering Lead.
 
@@ -69,6 +75,21 @@ It composes selected Open/Locked Projects in a read-only daily Gantt, invokes
 the shared Project, Group, Task, Add Task, Add Child, and lifecycle dialogs
 directly over Home, and persists globally named Project-selection filters. The
 standalone Project Structure action is not a current navigation surface.
+
+## Sprint planning
+
+US-8.1 defines Sprint as a standalone grouping aggregate. Its location under the
+visible Project navigation group does not make it a Project or Portfolio child.
+A Sprint stores date boundaries, Planned/Started metadata, selected Member IDs,
+and selected Task IDs. Capacity and Task Execution allocation remain live
+projections from their existing authoritative sources. Sprint suggestion must
+include every eligible unfinished scheduled Task for a selected Member whose
+Execution End is on or before Sprint End, even when overcapacity results, then
+fill remaining in-period capacity from later Tasks deterministically. Sprint
+never reserves capacity, invokes scheduling, or changes Project/WBS/Task data.
+Saved Task membership survives schedule drift; invalid current conditions are
+shown under Needs Review instead of being removed silently. Same-Member Sprint
+date ranges cannot overlap inclusively. Exact behaviour belongs to US-8.1.
 
 ## Terminology and current invariants
 
@@ -220,3 +241,9 @@ without routing through Projects or a Project Structure background. Saved
 Project filters are global backend data and are presented by name because the
 product has no login or user identity in current scope. Exact Home behaviour
 belongs to US-7.1.
+
+Sprints are accessed under the visible Project navigation group beside Projects.
+This menu grouping is navigational only. Sprint List, the two-step modal
+Details/Members form, and the main-page Task Review workspace belong to US-8.1;
+Home remains the root page. Task Review groups by Member, then renders Project
+as level `0` with the authoritative WBS hierarchy down to selected Tasks.

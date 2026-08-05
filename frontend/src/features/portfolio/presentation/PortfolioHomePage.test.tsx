@@ -1,7 +1,15 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import axe from "axe-core";
 import { describe, expect, it, vi } from "vitest";
+import { advanceScheduleProjectionVersion } from "../../../shared/infrastructure/scheduleProjectionClock";
 import type { WBSGateway } from "../../wbs/application/wbsGateway";
 import type { PortfolioGateway } from "../application/portfolioGateway";
 import type {
@@ -215,6 +223,14 @@ async function findPortfolioRow(
   );
   if (!row) throw new Error(`Portfolio row ${rowID} not found`);
   return row;
+}
+
+function deferred<Value>() {
+  let resolve!: (value: Value | PromiseLike<Value>) => void;
+  const promise = new Promise<Value>((next) => {
+    resolve = next;
+  });
+  return { promise, resolve };
 }
 
 describe("US-7.1 Home portfolio Gantt acceptance workflow", () => {
@@ -588,6 +604,411 @@ describe("US-7.1 Home portfolio Gantt acceptance workflow", () => {
         .getByRole("treegrid", { name: "Portfolio schedule rows" })
         .getAttribute("aria-rowcount"),
     ).toBe("201");
+  });
+
+  it.each([
+    {
+      action: "Move Up",
+      direction: "up",
+      adjacentIndex: 99,
+      expectedWBS: "100",
+    },
+    {
+      action: "Move Down",
+      direction: "down",
+      adjacentIndex: 101,
+      expectedWBS: "102",
+    },
+  ] as const)(
+    "IFD-HOME-FOCUS-05 waits for the reordered projection before focusing the row after $action",
+    async ({ action, direction, adjacentIndex, expectedWBS }) => {
+      const user = userEvent.setup();
+      const projectRow: PortfolioProjectionResult["rows"][number] = {
+        id: "alpha",
+        projectId: "alpha",
+        kind: "project",
+        name: "Alpha",
+        wbsNumber: "",
+        depth: 0,
+        position: 0,
+        status: "open",
+        incompleteEffort: false,
+        incompleteSchedule: true,
+        hasChildren: true,
+        completed: false,
+      };
+      const taskRows: PortfolioProjectionResult["rows"] = Array.from(
+        { length: 200 },
+        (_, index) => ({
+          id: `task-${index}`,
+          projectId: "alpha",
+          kind: "task" as const,
+          name: `Task ${index}`,
+          wbsNumber: String(index + 1),
+          depth: 1,
+          position: index + 1,
+          incompleteEffort: true,
+          incompleteSchedule: true,
+          hasChildren: false,
+          completed: false,
+        }),
+      );
+      const largeRows = [projectRow, ...taskRows];
+      const swappedTasks = [...taskRows];
+      [swappedTasks[100], swappedTasks[adjacentIndex]] = [
+        swappedTasks[adjacentIndex],
+        swappedTasks[100],
+      ];
+      const reorderedRows = [
+        projectRow,
+        ...swappedTasks.map((row, index) => ({
+          ...row,
+          position: index + 1,
+          wbsNumber: String(index + 1),
+        })),
+      ];
+      const refreshedProjection = deferred<PortfolioProjectionResult>();
+      const portfolioGateway = gateway();
+      vi.mocked(portfolioGateway.projection)
+        .mockResolvedValueOnce({
+          projection: "execution",
+          projects: [projects[0]],
+          rows: largeRows.map((row) => ({ ...row })),
+          dependencies: [],
+          holidays: [],
+        })
+        .mockImplementation(() => refreshedProjection.promise);
+      const structureGateway = wbsGateway();
+      vi.mocked(structureGateway.reorder).mockImplementation(async () => {
+        advanceScheduleProjectionVersion();
+      });
+      const { container } = render(
+        <PortfolioHomePage
+          gateway={portfolioGateway}
+          wbsGateway={structureGateway}
+          onOpenProject={vi.fn()}
+          onProjectCommand={vi.fn()}
+          onOpenWBS={vi.fn()}
+        />,
+      );
+
+      await screen.findByRole("button", { name: "Task 0" });
+      const timeline = screen.getByRole("region", {
+        name: "Scrollable portfolio timeline",
+      });
+      Object.defineProperty(timeline, "clientHeight", {
+        configurable: true,
+        value: 320,
+      });
+      timeline.scrollTop = 4_000;
+      fireEvent.scroll(timeline);
+
+      const targetRow = await findPortfolioRow(container, "task-100");
+      await user.click(
+        within(targetRow).getByRole("button", {
+          name: "More actions for Task 100",
+        }),
+      );
+      await user.click(
+        within(
+          screen.getByRole("menu", { name: "Actions for Task 100" }),
+        ).getByRole("menuitem", { name: action }),
+      );
+
+      await waitFor(() =>
+        expect(structureGateway.reorder).toHaveBeenCalledWith(
+          "alpha",
+          "task-100",
+          direction,
+        ),
+      );
+      const oldTrigger = within(targetRow).getByRole("button", {
+        name: "More actions for Task 100",
+      });
+      screen.getByRole("button", { name: "Configure Gantt" }).focus();
+      expect(document.activeElement).not.toBe(oldTrigger);
+      await waitFor(() =>
+        expect(
+          vi.mocked(portfolioGateway.projection).mock.calls.length,
+        ).toBeGreaterThan(1),
+      );
+
+      await act(async () => {
+        refreshedProjection.resolve({
+          projection: "execution",
+          projects: [projects[0]],
+          rows: reorderedRows,
+          dependencies: [],
+          holidays: [],
+        });
+        await refreshedProjection.promise;
+      });
+      const refreshedRow = await findPortfolioRow(container, "task-100");
+      const refreshedName = within(refreshedRow).getByRole("button", {
+        name: "Task 100",
+      });
+      const treegrid = screen.getByRole("treegrid", {
+        name: "Portfolio schedule rows",
+      });
+
+      await waitFor(() => {
+        expect(timeline.scrollTop).toBe(4_000);
+        expect(treegrid.parentElement?.scrollTop).toBe(4_000);
+        expect(
+          within(refreshedRow).getAllByRole("gridcell")[0].textContent,
+        ).toBe(expectedWBS);
+        expect(document.activeElement).toBe(refreshedName);
+        expect(document.activeElement).not.toBe(oldTrigger);
+        expect(document.activeElement?.closest("[data-portfolio-row]")).toBe(
+          refreshedRow,
+        );
+      });
+    },
+  );
+
+  it("IFD-HOME-FOCUS-05 restores a usable row focus without refreshing when reorder fails", async () => {
+    const user = userEvent.setup();
+    const portfolioGateway = gateway();
+    const structureGateway = wbsGateway();
+    vi.mocked(structureGateway.reorder).mockRejectedValue(
+      new Error("The item could not be reordered. Try again."),
+    );
+    const { container } = render(
+      <PortfolioHomePage
+        gateway={portfolioGateway}
+        wbsGateway={structureGateway}
+        onOpenProject={vi.fn()}
+        onProjectCommand={vi.fn()}
+        onOpenWBS={vi.fn()}
+      />,
+    );
+
+    const completedRow = await findPortfolioRow(container, "completed");
+    await user.click(
+      within(completedRow).getByRole("button", {
+        name: "More actions for Completed",
+      }),
+    );
+    await user.click(
+      within(
+        screen.getByRole("menu", { name: "Actions for Completed" }),
+      ).getByRole("menuitem", { name: "Move Down" }),
+    );
+
+    expect((await screen.findByRole("status")).textContent).toContain(
+      "The item could not be reordered. Try again.",
+    );
+    const retainedRow = await findPortfolioRow(container, "completed");
+    const retainedName = within(retainedRow).getByRole("button", {
+      name: "Completed",
+    });
+    await waitFor(() => expect(document.activeElement).toBe(retainedName));
+    expect(within(retainedRow).getAllByRole("gridcell")[0].textContent).toBe(
+      "1.1",
+    );
+    expect(portfolioGateway.projection).toHaveBeenCalledTimes(1);
+  });
+
+  it("IFD-HOME-FOCUS-02 focuses the newly added virtualized Task after its refreshed projection arrives", async () => {
+    const user = userEvent.setup();
+    const existingRows: PortfolioProjectionResult["rows"] = [
+      {
+        id: "alpha",
+        projectId: "alpha",
+        kind: "project",
+        name: "Alpha",
+        wbsNumber: "",
+        depth: 0,
+        position: 0,
+        status: "open",
+        incompleteEffort: false,
+        incompleteSchedule: true,
+        hasChildren: true,
+        completed: false,
+      },
+      ...Array.from({ length: 200 }, (_, index) => ({
+        id: `task-${index}`,
+        projectId: "alpha",
+        kind: "task" as const,
+        name: `Task ${index}`,
+        wbsNumber: String(index + 1),
+        depth: 1,
+        position: index + 1,
+        incompleteEffort: true,
+        incompleteSchedule: true,
+        hasChildren: false,
+        completed: false,
+      })),
+    ];
+    const createdRow: PortfolioProjectionResult["rows"][number] = {
+      id: "new-task",
+      projectId: "alpha",
+      kind: "task",
+      name: "New Task",
+      wbsNumber: "201",
+      depth: 1,
+      position: 201,
+      incompleteEffort: true,
+      incompleteSchedule: true,
+      hasChildren: false,
+      completed: false,
+    };
+    let includeCreatedRow = false;
+    const portfolioGateway = gateway();
+    vi.mocked(portfolioGateway.projection).mockImplementation(() =>
+      Promise.resolve({
+        projection: "execution",
+        projects: [projects[0]],
+        rows: [
+          ...existingRows.map((row) => ({ ...row })),
+          ...(includeCreatedRow ? [{ ...createdRow }] : []),
+        ],
+        dependencies: [],
+        holidays: [],
+      }),
+    );
+    const structureGateway = wbsGateway();
+    const focusHandled = vi.fn();
+    const sharedProps = {
+      gateway: portfolioGateway,
+      wbsGateway: structureGateway,
+      onOpenProject: vi.fn(),
+      onProjectCommand: vi.fn(),
+      onOpenWBS: vi.fn(),
+      onFocusRequestHandled: focusHandled,
+    };
+    const { container, rerender } = render(
+      <PortfolioHomePage {...sharedProps} />,
+    );
+
+    await screen.findByRole("button", { name: "Task 0" });
+    const timeline = screen.getByRole("region", {
+      name: "Scrollable portfolio timeline",
+    });
+    Object.defineProperty(timeline, "clientHeight", {
+      configurable: true,
+      value: 320,
+    });
+    await user.click(screen.getByRole("button", { name: "Collapse Alpha" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Task 0" })).toBeNull(),
+    );
+
+    includeCreatedRow = true;
+    rerender(
+      <PortfolioHomePage
+        {...sharedProps}
+        focusRequest={{ key: 1, rowId: "new-task" }}
+      />,
+    );
+    act(() => {
+      advanceScheduleProjectionVersion();
+    });
+
+    const createdPortfolioRow = await findPortfolioRow(container, "new-task");
+    const createdName = within(createdPortfolioRow).getByRole("button", {
+      name: "New Task",
+    });
+    const treegrid = screen.getByRole("treegrid", {
+      name: "Portfolio schedule rows",
+    });
+    await waitFor(() => {
+      expect(document.activeElement).toBe(createdName);
+      expect(timeline.scrollTop).toBeGreaterThan(0);
+      expect(treegrid.parentElement?.scrollTop).toBe(timeline.scrollTop);
+      expect(focusHandled).toHaveBeenCalledWith(1);
+    });
+  });
+
+  it("IFD-HOME-FOCUS-03 resolves focus to the visible Project when a Role filter excludes the created Task", async () => {
+    const user = userEvent.setup();
+    const portfolioGateway = gateway();
+    let includeCreatedRow = false;
+    vi.mocked(portfolioGateway.projection).mockImplementation(
+      (selected, value) => {
+        const result = projection(selected, value);
+        return Promise.resolve({
+          ...result,
+          rows: includeCreatedRow
+            ? [
+                ...result.rows,
+                {
+                  id: "filtered-new-task",
+                  projectId: "alpha",
+                  kind: "task" as const,
+                  name: "New unassigned Task",
+                  wbsNumber: "3",
+                  depth: 1,
+                  position: 3,
+                  incompleteEffort: true,
+                  incompleteSchedule: true,
+                  hasChildren: false,
+                  completed: false,
+                },
+              ]
+            : result.rows,
+        });
+      },
+    );
+    const focusHandled = vi.fn();
+    const sharedProps = {
+      gateway: portfolioGateway,
+      wbsGateway: wbsGateway(),
+      onOpenProject: vi.fn(),
+      onProjectCommand: vi.fn(),
+      onOpenWBS: vi.fn(),
+      onFocusRequestHandled: focusHandled,
+    };
+    const { container, rerender } = render(
+      <PortfolioHomePage {...sharedProps} />,
+    );
+    await findPortfolioRow(container, "completed");
+
+    await user.click(screen.getByRole("button", { name: "Configure Gantt" }));
+    const filterDialog = await screen.findByRole("dialog", {
+      name: "Gantt configuration",
+    });
+    const roleSection = within(filterDialog)
+      .getByRole("heading", { name: "Roles" })
+      .closest("section");
+    if (!roleSection) throw new Error("Roles filter section not found");
+    await user.click(
+      within(roleSection).getByRole("button", { name: "Clear All" }),
+    );
+    await user.click(
+      within(roleSection).getByRole("checkbox", { name: "Development" }),
+    );
+    await user.click(
+      within(filterDialog).getByRole("button", { name: "Apply" }),
+    );
+
+    const projectionCallsBeforeCreate = vi.mocked(portfolioGateway.projection)
+      .mock.calls.length;
+    includeCreatedRow = true;
+    rerender(
+      <PortfolioHomePage
+        {...sharedProps}
+        focusRequest={{ key: 2, rowId: "filtered-new-task" }}
+      />,
+    );
+    act(() => {
+      advanceScheduleProjectionVersion();
+    });
+
+    await waitFor(() =>
+      expect(
+        vi.mocked(portfolioGateway.projection).mock.calls.length,
+      ).toBeGreaterThan(projectionCallsBeforeCreate),
+    );
+    const alphaRow = await findPortfolioRow(container, "alpha");
+    const alphaName = within(alphaRow).getByRole("button", { name: "Alpha" });
+    await waitFor(() => {
+      expect(
+        container.querySelector('[data-portfolio-row="filtered-new-task"]'),
+      ).toBeNull();
+      expect(document.activeElement).toBe(alphaName);
+      expect(focusHandled).toHaveBeenCalledWith(2);
+    });
   });
 
   it("keeps timeline bars read-only and routes row actions through the canonical Home workflows", async () => {

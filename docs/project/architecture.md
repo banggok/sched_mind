@@ -520,6 +520,90 @@ After backend source, configuration, dependency, or migration changes, restart
 the backend and smoke-test an affected endpoint. Documentation-only changes do
 not require an application restart.
 
+## Sprint management
+
+US-8.1 adds a standalone Sprint aggregate and frontend feature boundary. Sprint
+is not nested under Project or Portfolio despite being placed under the visible
+Project navigation group. Persist only Sprint fields, optimistic Version,
+selected Member relations, and selected Task relations. Capacity, Task identity,
+Project/WBS context, dates, status, and canonical Execution allocation are live
+read projections; do not copy them as Sprint-owned snapshots.
+
+The backend keeps Sprint commands in `internal/sprints/application` and the
+aggregate invariants in `internal/sprints/domain`. The GORM and HTTP adapters
+compose existing capacity/scheduling tables without importing Sprint
+into scheduler domain logic. Suggestion is deterministic read computation: for
+each selected Member, include every eligible unfinished scheduled Task with
+Execution End on or before Sprint End regardless of capacity, then add later
+Tasks with positive in-period Execution allocation in Execution End, Project
+Priority, WBS, and ID order until capacity is met/exceeded or candidates end.
+The calculation must reuse final per-Date Member Execution capacity and canonical
+Task Execution allocation; it must not derive allocation from Effort or write any
+schedule data.
+
+The persistence target is `sprints`, `sprint_members`, and `sprint_tasks` (or an
+equivalent normalized model) with normalized Name uniqueness, relation
+uniqueness, optimistic Version, and atomic create/edit/start/delete. Inclusive
+range overlap for a shared selected Member must be coordinated transactionally
+so concurrent conflicting writes cannot both commit. PostgreSQL mutations take
+transaction-scoped advisory lock `76081` before overlap validation and write;
+SQLite tests use a process-local serialization guard because SQLite lacks that
+lock. Overlap errors retain the stable code and include the conflicting Sprint,
+inclusive range, and shared Member IDs/names. Task hard-delete cleans up
+Sprint Task relations in the owning Task transaction. A valid Member soft-delete
+is not blocked solely by Sprint; Sprint Member relations are removed in the
+Member transaction and retained Sprint Tasks surface live Needs Review warnings.
+
+Sprint detail and suggestion reads must be bounded and set-based across selected
+Members, candidate/selected Tasks, capacity inputs, holidays/overrides, Projects,
+WBS order, and allocation rows. Avoid per-Member, per-Task, per-Date, or
+per-Project N+1 access. Daily values use bounded accessible disclosures while
+keeping every positive outside-Sprint allocation Date discoverable. Migration
+`000025_manage_sprints` supplies deterministic list and reverse-relation indexes;
+additional indexes require measured PostgreSQL plan evidence.
+
+The PostgreSQL query-review gate was measured against temporary tables cloned
+from the production schema and indexes with 10,000 Sprints, 200 Members, 500
+Projects, 20,000 Tasks, 50,000 Sprint-Member relations, 100,000 Sprint-Task
+relations, 200,000 allocation rows, 4,000 capacity overrides, and 1,000 holiday
+dates. `EXPLAIN (ANALYZE, BUFFERS)` confirmed indexed normalized-Name lookup and
+Sprint list ordering; primary-key/index access for detail relations; the
+Member-to-Sprint reverse index for overlap validation and Member cleanup; the
+Task-to-Sprint reverse index for Task cleanup; assignee-index restriction for
+candidate Tasks; and indexed allocation, override, and holiday range reads.
+The candidate leaf check builds one set-based anti-join input rather than
+issuing per-Task queries. The overlap plan first restricts the 50,000 relation
+rows through the shared-Member index; its date filtering used a sequential scan
+of 10,000 Sprints at the measured broad selectivity, so no additional
+speculative date index is justified. Representative execution times were below
+2.2 ms for every reviewed shape on the local PostgreSQL 16 validation dataset.
+
+The Sprint Create/Edit dialog owns only Details and Members. A saved Sprint is
+reviewed on the main Sprint page, where Task membership is generated and
+managed. The frontend composes each Member group with the authoritative WBS
+gateway: Project is rendered as level `0`, followed by retained WBS ancestors
+and selected executable Task leaves. Editing Details or Members preserves
+existing Task IDs; suggestion replacement remains an explicit page action.
+
+Sprint endpoints are:
+
+```text
+GET    /api/sprints
+POST   /api/sprints
+POST   /api/sprints/suggestion
+POST   /api/sprints/task-candidates
+GET    /api/sprints/{sprintId}
+PUT    /api/sprints/{sprintId}
+POST   /api/sprints/{sprintId}/start
+DELETE /api/sprints/{sprintId}?version={version}
+GET    /api/sprints/{sprintId}/task-candidates
+```
+
+The collection candidate endpoint accepts unsaved date/member context and
+explicitly reviewed Task IDs, enabling manual Add before aggregate creation
+without persisting a temporary Sprint. The entity candidate endpoint derives
+the same context from a saved Sprint. Both are read-only and paginated.
+
 ## Deliberate project constraints
 
 - PostgreSQL is the current supported runtime dialect; MySQL compatibility is a
