@@ -66,8 +66,10 @@ function gateway(tree: WBSNode[]): WBSGateway {
       .fn()
       .mockResolvedValue({ execution: [], commitment: [], actual: [] }),
     create: vi.fn().mockResolvedValue(node("created", "Created")),
+    createSibling: vi.fn().mockResolvedValue(node("created", "Created")),
     rename: vi.fn().mockResolvedValue(undefined),
     reorder: vi.fn().mockResolvedValue(undefined),
+    place: vi.fn().mockResolvedValue(undefined),
     move: vi.fn().mockResolvedValue(undefined),
     remove: vi.fn().mockResolvedValue(undefined),
     updateExecutable: vi.fn().mockResolvedValue(undefined),
@@ -551,5 +553,98 @@ describe("WBS direct Home action controller", () => {
     );
     expect(onCreated).toHaveBeenCalledWith(created);
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("WBS direct Add Sibling workflow", () => {
+  it("opens the shared Create Task dialog and submits only the selected insert-after anchor_DeltaD04", async () => {
+    const anchor = node("anchor", "Existing task");
+    const created = node("new-sibling", "New sibling");
+    const api = gateway([anchor]);
+    vi.mocked(api.createSibling).mockResolvedValue(created);
+    const onCreated = vi.fn();
+    const onClose = vi.fn();
+
+    render(
+      <WBSPanel
+        project={project}
+        gateway={api}
+        {...options}
+        initialCreateAfterId="anchor"
+        onCreated={onCreated}
+        onClose={onClose}
+      />,
+    );
+
+    const dialog = await screen.findByRole("dialog", { name: "Add Sibling" });
+    const name = within(dialog).getByLabelText("Name");
+    await waitFor(() => expect(document.activeElement).toBe(name));
+    fireEvent.change(name, { target: { value: "New sibling" } });
+    fireEvent.submit(name.closest("form")!);
+
+    await waitFor(() =>
+      expect(api.createSibling).toHaveBeenCalledWith(
+        "project",
+        "anchor",
+        "New sibling",
+      ),
+    );
+    expect(api.create).not.toHaveBeenCalled();
+    expect(onCreated).toHaveBeenCalledWith(created);
+    expect(onCreated.mock.invocationCallOrder[0]).toBeLessThan(
+      onClose.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("cancels Add Sibling without invoking either create contract_DeltaD03_D04", async () => {
+    const user = userEvent.setup();
+    const api = gateway([node("anchor", "Existing task")]);
+    const onCreated = vi.fn();
+    const onClose = vi.fn();
+
+    render(
+      <WBSPanel
+        project={project}
+        gateway={api}
+        {...options}
+        initialCreateAfterId="anchor"
+        onCreated={onCreated}
+        onClose={onClose}
+      />,
+    );
+
+    const dialog = await screen.findByRole("dialog", { name: "Add Sibling" });
+    await user.type(within(dialog).getByLabelText("Name"), "Unsaved sibling");
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+
+    expect(api.createSibling).not.toHaveBeenCalled();
+    expect(api.create).not.toHaveBeenCalled();
+    expect(onCreated).not.toHaveBeenCalled();
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails safely when the direct Add Sibling anchor is no longer present_DeltaD04_D09", async () => {
+    const api = gateway([]);
+    const onCreated = vi.fn();
+    const onClose = vi.fn();
+
+    render(
+      <WBSPanel
+        project={project}
+        gateway={api}
+        {...options}
+        initialCreateAfterId="stale-anchor"
+        onCreated={onCreated}
+        onClose={onClose}
+      />,
+    );
+
+    expect(
+      await screen.findByText("The selected sibling no longer exists."),
+    ).toBeTruthy();
+    expect(screen.queryByRole("dialog", { name: "Add Sibling" })).toBeNull();
+    expect(api.createSibling).not.toHaveBeenCalled();
+    expect(onCreated).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
   });
 });

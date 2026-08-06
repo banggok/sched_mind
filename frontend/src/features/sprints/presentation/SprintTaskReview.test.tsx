@@ -161,8 +161,10 @@ function taskEditorHarness(taskName = "API") {
       .fn()
       .mockResolvedValue({ execution: [], commitment: [], actual: [] }),
     create: vi.fn(),
+    createSibling: vi.fn(),
     rename: vi.fn(),
     reorder: vi.fn(),
+    place: vi.fn(),
     move: vi.fn(),
     remove: vi.fn(),
     updateExecutable: vi.fn().mockResolvedValue(undefined),

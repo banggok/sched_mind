@@ -21,6 +21,7 @@ type Service interface {
 	Get(context.Context, string, string) (*domain.Node, error)
 	Allocations(context.Context, string, string) (*application.AllocationGroups, error)
 	Create(context.Context, string, *string, string, bool) (*domain.Node, error)
+	CreateSibling(context.Context, string, string, string) (*domain.Node, error)
 	Rename(context.Context, string, string, string) (*domain.Node, error)
 	UpdateExecutable(context.Context, string, string, application.WriteExecutableInput) (*domain.Node, error)
 	PreviewExecutableSchedule(context.Context, string, string, application.PreviewExecutableInput) (*application.SchedulePreview, error)
@@ -28,6 +29,7 @@ type Service interface {
 	Complete(context.Context, string, string, time.Time, time.Time) (*domain.Node, error)
 	Reopen(context.Context, string, string) (*domain.Node, error)
 	Reorder(context.Context, string, string, domain.Direction) error
+	Place(context.Context, string, string, string, domain.Placement) error
 	Move(context.Context, string, string, *string, bool) error
 	Delete(context.Context, string, string) error
 }
@@ -38,6 +40,7 @@ func New(s Service) *Handler { return &Handler{service: s} }
 type writeRequest struct {
 	Name              string  `json:"name"`
 	ParentID          *string `json:"parentId"`
+	InsertAfterWBSID  *string `json:"insertAfterWbsId"`
 	ConfirmConversion bool    `json:"confirmConversion"`
 }
 type executableRequest struct {
@@ -71,6 +74,8 @@ type assigneeRecommendationRequest struct {
 
 type commandRequest struct {
 	Direction         domain.Direction `json:"direction"`
+	TargetSiblingID   *string          `json:"targetSiblingId"`
+	Placement         domain.Placement `json:"placement"`
 	ParentID          *string          `json:"parentId"`
 	ConfirmConversion bool             `json:"confirmConversion"`
 	ActualStart       *string          `json:"actualStart"`
@@ -198,7 +203,17 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &p) {
 		return
 	}
-	v, e := h.service.Create(r.Context(), r.PathValue("projectId"), p.ParentID, p.Name, p.ConfirmConversion)
+	if p.ParentID != nil && p.InsertAfterWBSID != nil {
+		writeError(w, domain.ErrCreatePositionInvalid)
+		return
+	}
+	var v *domain.Node
+	var e error
+	if p.InsertAfterWBSID != nil {
+		v, e = h.service.CreateSibling(r.Context(), r.PathValue("projectId"), *p.InsertAfterWBSID, p.Name)
+	} else {
+		v, e = h.service.Create(r.Context(), r.PathValue("projectId"), p.ParentID, p.Name, p.ConfirmConversion)
+	}
 	if e != nil {
 		writeError(w, e)
 		return
@@ -208,6 +223,10 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) child(w http.ResponseWriter, r *http.Request) {
 	var p writeRequest
 	if !decode(w, r, &p) {
+		return
+	}
+	if p.InsertAfterWBSID != nil || p.ParentID != nil {
+		writeError(w, domain.ErrCreatePositionInvalid)
 		return
 	}
 	id := r.PathValue("wbsId")
@@ -416,7 +435,21 @@ func (h *Handler) reorder(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &p) {
 		return
 	}
-	if e := h.service.Reorder(r.Context(), r.PathValue("projectId"), r.PathValue("wbsId"), p.Direction); e != nil {
+	var e error
+	if p.TargetSiblingID != nil {
+		if p.Direction != "" || (p.Placement != domain.PlaceBefore && p.Placement != domain.PlaceAfter) {
+			e = domain.ErrReorderTargetInvalid
+		} else {
+			e = h.service.Place(r.Context(), r.PathValue("projectId"), r.PathValue("wbsId"), *p.TargetSiblingID, p.Placement)
+		}
+	} else {
+		if p.Placement != "" {
+			e = domain.ErrReorderTargetInvalid
+		} else {
+			e = h.service.Reorder(r.Context(), r.PathValue("projectId"), r.PathValue("wbsId"), p.Direction)
+		}
+	}
+	if e != nil {
 		writeError(w, e)
 		return
 	}
@@ -599,6 +632,12 @@ func writeError(w http.ResponseWriter, err error) {
 		status, code = 409, "WBS_GROUPING_EXECUTABLE_FIELDS_NOT_ALLOWED"
 	case errors.Is(err, domain.ErrMoveNotAllowed):
 		status, code = 409, "WBS_MOVE_NOT_ALLOWED"
+	case errors.Is(err, domain.ErrCreatePositionInvalid):
+		status, code = 400, "WBS_CREATE_POSITION_INVALID"
+	case errors.Is(err, domain.ErrCreateAnchorConflict):
+		status, code = 409, "WBS_CREATE_ANCHOR_CONFLICT"
+	case errors.Is(err, domain.ErrReorderTargetInvalid):
+		status, code = 409, "WBS_REORDER_TARGET_INVALID"
 	case errors.Is(err, domain.ErrLagInvalid):
 		status, code = 400, "INVALID_LAG"
 	case errors.Is(err, domain.ErrCapacityAllocationInvalid):

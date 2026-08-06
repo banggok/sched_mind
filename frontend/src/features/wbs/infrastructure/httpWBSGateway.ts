@@ -21,22 +21,6 @@ const invalidResponseMessage = "WBS response is invalid. Try again.";
 export function createHTTPWBSGateway(baseURL: string): WBSGateway {
   const trees = new Map<string, RequestCache<WBSNode[]>>();
   let observedProjectionVersion = currentScheduleProjectionVersion();
-  const request = async (
-    path: string,
-    init?: RequestInit,
-  ): Promise<unknown> => {
-    const response = await schedulingImpactFetch(`${baseURL}${path}`, init);
-    if (!response.ok) {
-      const body: unknown = await response.json().catch(() => undefined);
-      throw operationError(body);
-    }
-    if (response.status === 204) return undefined;
-    const payload: unknown = await response.json();
-    if (!isRecord(payload) || !("data" in payload)) {
-      throw new Error(invalidResponseMessage);
-    }
-    return payload.data;
-  };
   const path = (projectId: string) =>
     `/projects/${encodeURIComponent(projectId)}/wbs`;
   const invalidateAll = (advance: boolean) => {
@@ -44,6 +28,24 @@ export function createHTTPWBSGateway(baseURL: string): WBSGateway {
     observedProjectionVersion = currentScheduleProjectionVersion();
     trees.forEach((cache) => cache.invalidate());
     trees.clear();
+  };
+  const request = async (
+    path: string,
+    init?: RequestInit,
+  ): Promise<unknown> => {
+    const response = await schedulingImpactFetch(`${baseURL}${path}`, init);
+    if (!response.ok) {
+      const body: unknown = await response.json().catch(() => undefined);
+      const error = operationError(body);
+      if (isStructuralConflict(error)) invalidateAll(true);
+      throw error;
+    }
+    if (response.status === 204) return undefined;
+    const payload: unknown = await response.json();
+    if (!isRecord(payload) || !("data" in payload)) {
+      throw new Error(invalidResponseMessage);
+    }
+    return payload.data;
   };
   const syncProjectionVersion = () => {
     if (observedProjectionVersion !== currentScheduleProjectionVersion()) {
@@ -112,6 +114,28 @@ export function createHTTPWBSGateway(baseURL: string): WBSGateway {
       }
       return created;
     },
+    createSibling: async (projectId, insertAfterId, name) => {
+      const response = await schedulingImpactFetch(
+        `${baseURL}${path(projectId)}`,
+        json("POST", { insertAfterWbsId: insertAfterId, name }),
+      );
+      if (!response.ok) {
+        const body: unknown = await response.json().catch(() => undefined);
+        const error = operationError(body);
+        if (isStructuralConflict(error)) invalidateAll(true);
+        throw error;
+      }
+      invalidateAll(true);
+      const payload: unknown = await response.json();
+      if (!isRecord(payload) || !("data" in payload)) {
+        throw new Error(invalidResponseMessage);
+      }
+      const created = mapNode(payload.data);
+      if (created.id.trim() === "" || created.projectId !== projectId) {
+        throw new Error(invalidResponseMessage);
+      }
+      return created;
+    },
     rename: async (projectId, id, name) => {
       await request(`${path(projectId)}/${id}`, json("PUT", { name }));
       invalidateAll(true);
@@ -120,6 +144,13 @@ export function createHTTPWBSGateway(baseURL: string): WBSGateway {
       await request(
         `${path(projectId)}/${id}/reorder`,
         json("POST", { direction }),
+      );
+      invalidateAll(true);
+    },
+    place: async (projectId, id, targetSiblingId, placement) => {
+      await request(
+        `${path(projectId)}/${id}/reorder`,
+        json("POST", { targetSiblingId, placement }),
       );
       invalidateAll(true);
     },
@@ -498,6 +529,12 @@ function userMessage(code: string): string {
       return "This task contains details and must be converted into a group.";
     case "WBS_MOVE_CYCLE":
       return "An item cannot be moved inside itself or one of its own children.";
+    case "WBS_CREATE_POSITION_INVALID":
+      return "The sibling creation request is invalid.";
+    case "WBS_CREATE_ANCHOR_CONFLICT":
+      return "The selected sibling is no longer available. Home will keep the confirmed order; refresh and try again.";
+    case "WBS_REORDER_TARGET_INVALID":
+      return "The selected reorder target is no longer valid. Refresh Home and try again.";
     case "WBS_NAME_EXISTS":
       return "An item with this name already exists under the selected parent.";
     case "COMPLETED_TASK_READ_ONLY":
@@ -521,6 +558,13 @@ function userMessage(code: string): string {
     default:
       return "The item could not be updated. Check the form and try again.";
   }
+}
+
+function isStructuralConflict(error: WBSOperationError): boolean {
+  return (
+    error.code === "WBS_CREATE_ANCHOR_CONFLICT" ||
+    error.code === "WBS_REORDER_TARGET_INVALID"
+  );
 }
 
 function staleResponseError(): DOMException {

@@ -21,11 +21,22 @@ export interface WBSGateway {
     name: string,
     confirmConversion: boolean,
   ): Promise<WBSNode>;
+  createSibling(
+    projectId: string,
+    insertAfterId: string,
+    name: string,
+  ): Promise<WBSNode>;
   rename(projectId: string, id: string, name: string): Promise<void>;
   reorder(
     projectId: string,
     id: string,
     direction: "up" | "down",
+  ): Promise<void>;
+  place(
+    projectId: string,
+    id: string,
+    targetSiblingId: string,
+    placement: "before" | "after",
   ): Promise<void>;
   move(
     projectId: string,

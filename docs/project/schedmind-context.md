@@ -81,9 +81,13 @@ The primary product actor in these stories is the Engineering Lead.
 
 US-7.1 defines Home as the root frontend page and canonical active-WBS surface.
 It composes selected Open/Locked Projects in a read-only daily Gantt, invokes
-the shared Project, Group, Task, Add Task, Add Child, and lifecycle dialogs
-directly over Home, and persists globally named Project-selection filters. The
-standalone Project Structure action is not a current navigation surface.
+the shared Project, Group, Task, Add Child, Add Sibling, and lifecycle dialogs
+directly over Home, remembers the last successfully applied Execution/Commitment
+projection, latest Project Grid column widths, and collapsed Project/Group
+identities as separate browser-local UI preferences, and persists globally named
+Project-selection filters. None of these browser preferences stores filter or
+business data. The standalone Project Structure action is not a current
+navigation surface.
 
 ## Sprint planning
 
@@ -262,12 +266,32 @@ shared calendar usage, is authoritative in US-2.1.
 
 Home is the default application page and canonical active-WBS workspace. Its
 left Project Grid uses the existing Project/Task/Group terminology, keeps Name
-as the primary edit action, and reveals creation, lifecycle, reorder, Move to,
-and Delete icons inside the Name cell on hover or keyboard focus. There is no
-Actions column. Project and Group Role cells are blank; only Task rows display
-their direct Role. Start and End use `D Mon YYYY`. The right Gantt header has
-working-day, grouped month/year, and calendar-date rows, while timeline bars and
-all non-Name row space remain read-only. Shared dialogs open directly over Home
+as the primary edit action. Rows remain at their existing single-line height
+at rest; hovering or keyboard-focusing temporarily expands only a row with at
+least one eligible Add Sibling/Add Child action. The creation labels render as a
+content-width floating second line over following Project Grid separators and
+remain clipped before the Timeline, so a narrow Name column does not truncate
+them. Rows without eligible creation actions never expand. Lifecycle, reorder,
+Move to, and Delete controls remain in the independent overflow trigger anchored
+at the right edge of the primary Name line. The left grid and timeline use the
+same temporary row height to remain vertically aligned. Project Grid column
+widths persist browser-locally and restore when Home is opened again.
+The Name-column header exposes one contextual icon-only Collapse All/Expand All
+control when the loaded Role-adjusted hierarchy has an expandable row.
+Individual and bulk collapse state persists browser-locally, defaults to fully
+expanded on invalid storage, ignores unavailable or no-longer-expandable
+identities, and never invokes backend WBS or scheduling mutation. Bulk actions
+preserve collapse state belonging to Projects outside the currently loaded
+filter.
+Eligible Task and Group rows have a dedicated leading drag handle for
+same-parent sibling reorder; Project rows and the rest of each row are not drag
+surfaces. Restrictive Role filtering disables drag and Move Up/Down while Add
+Sibling still resolves its parent and insert-after position from the backend
+authoritative tree. There is no Actions column. Project and Group Role cells are
+blank; only Task rows display their direct Role. Start and End use `D Mon YYYY`.
+The right Gantt header has working-day, grouped month/year, and calendar-date
+rows, while timeline bars and all non-Name row space remain read-only. Shared
+dialogs open directly over Home
 without routing through Projects or a Project Structure background. Saved
 Project filters are global backend data and are presented by name because the
 product has no login or user identity in current scope. Exact Home behaviour

@@ -260,3 +260,202 @@ func TestDeleteTaskAcceptanceRemovesOnlyItsSprintRelationsAtomically_US81_AC56(t
 		t.Fatalf("retained Task Sprint relation count=%d, want 1", count)
 	}
 }
+
+type structuralAcceptanceScheduler struct {
+	scheduleCalls int
+}
+
+func (scheduler *structuralAcceptanceScheduler) RecalculateProjectSchedule(context.Context, string) error {
+	scheduler.scheduleCalls++
+	return nil
+}
+
+func (*structuralAcceptanceScheduler) RecalculateProjectForecast(context.Context, string) error {
+	return nil
+}
+
+func (*structuralAcceptanceScheduler) InvalidatePortfolio(context.Context, []string) error {
+	return nil
+}
+
+func TestAddSiblingAcceptanceInsertsAfterAuthoritativeGroupAndPreservesSubtree_DeltaD03_D04(t *testing.T) {
+	database, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.AutoMigrate(&createAcceptanceProjectRecord{}, &createAcceptanceWBSRecord{}); err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Date(2026, 8, 6, 7, 0, 0, 0, time.UTC)
+	if err := database.Create(&createAcceptanceProjectRecord{ID: "project", Status: "open", AutomaticScheduling: true}).Error; err != nil {
+		t.Fatal(err)
+	}
+	groupID := "group"
+	if err := database.Create(&[]createAcceptanceWBSRecord{
+		{ID: groupID, ProjectID: "project", ParentKey: "", Name: "Group", NameKey: "group", Position: 1, CreatedAt: now, UpdatedAt: now},
+		{ID: "later", ProjectID: "project", ParentKey: "", Name: "Later", NameKey: "later", Position: 2, CreatedAt: now, UpdatedAt: now},
+		{ID: "child", ProjectID: "project", ParentID: &groupID, ParentKey: groupID, Name: "Child", NameKey: "child", Position: 1, CreatedAt: now, UpdatedAt: now},
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	scheduler := &structuralAcceptanceScheduler{}
+	service := application.NewServiceWithDependencies(
+		wbsgormrepo.New(database),
+		scheduler,
+		func() time.Time { return now.Add(time.Hour) },
+		func() (string, error) { return "new-sibling", nil },
+	)
+	mux := http.NewServeMux()
+	New(service).Register(mux)
+	request := httptest.NewRequest(http.MethodPost, "/api/projects/project/wbs", strings.NewReader(`{"name":"New sibling","insertAfterWbsId":"group"}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+
+	if response.Code != http.StatusCreated {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	if scheduler.scheduleCalls != 0 {
+		t.Fatalf("name-only sibling create schedule calls=%d", scheduler.scheduleCalls)
+	}
+	if got := acceptanceSiblingIDs(t, database, "project", ""); !equalStrings(got, []string{"group", "new-sibling", "later"}) {
+		t.Fatalf("root order=%v", got)
+	}
+	if got := acceptanceSiblingIDs(t, database, "project", groupID); !equalStrings(got, []string{"child"}) {
+		t.Fatalf("child order=%v", got)
+	}
+	var created createAcceptanceWBSRecord
+	if err := database.First(&created, "id = ?", "new-sibling").Error; err != nil {
+		t.Fatal(err)
+	}
+	if created.ParentID != nil || created.Position != 2 || created.EffortMinutes != nil || created.ActualEnd != nil {
+		t.Fatalf("created sibling=%#v", created)
+	}
+}
+
+func TestAddSiblingAcceptanceReturnsConflictAndPreservesOrderForStaleAnchor_DeltaD03_D09(t *testing.T) {
+	database, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.AutoMigrate(&createAcceptanceProjectRecord{}, &createAcceptanceWBSRecord{}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 8, 6, 7, 5, 0, 0, time.UTC)
+	if err := database.Create(&createAcceptanceProjectRecord{ID: "project", Status: "open"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Create(&[]createAcceptanceWBSRecord{
+		{ID: "a", ProjectID: "project", ParentKey: "", Name: "A", NameKey: "a", Position: 1, CreatedAt: now, UpdatedAt: now},
+		{ID: "b", ProjectID: "project", ParentKey: "", Name: "B", NameKey: "b", Position: 2, CreatedAt: now, UpdatedAt: now},
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	service := application.NewServiceWithDependencies(
+		wbsgormrepo.New(database),
+		application.NoopScheduler{},
+		func() time.Time { return now.Add(time.Hour) },
+		func() (string, error) { return "new-sibling", nil },
+	)
+	mux := http.NewServeMux()
+	New(service).Register(mux)
+	request := httptest.NewRequest(http.MethodPost, "/api/projects/project/wbs", strings.NewReader(`{"name":"New sibling","insertAfterWbsId":"deleted"}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+
+	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "WBS_CREATE_ANCHOR_CONFLICT") {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	if got := acceptanceSiblingIDs(t, database, "project", ""); !equalStrings(got, []string{"a", "b"}) {
+		t.Fatalf("confirmed order=%v", got)
+	}
+	var count int64
+	if err := database.Model(&createAcceptanceWBSRecord{}).Where("id = ?", "new-sibling").Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("created row count=%d", count)
+	}
+}
+
+func TestTargetPlacementAcceptanceMovesGroupSubtreeAndSkipsEquivalentNoOp_DeltaD05_D07_D09(t *testing.T) {
+	database, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.AutoMigrate(&createAcceptanceProjectRecord{}, &createAcceptanceWBSRecord{}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 8, 6, 7, 10, 0, 0, time.UTC)
+	if err := database.Create(&createAcceptanceProjectRecord{ID: "project", Status: "open", AutomaticScheduling: true}).Error; err != nil {
+		t.Fatal(err)
+	}
+	groupID := "group"
+	if err := database.Create(&[]createAcceptanceWBSRecord{
+		{ID: groupID, ProjectID: "project", ParentKey: "", Name: "Group", NameKey: "group", Position: 1, CreatedAt: now, UpdatedAt: now},
+		{ID: "middle", ProjectID: "project", ParentKey: "", Name: "Middle", NameKey: "middle", Position: 2, CreatedAt: now, UpdatedAt: now},
+		{ID: "last", ProjectID: "project", ParentKey: "", Name: "Last", NameKey: "last", Position: 3, CreatedAt: now, UpdatedAt: now},
+		{ID: "child", ProjectID: "project", ParentID: &groupID, ParentKey: groupID, Name: "Child", NameKey: "child", Position: 1, CreatedAt: now, UpdatedAt: now},
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	scheduler := &structuralAcceptanceScheduler{}
+	service := application.NewServiceWithDependencies(
+		wbsgormrepo.New(database),
+		scheduler,
+		func() time.Time { return now.Add(time.Hour) },
+		func() (string, error) { return "unused", nil },
+	)
+	mux := http.NewServeMux()
+	New(service).Register(mux)
+
+	for index := 0; index < 2; index++ {
+		request := httptest.NewRequest(http.MethodPost, "/api/projects/project/wbs/group/reorder", strings.NewReader(`{"targetSiblingId":"last","placement":"after"}`))
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		mux.ServeHTTP(response, request)
+		if response.Code != http.StatusNoContent {
+			t.Fatalf("request %d status=%d body=%s", index+1, response.Code, response.Body.String())
+		}
+	}
+	if scheduler.scheduleCalls != 1 {
+		t.Fatalf("schedule calls=%d, want one mutation and one no-op", scheduler.scheduleCalls)
+	}
+	if got := acceptanceSiblingIDs(t, database, "project", ""); !equalStrings(got, []string{"middle", "last", "group"}) {
+		t.Fatalf("root order=%v", got)
+	}
+	if got := acceptanceSiblingIDs(t, database, "project", groupID); !equalStrings(got, []string{"child"}) {
+		t.Fatalf("child order=%v", got)
+	}
+}
+
+func acceptanceSiblingIDs(t *testing.T, database *gorm.DB, projectID, parentKey string) []string {
+	t.Helper()
+	var siblings []createAcceptanceWBSRecord
+	if err := database.Where("project_id = ? AND parent_key = ?", projectID, parentKey).Order("position ASC").Order("id ASC").Find(&siblings).Error; err != nil {
+		t.Fatal(err)
+	}
+	ids := make([]string, len(siblings))
+	for index := range siblings {
+		ids[index] = siblings[index].ID
+		if siblings[index].Position != index+1 {
+			t.Fatalf("sibling %q position=%d want=%d", siblings[index].ID, siblings[index].Position, index+1)
+		}
+	}
+	return ids
+}
+
+func equalStrings(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
+}

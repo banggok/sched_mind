@@ -122,8 +122,10 @@ function wbsGateway(values: WBSNode[]): WBSGateway {
       .fn()
       .mockResolvedValue({ execution: [], commitment: [], actual: [] }),
     create: vi.fn().mockResolvedValue(undefined),
+    createSibling: vi.fn().mockResolvedValue(undefined),
     rename: vi.fn().mockResolvedValue(undefined),
     reorder: vi.fn().mockResolvedValue(undefined),
+    place: vi.fn().mockResolvedValue(undefined),
     move: vi.fn().mockResolvedValue(undefined),
     remove: vi.fn().mockResolvedValue(undefined),
     updateExecutable: vi.fn(),

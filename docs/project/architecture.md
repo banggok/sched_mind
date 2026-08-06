@@ -310,25 +310,85 @@ Executable WBS as **Task** and a Grouping WBS as **Group**; these labels are
 derived from child existence and never create or persist a separate type field.
 Home is the canonical active-WBS surface. `App.tsx` keeps Home mounted while it
 opens the shared Project controller or a direct-entry WBS dialog for Group,
-Task, Add Task, Add Child, and Move to. The standalone Project Structure panel
-has been removed; the WBS controller accepts only a direct Home action and
-renders the corresponding shared dialog. Direct-entry dialogs fetch the
-authoritative Project tree, so Move to destinations are not narrowed by the
-current Home Role projection.
+Task, Add Child, Add Sibling, and Move to. Add Sibling carries only an
+insert-after WBS identity; the backend transaction resolves the anchor's current
+parent and full persisted sibling order, shifts later positions atomically, and
+creates an empty executable Task. The standalone Project Structure panel has
+been removed; the WBS controller accepts only a direct Home action and renders
+the corresponding shared dialog. Direct-entry dialogs fetch the authoritative
+Project tree, so Move to destinations and sibling anchors are not inferred from
+the current Home Role projection.
 
 The Home portfolio is rendered as a synchronized split grid/timeline. WBS,
 Name, Role, Assignee, Effort, Start, and End remain individually resizable data
-columns. Eligible quick and overflow actions are positioned inside Name and are
-revealed on hover or keyboard focus; no separate Actions column exists. Name is
-the only row edit activation. Project and Group Role cells are blank, while
-Task Role remains direct data. Start and End display timezone-stable
-`D Mon YYYY` values. The timeline header uses three rows for working-day
+columns. Their latest bounded widths are stored as a browser-local layout
+preference and restored when Home is mounted again; malformed or unavailable
+storage falls back per column without blocking current-session resize. The Name
+header also owns one contextual icon-only Collapse All/Expand All control. It
+operates on every expandable row in the currently loaded Role-adjusted
+hierarchy, is absent when no row is expandable, and does not call the backend or
+scheduler. Rows retain their existing single-line height at rest. On hover or
+keyboard focus,
+only a row with at least one eligible creation action temporarily expands. Its
+labelled Add Sibling/Add Child controls render as a content-width floating second
+line logically owned by Name, above following Project Grid separators and
+clipped at the Project Grid/Timeline boundary. Rows without eligible creation
+actions do not expand. The independently right-anchored overflow trigger remains
+at the far right edge of the primary Name line; no separate Actions column
+exists. The matching timeline row, virtual spacers, dependency geometry, and
+vertical scroll bounds share the same temporary height so both panes remain
+aligned. Eligible non-Project rows expose a dedicated leading drag handle, while
+the remaining row surface is not draggable. Drag submits source identity, target
+sibling identity, and
+before/after placement to the same serialized WBS reorder transaction used by
+the adjacent Move Up/Down fallback. The backend rejects stale, cross-parent,
+cross-Project, or self placement, preserves Group descendants as one subtree,
+and restores confirmed order on scheduler failure. Structural conflicts
+invalidate the versioned WBS cache before the UI reloads authoritative rows, so
+an older in-flight response cannot restore stale order. A restrictive Role filter
+disables both drag and Move Up/Down because hidden siblings make placement
+ambiguous. Name is the only row edit activation. Project and Group Role cells
+are blank, while Task Role remains direct data. Start and End display
+timezone-stable `D Mon YYYY` values. The timeline header uses three rows for working-day
 sequence, grouped month/year, and calendar date. Timeline bars and other cells
 are read-only.
+Collapsed Project/Group identities use a third browser-local presentation
+preference. The state initializes before the first hierarchy render, defaults to
+fully expanded when storage is absent or invalid, and is written after
+individual, bulk, or required ancestor-expansion changes. Unknown, unloaded,
+filtered, or no-longer-expandable identities remain harmless and are ignored by
+the current projection. Bulk updates add or remove only identities in the
+currently loaded hierarchy, preserving preferences for Projects outside the
+active filter. Storage failure never blocks current-session hierarchy use.
+
 Structural actions reuse the WBS gateway commands, and Project lifecycle
 actions reuse the same `ProjectsPage` controller used by Projects. Confirmed
 mutations advance the shared schedule projection clock or explicitly reload the
 portfolio projection while retaining selected filters and expansion IDs.
+
+The Home Execution/Commitment projection is also a browser-local presentation
+preference. The frontend reads only the supported projection enum at Home state
+initialization, defaults safely to Execution when storage is missing, invalid,
+or unreadable, and writes only after Apply or an applying Save As succeeds.
+Storage failure never blocks the in-memory projection and does not persist saved
+filter identity, Project/Role selections, range, expansion, scroll, or business
+data. Column widths use a separate browser-local key and lifecycle; they never
+enter the projection preference or backend saved-filter contract. Collapsed row
+identities use another separate key and likewise never enter saved-filter,
+projection, column-width, WBS, or schedule persistence.
+
+The insert-after and target-placement write paths reuse the existing serialized
+WBS transaction boundary. Each command first resolves a Project-scoped node by
+the globally unique WBS primary key, then locks and orders the bounded sibling
+set by `(project_id, parent_key, position, id)`. Insert-after shifts only the
+affected position suffix; target placement rewrites only that sibling set after
+moving the source identity in memory. The existing
+`wbs_sibling_position_unique (project_id, parent_key, position)` constraint
+protects persisted cardinality, while `wbs_nodes_project_tree_idx
+(project_id, parent_key, position, id)` supports the locked sibling read,
+deterministic ordering, and position predicates. No new query shape, join, or
+index is required. Representative PostgreSQL lock/plan and concurrent mutation
+validation remains `AUTHORED — NOT RUN — LOCAL VALIDATION REQUIRED`.
 
 The approved US-4.3 implementation uses one frontend-only recursive read model over current confirmed WBS roots. View Group passes the selected subtree; Edit Project treats the Project as logical WBS level `0` and passes every top-level WBS root. One deterministic typed traversal returns Execution aggregate and coverage, Commitment aggregate and coverage, completed/total known Effort, percentage, and Task-without-Effort count. Timeline dates come only from complete Task pairs; completion requires complete Actual Date; missing Effort is never coerced to zero. Integer minutes remain the arithmetic source so half-hour precision and percentage calculation do not accumulate floating-point error.
 
@@ -783,10 +843,11 @@ US-7.1 adds a Home feature boundary as the default frontend composition. Home is
 a portfolio read workspace, not a new WBS or scheduler aggregate. The left grid
 renders selected active Project/WBS rows, while the right timeline renders
 read-only daily Execution or Commitment bars and effective dependency arrows.
-The standalone Project Structure entry point is removed. Add Task, Add Child,
-Project edit, and Task/Group edit must reuse existing application use cases and
-dialogs directly over Home so the canonical workspace does not fork validation,
-impact preview, transaction, or rollback behaviour.
+The standalone Project Structure entry point is removed. Project-level Add Child,
+non-Project Add Sibling/Add Child, Project edit, and Task/Group edit must reuse
+existing application use cases and dialogs directly over Home so the canonical
+workspace does not fork validation, impact preview, transaction, or rollback
+behaviour.
 
 The Home read path requires a dedicated portfolio projection or equivalent
 bounded set-based composition. It must return stable Project/WBS identities,

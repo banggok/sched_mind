@@ -45,8 +45,10 @@ const mockedGateways = vi.hoisted(() => {
     tree: vi.fn<WBSGateway["tree"]>(),
     allocations: vi.fn<WBSGateway["allocations"]>(),
     create: vi.fn<WBSGateway["create"]>(),
+    createSibling: vi.fn<WBSGateway["createSibling"]>(),
     rename: vi.fn<WBSGateway["rename"]>(),
     reorder: vi.fn<WBSGateway["reorder"]>(),
+    place: vi.fn<WBSGateway["place"]>(),
     move: vi.fn<WBSGateway["move"]>(),
     remove: vi.fn<WBSGateway["remove"]>(),
     updateExecutable: vi.fn<WBSGateway["updateExecutable"]>(),
@@ -222,6 +224,8 @@ function configureCommonGateways() {
   mockedGateways.projects.update.mockReset();
   mockedGateways.wbs.tree.mockReset();
   mockedGateways.wbs.create.mockReset();
+  mockedGateways.wbs.createSibling.mockReset();
+  mockedGateways.wbs.place.mockReset();
   mockedGateways.wbs.rename.mockReset();
 
   mockedGateways.portfolio.activeProjects.mockResolvedValue([
@@ -243,7 +247,7 @@ function configureCommonGateways() {
 async function openAndSubmitAddTask() {
   const user = userEvent.setup();
   const originalTrigger = await screen.findByRole("button", {
-    name: "Add Task for Alpha",
+    name: "Add Child for Alpha",
   });
   await user.click(originalTrigger);
   const dialog = await screen.findByRole("dialog", { name: "Add Task" });
@@ -254,6 +258,7 @@ async function openAndSubmitAddTask() {
 
 describe("App Home row focus restoration", () => {
   beforeEach(() => {
+    window.localStorage.clear();
     window.history.replaceState(null, "", "/");
     vi.spyOn(window, "scrollTo").mockImplementation(() => undefined);
     configureCommonGateways();
@@ -529,5 +534,142 @@ describe("App Home row focus restoration", () => {
 
     expect(document.activeElement).toBe(homeLink);
     expect(document.activeElement).not.toBe(staleTaskName);
+  });
+});
+
+describe("App Home projection preference navigation", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    window.history.replaceState(null, "", "/");
+    vi.spyOn(window, "scrollTo").mockImplementation(() => undefined);
+    configureCommonGateways();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("restores the applied Commitment projection after navigating away from and back to Home_DeltaD01", async () => {
+    mockedGateways.portfolio.projection.mockResolvedValue(
+      portfolioResult([alphaRow]),
+    );
+    render(<App />);
+    const user = userEvent.setup();
+    await screen.findByRole("heading", { name: "All Active Projects" });
+
+    await user.click(screen.getByRole("button", { name: "Configure Gantt" }));
+    const dialog = await screen.findByRole("dialog", {
+      name: "Gantt configuration",
+    });
+    await user.click(
+      within(dialog).getByRole("switch", {
+        name: "Commitment projection",
+      }),
+    );
+    await user.click(within(dialog).getByRole("button", { name: "Apply" }));
+    await waitFor(() =>
+      expect(mockedGateways.portfolio.projection).toHaveBeenCalledWith(
+        ["alpha"],
+        "commitment",
+        expect.any(String),
+        expect.any(String),
+        expect.any(AbortSignal),
+      ),
+    );
+
+    await user.click(screen.getByRole("link", { name: "Projects" }));
+    await screen.findByText("No projects yet");
+    const callsBeforeReturn =
+      mockedGateways.portfolio.projection.mock.calls.length;
+
+    await user.click(screen.getByRole("link", { name: "Home" }));
+    await waitFor(() =>
+      expect(
+        mockedGateways.portfolio.projection.mock.calls.length,
+      ).toBeGreaterThan(callsBeforeReturn),
+    );
+    expect(mockedGateways.portfolio.projection).toHaveBeenLastCalledWith(
+      ["alpha"],
+      "commitment",
+      expect.any(String),
+      expect.any(String),
+      expect.any(AbortSignal),
+    );
+    expect(window.localStorage.getItem("schedmind.home.projection.v1")).toBe(
+      "commitment",
+    );
+  });
+});
+
+describe("App Home Add Sibling direct workflow", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    window.history.replaceState(null, "", "/");
+    vi.spyOn(window, "scrollTo").mockImplementation(() => undefined);
+    configureCommonGateways();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("opens the shared Add Sibling dialog from Home, refreshes, and restores focus to the created row_DeltaD04", async () => {
+    const anchorRow = taskRow(0);
+    const anchorNode: WBSNode = {
+      id: anchorRow.id,
+      projectId: "alpha",
+      name: anchorRow.name,
+      position: 1,
+      hasChildren: false,
+      executable: {
+        lagDays: 0,
+        executionTimeline: {},
+        commitmentTimeline: {},
+      },
+      children: [],
+    };
+    const sibling = {
+      ...createdNode,
+      id: "new-sibling",
+      name: "New sibling",
+      position: 2,
+    };
+    mockedGateways.portfolio.projection
+      .mockResolvedValueOnce(portfolioResult([alphaRow, anchorRow]))
+      .mockResolvedValue(
+        portfolioResult([
+          alphaRow,
+          anchorRow,
+          newTaskRow("new-sibling", "New sibling"),
+        ]),
+      );
+    mockedGateways.wbs.tree.mockResolvedValue([anchorNode]);
+    mockedGateways.wbs.createSibling.mockImplementation(async () => {
+      advanceScheduleProjectionVersion();
+      return sibling;
+    });
+
+    render(<App />);
+    const user = userEvent.setup();
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Add Sibling for Task 0",
+      }),
+    );
+    const dialog = await screen.findByRole("dialog", { name: "Add Sibling" });
+    await user.type(within(dialog).getByLabelText("Name"), "New sibling");
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(mockedGateways.wbs.createSibling).toHaveBeenCalledWith(
+        "alpha",
+        "task-0",
+        "New sibling",
+      ),
+    );
+    const createdName = await screen.findByRole("button", {
+      name: "New sibling",
+    });
+    await waitFor(() => expect(document.activeElement).toBe(createdName));
   });
 });

@@ -6,18 +6,18 @@ Use the following configuration as authoritative:
 
 EXECUTION_MODE:
 [LOCAL_WORKTREE | UPLOADED_ARCHIVE]
-LOCAL_WORKTREE
+UPLOADED_ARCHIVE
 
 REQUIREMENT_ROOTS:
 [user_story/]
 
 VALIDATION_MODE:
 [USER_LOCAL_VALIDATION | AGENT_VALIDATION]
-AGENT_VALIDATION
+USER_LOCAL_VALIDATION
 
 DELIVERY_MODE:
 [DIRECT_WORKTREE | CHANGES_ONLY_ZIP]
-DIRECT_WORKTREE
+CHANGES_ONLY_ZIP
 
 Additional task instruction:
 
@@ -34,7 +34,7 @@ Interpretation:
 
 - `USER_LOCAL_VALIDATION`
   means author all required tests but do not execute automated validation.
-  The user will run validation locally, but still do code inspection at validation code to minimize issue in local validation 
+  The user will run validation locally, but you still have to do static review to minimize issue in local validation
 
 - `AGENT_VALIDATION`
   means execute repository-supported targeted and full validation according

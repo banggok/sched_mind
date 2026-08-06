@@ -4,7 +4,9 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type DragEvent,
   type FormEvent,
+  type PointerEvent as ReactPointerEvent,
 } from "react";
 import { createPortal } from "react-dom";
 import { PageContent } from "../../../app/PageContent";
@@ -25,6 +27,18 @@ import {
 } from "../../wbs/application/wbsGateway";
 import type { PortfolioGateway } from "../application/portfolioGateway";
 import {
+  loadPortfolioCollapsedRows,
+  savePortfolioCollapsedRows,
+} from "../infrastructure/hierarchyPreference";
+import {
+  loadPortfolioColumnWidths,
+  savePortfolioColumnWidths,
+} from "../infrastructure/layoutPreference";
+import {
+  loadPortfolioProjectionPreference,
+  savePortfolioProjectionPreference,
+} from "../infrastructure/projectionPreference";
+import {
   PortfolioOperationError,
   type PortfolioDependency,
   type PortfolioHoliday,
@@ -39,9 +53,15 @@ const systemFilterID = "__all-active-projects__";
 const unassignedRoleKey = "__unassigned__";
 const dayWidth = 34;
 const rowHeight = 40;
+const expandedRowHeight = 64;
 const ganttHeaderHeight = 84;
 const maximumRenderedRows = 80;
 const rowOverscan = 8;
+
+function focusInputFromPointer(pointerType: string): "mouse" | "touch" {
+  return pointerType === "touch" || pointerType === "pen" ? "touch" : "mouse";
+}
+
 const shortMonthNames = [
   "Jan",
   "Feb",
@@ -79,6 +99,7 @@ type WBSOpenRequest = {
   projectId: string;
   nodeId?: string;
   createParentId?: string | null;
+  createAfterId?: string;
   moveNodeId?: string;
 };
 export type HomeProjectCommandKind = "lock" | "close" | "reopen" | "delete";
@@ -126,14 +147,17 @@ export function PortfolioHomePage({
   const [filterProjectDraft, setFilterProjectDraft] = useState<string[]>([]);
   const [filterRoleDraft, setFilterRoleDraft] = useState<string[]>([]);
   const [projectSearch, setProjectSearch] = useState("");
-  const [projection, setProjection] =
-    useState<PortfolioProjection>("execution");
+  const [projection, setProjection] = useState<PortfolioProjection>(
+    loadPortfolioProjectionPreference,
+  );
   const [validRange, setValidRange] = useState<ValidRange>(currentMonthRange);
   const [queryRange] = useState<ValidRange>(portfolioQueryRange);
   const [portfolio, setPortfolio] = useState<PortfolioProjectionResult>();
   const [portfolioProjectionVersion, setPortfolioProjectionVersion] =
     useState<number>();
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [collapsed, setCollapsed] = useState<Set<string>>(
+    loadPortfolioCollapsedRows,
+  );
   const [metadataLoading, setMetadataLoading] = useState(true);
   const [projectionLoading, setProjectionLoading] = useState(true);
   const [metadataError, setMetadataError] = useState("");
@@ -285,6 +309,17 @@ export function PortfolioHomePage({
     () => visiblePortfolioRows(roleAdjustedRows, collapsed),
     [collapsed, roleAdjustedRows],
   );
+  const collapsibleRowIDs = useMemo(
+    () =>
+      roleAdjustedRows.filter((row) => row.hasChildren).map((row) => row.id),
+    [roleAdjustedRows],
+  );
+  const hierarchyAction = useMemo<"collapse" | "expand" | undefined>(() => {
+    if (collapsibleRowIDs.length === 0) return undefined;
+    return visibleRows.some((row) => row.hasChildren && !collapsed.has(row.id))
+      ? "collapse"
+      : "expand";
+  }, [collapsed, collapsibleRowIDs, visibleRows]);
   const activeFocusRequest = focusRequest ?? localFocusRequest;
   const projectionReadyFocusRequest =
     activeFocusRequest?.minimumProjectionVersion === undefined ||
@@ -330,6 +365,10 @@ export function PortfolioHomePage({
   useEffect(() => {
     if (focusRequest) setLocalFocusRequest(undefined);
   }, [focusRequest]);
+
+  useEffect(() => {
+    savePortfolioCollapsedRows(collapsed);
+  }, [collapsed]);
   const restrictiveRoleFilter =
     roleFilterActive && effectiveRoleKeys.length < roleOptions.length;
   const filterProjectDraftSet = useMemo(
@@ -396,6 +435,7 @@ export function PortfolioHomePage({
     setActiveFilterID(filterSavedFilterDraft);
     setSelectedIDs([...filterProjectDraft].sort());
     setProjection(filterProjectionDraft);
+    savePortfolioProjectionPreference(filterProjectionDraft);
     applyRoleDraft();
     setDialog(undefined);
   }
@@ -460,6 +500,7 @@ export function PortfolioHomePage({
       setActiveFilterID(created.id);
       setSelectedIDs([...filterProjectDraft].sort());
       setProjection(filterProjectionDraft);
+      savePortfolioProjectionPreference(filterProjectionDraft);
       applyRoleDraft();
       setDialog(undefined);
       setFilterName("");
@@ -508,6 +549,7 @@ export function PortfolioHomePage({
     action: () => Promise<void>,
     successMessage: string,
     focusRetainedRow = false,
+    refreshOnFailure = false,
   ): Promise<boolean> {
     if (actionBusyRowID) return false;
     setActionBusyRowID(row.id);
@@ -519,6 +561,7 @@ export function PortfolioHomePage({
       setToast(successMessage);
       return true;
     } catch (reason: unknown) {
+      if (refreshOnFailure) setReloadProjection((value) => value + 1);
       setToast(
         reason instanceof WBSOperationError
           ? reason.message
@@ -619,6 +662,7 @@ export function PortfolioHomePage({
                 days={days}
                 timelineWidth={timelineWidth}
                 collapsed={collapsed}
+                hierarchyAction={hierarchyAction}
                 restrictiveRoleFilter={restrictiveRoleFilter}
                 busyRowID={actionBusyRowID}
                 focusRequest={visibleFocusRequest}
@@ -635,6 +679,16 @@ export function PortfolioHomePage({
                     return next;
                   })
                 }
+                onToggleAll={() =>
+                  setCollapsed((current) => {
+                    const next = new Set(current);
+                    if (hierarchyAction === "collapse")
+                      collapsibleRowIDs.forEach((id) => next.add(id));
+                    else if (hierarchyAction === "expand")
+                      collapsibleRowIDs.forEach((id) => next.delete(id));
+                    return next;
+                  })
+                }
                 onOpenProject={onOpenProject}
                 onProjectCommand={onProjectCommand}
                 onOpenWBS={onOpenWBS}
@@ -643,6 +697,21 @@ export function PortfolioHomePage({
                     row,
                     () => wbsGateway.reorder(row.projectId, row.id, direction),
                     "Item reordered.",
+                    true,
+                  )
+                }
+                onPlace={(row, target, placement) =>
+                  void mutateWBS(
+                    row,
+                    () =>
+                      wbsGateway.place(
+                        row.projectId,
+                        row.id,
+                        target.id,
+                        placement,
+                      ),
+                    "Item reordered.",
+                    true,
                     true,
                   )
                 }
@@ -1035,15 +1104,18 @@ function Gantt({
   days,
   timelineWidth,
   collapsed,
+  hierarchyAction,
   restrictiveRoleFilter,
   busyRowID,
   focusRequest,
   onFocusRequestHandled,
   onToggle,
+  onToggleAll,
   onOpenProject,
   onProjectCommand,
   onOpenWBS,
   onReorder,
+  onPlace,
   onDelete,
 }: {
   rows: PortfolioRow[];
@@ -1055,15 +1127,22 @@ function Gantt({
   days: string[];
   timelineWidth: number;
   collapsed: Set<string>;
+  hierarchyAction?: "collapse" | "expand";
   restrictiveRoleFilter: boolean;
   busyRowID: string;
   focusRequest?: HomeRowFocusRequest;
   onFocusRequestHandled?(key: number): void;
   onToggle(id: string): void;
+  onToggleAll(): void;
   onOpenProject(projectId: string): void;
   onProjectCommand(kind: HomeProjectCommandKind, projectId: string): void;
   onOpenWBS(request: WBSOpenRequest): void;
   onReorder(row: PortfolioRow, direction: "up" | "down"): void;
+  onPlace(
+    row: PortfolioRow,
+    target: PortfolioRow,
+    placement: "before" | "after",
+  ): void;
   onDelete(row: PortfolioRow): void;
 }) {
   const leftBodyRef = useRef<HTMLDivElement>(null);
@@ -1071,7 +1150,9 @@ function Gantt({
   const timelineBodyRef = useRef<HTMLDivElement>(null);
   const rowNameRefs = useRef(new Map<string, HTMLButtonElement>());
   const handledFocusRequestKey = useRef<number | undefined>(undefined);
-  const [columns, setColumns] = useState(initialColumns);
+  const [columns, setColumns] = useState(() =>
+    loadPortfolioColumnWidths(initialColumns),
+  );
   const [resizingColumn, setResizingColumn] = useState<{
     index: number;
     startX: number;
@@ -1081,6 +1162,46 @@ function Gantt({
     start: 0,
     end: Math.min(rows.length, maximumRenderedRows),
   }));
+  const [hoveredRowID, setHoveredRowID] = useState<string>();
+  const [keyboardOrTouchFocusedRowID, setKeyboardOrTouchFocusedRowID] =
+    useState<string>();
+  const focusInputRef = useRef<"keyboard" | "mouse" | "touch">("keyboard");
+  const expandedRowID = hoveredRowID ?? keyboardOrTouchFocusedRowID;
+  const [dragSourceID, setDragSourceID] = useState<string>();
+  const dragSourceRef = useRef<string | undefined>(undefined);
+  const [dropTarget, setDropTarget] = useState<{
+    indicatorRowId: string;
+    placement: "before" | "after";
+  }>();
+  const touchDragRef = useRef<
+    | {
+        pointerId: number;
+        sourceId: string;
+        startX: number;
+        startY: number;
+        active: boolean;
+        targetId?: string;
+        placement?: "before" | "after";
+      }
+    | undefined
+  >(undefined);
+  const projectStatus = useMemo(
+    () =>
+      new Map(
+        rows
+          .filter((row) => row.kind === "project")
+          .map((row) => [row.projectId, row.status]),
+      ),
+    [rows],
+  );
+  const expandedRowIndex = expandedRowID
+    ? rows.findIndex(
+        (row) =>
+          row.id === expandedRowID &&
+          canShowCreateActions(row, projectStatus.get(row.projectId)),
+      )
+    : -1;
+  const totalRowHeight = rowsHeight(rows.length, expandedRowIndex);
 
   useEffect(() => {
     const timeline = timelineBodyRef.current;
@@ -1090,12 +1211,13 @@ function Gantt({
     const retainedScrollTop = clamp(
       currentScrollTop,
       0,
-      Math.max(0, rows.length * rowHeight - viewportHeight),
+      Math.max(0, totalRowHeight - viewportHeight),
     );
     const nextWindow = rowWindowForViewport(
       rows.length,
       retainedScrollTop,
       viewportHeight,
+      expandedRowIndex,
     );
 
     if (timeline && timeline.scrollTop !== retainedScrollTop)
@@ -1110,7 +1232,22 @@ function Gantt({
         ? current
         : nextWindow,
     );
-  }, [rows]);
+  }, [expandedRowIndex, rows, totalRowHeight]);
+
+  useEffect(() => {
+    function rememberPointerInput(event: PointerEvent) {
+      focusInputRef.current = focusInputFromPointer(event.pointerType);
+    }
+    function rememberKeyboardInput() {
+      focusInputRef.current = "keyboard";
+    }
+    document.addEventListener("pointerdown", rememberPointerInput, true);
+    document.addEventListener("keydown", rememberKeyboardInput, true);
+    return () => {
+      document.removeEventListener("pointerdown", rememberPointerInput, true);
+      document.removeEventListener("keydown", rememberKeyboardInput, true);
+    };
+  }, []);
 
   useEffect(() => {
     if (!focusRequest || handledFocusRequestKey.current === focusRequest.key)
@@ -1121,8 +1258,8 @@ function Gantt({
     const viewportHeight = timeline?.clientHeight ?? 0;
     const currentScrollTop =
       timeline?.scrollTop ?? leftBodyRef.current?.scrollTop ?? 0;
-    const targetTop = targetIndex * rowHeight;
-    const targetBottom = targetTop + rowHeight;
+    const targetTop = rowTop(targetIndex, expandedRowIndex);
+    const targetBottom = targetTop + rowHeightAt(targetIndex, expandedRowIndex);
     const targetScrollTop =
       targetTop < currentScrollTop
         ? targetTop
@@ -1133,6 +1270,7 @@ function Gantt({
       rows.length,
       targetScrollTop,
       viewportHeight,
+      expandedRowIndex,
     );
 
     if (timeline) timeline.scrollTop = targetScrollTop;
@@ -1142,7 +1280,7 @@ function Gantt({
         ? current
         : nextWindow,
     );
-  }, [focusRequest, rows]);
+  }, [expandedRowIndex, focusRequest, rows]);
 
   useEffect(() => {
     if (!focusRequest || handledFocusRequestKey.current === focusRequest.key)
@@ -1153,6 +1291,42 @@ function Gantt({
     handledFocusRequestKey.current = focusRequest.key;
     onFocusRequestHandled?.(focusRequest.key);
   }, [focusRequest, onFocusRequestHandled, rowWindow, rows]);
+
+  useEffect(() => {
+    if (!dragSourceID) return;
+    function cancelDrag(event: KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      touchDragRef.current = undefined;
+      dragSourceRef.current = undefined;
+      setDragSourceID(undefined);
+      setDropTarget(undefined);
+    }
+    window.addEventListener("keydown", cancelDrag);
+    return () => window.removeEventListener("keydown", cancelDrag);
+  }, [dragSourceID]);
+
+  useEffect(() => {
+    savePortfolioColumnWidths(columns);
+  }, [columns]);
+
+  useEffect(() => {
+    if (!expandedRowID) return;
+    const expandedRow = rows.find((row) => row.id === expandedRowID);
+    if (
+      expandedRow &&
+      canShowCreateActions(
+        expandedRow,
+        projectStatus.get(expandedRow.projectId),
+      )
+    )
+      return;
+    setHoveredRowID((current) =>
+      current === expandedRowID ? undefined : current,
+    );
+    setKeyboardOrTouchFocusedRowID((current) =>
+      current === expandedRowID ? undefined : current,
+    );
+  }, [expandedRowID, projectStatus, rows]);
 
   useEffect(() => {
     if (!resizingColumn) return;
@@ -1190,19 +1364,16 @@ function Gantt({
     0,
   );
   const windowRows = rows.slice(rowWindow.start, rowWindow.end);
-  const topSpacerHeight = rowWindow.start * rowHeight;
-  const bottomSpacerHeight =
-    Math.max(0, rows.length - rowWindow.end) * rowHeight;
+  const topSpacerHeight = rowTop(rowWindow.start, expandedRowIndex);
+  const bottomSpacerHeight = Math.max(
+    0,
+    totalRowHeight - rowTop(rowWindow.end, expandedRowIndex),
+  );
   const rowIndex = new Map(rows.map((row, index) => [row.id, index]));
   const rowByID = new Map(rows.map((row) => [row.id, row]));
   const barFractions = useMemo(
     () => sameDayDependencyFractions(rows, dependencies),
     [dependencies, rows],
-  );
-  const projectStatus = new Map(
-    rows
-      .filter((row) => row.kind === "project")
-      .map((row) => [row.projectId, row.status]),
   );
   const from = days[0];
   const to = days.at(-1);
@@ -1238,13 +1409,13 @@ function Gantt({
           from,
           barFractions.get(blocking.id)?.end,
         ),
-        y1: blockingIndex * rowHeight + rowHeight / 2,
+        y1: rowTop(blockingIndex, expandedRowIndex) + rowHeight / 2,
         x2: barStartAnchor(
           blocked.start,
           from,
           barFractions.get(blocked.id)?.start,
         ),
-        y2: blockedIndex * rowHeight + rowHeight / 2,
+        y2: rowTop(blockedIndex, expandedRowIndex) + rowHeight / 2,
       },
     ];
   });
@@ -1252,10 +1423,207 @@ function Gantt({
   const months = monthSegments(days);
 
   function updateRowWindow(scrollTop: number, clientHeight: number) {
-    const next = rowWindowForViewport(rows.length, scrollTop, clientHeight);
+    const next = rowWindowForViewport(
+      rows.length,
+      scrollTop,
+      clientHeight,
+      expandedRowIndex,
+    );
     setRowWindow((current) =>
       current.start === next.start && current.end === next.end ? current : next,
     );
+  }
+
+  function canDragRow(row: PortfolioRow): boolean {
+    return (
+      row.kind !== "project" &&
+      projectStatus.get(row.projectId) === "open" &&
+      !restrictiveRoleFilter &&
+      !busyRowID
+    );
+  }
+
+  function validDropTarget(
+    source: PortfolioRow,
+    target: PortfolioRow,
+  ): boolean {
+    return (
+      source.id !== target.id &&
+      source.kind !== "project" &&
+      target.kind !== "project" &&
+      source.projectId === target.projectId &&
+      source.parentId === target.parentId
+    );
+  }
+
+  function dragPlacement(event: DragEvent<HTMLElement>): "before" | "after" {
+    const bounds = event.currentTarget.getBoundingClientRect();
+    return event.clientY < bounds.top + bounds.height / 2 ? "before" : "after";
+  }
+
+  function dropIndicatorRowId(
+    target: PortfolioRow,
+    placement: "before" | "after",
+  ): string {
+    if (
+      placement === "before" ||
+      !target.hasChildren ||
+      collapsed.has(target.id)
+    )
+      return target.id;
+    const targetIndex = rows.findIndex(
+      (candidate) => candidate.id === target.id,
+    );
+    if (targetIndex < 0) return target.id;
+    let boundary = targetIndex;
+    for (let index = targetIndex + 1; index < rows.length; index++) {
+      if (rows[index].depth <= target.depth) break;
+      boundary = index;
+    }
+    return rows[boundary]?.id ?? target.id;
+  }
+
+  function isExistingPlacement(
+    source: PortfolioRow,
+    target: PortfolioRow,
+    placement: "before" | "after",
+  ): boolean {
+    const siblings = authoritativeRows
+      .filter(
+        (candidate) =>
+          candidate.kind !== "project" &&
+          candidate.projectId === source.projectId &&
+          candidate.parentId === source.parentId,
+      )
+      .sort((left, right) => left.position - right.position);
+    const sourceIndex = siblings.findIndex(
+      (candidate) => candidate.id === source.id,
+    );
+    const targetIndex = siblings.findIndex(
+      (candidate) => candidate.id === target.id,
+    );
+    return (
+      sourceIndex < 0 ||
+      targetIndex < 0 ||
+      (placement === "before" && sourceIndex === targetIndex - 1) ||
+      (placement === "after" && sourceIndex === targetIndex + 1)
+    );
+  }
+
+  function autoScrollDuringDrag(clientY: number) {
+    const viewport = leftBodyRef.current;
+    const timeline = timelineBodyRef.current;
+    if (!viewport || !timeline) return;
+    const bounds = viewport.getBoundingClientRect();
+    const threshold = rowHeight;
+    const delta =
+      clientY < bounds.top + threshold
+        ? -rowHeight
+        : clientY > bounds.bottom - threshold
+          ? rowHeight
+          : 0;
+    if (delta === 0) return;
+    const next = clamp(
+      timeline.scrollTop + delta,
+      0,
+      Math.max(0, totalRowHeight - timeline.clientHeight),
+    );
+    timeline.scrollTop = next;
+    viewport.scrollTop = next;
+    updateRowWindow(next, timeline.clientHeight);
+  }
+
+  function clearDrag() {
+    touchDragRef.current = undefined;
+    dragSourceRef.current = undefined;
+    setDragSourceID(undefined);
+    setDropTarget(undefined);
+  }
+
+  function updateTouchDrop(clientX: number, clientY: number) {
+    const drag = touchDragRef.current;
+    if (!drag?.active) return;
+    const source = rowByID.get(drag.sourceId);
+    const element = document.elementFromPoint?.(clientX, clientY);
+    const rowElement = element?.closest<HTMLElement>("[data-portfolio-row]");
+    const targetID = rowElement?.dataset.portfolioRow;
+    const target = targetID ? rowByID.get(targetID) : undefined;
+    if (!source || !target || !validDropTarget(source, target) || !rowElement) {
+      drag.targetId = undefined;
+      drag.placement = undefined;
+      setDropTarget(undefined);
+      autoScrollDuringDrag(clientY);
+      return;
+    }
+    const bounds = rowElement.getBoundingClientRect();
+    const placement =
+      clientY < bounds.top + bounds.height / 2 ? "before" : "after";
+    drag.targetId = target.id;
+    drag.placement = placement;
+    setDropTarget({
+      indicatorRowId: dropIndicatorRowId(target, placement),
+      placement,
+    });
+    autoScrollDuringDrag(clientY);
+  }
+
+  function startTouchDrag(
+    event: ReactPointerEvent<HTMLButtonElement>,
+    row: PortfolioRow,
+  ) {
+    if (event.pointerType === "mouse" || !canDragRow(row)) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    touchDragRef.current = {
+      pointerId: event.pointerId,
+      sourceId: row.id,
+      startX: event.clientX,
+      startY: event.clientY,
+      active: false,
+    };
+  }
+
+  function moveTouchDrag(event: ReactPointerEvent<HTMLButtonElement>) {
+    const drag = touchDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const distance = Math.hypot(
+      event.clientX - drag.startX,
+      event.clientY - drag.startY,
+    );
+    if (!drag.active && distance < 6) return;
+    event.preventDefault();
+    if (!drag.active) {
+      drag.active = true;
+      setHoveredRowID(undefined);
+      setKeyboardOrTouchFocusedRowID(undefined);
+      dragSourceRef.current = drag.sourceId;
+      setDragSourceID(drag.sourceId);
+      setDropTarget(undefined);
+    }
+    updateTouchDrop(event.clientX, event.clientY);
+  }
+
+  function finishTouchDrag(event: ReactPointerEvent<HTMLButtonElement>) {
+    const drag = touchDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId))
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    const source = rowByID.get(drag.sourceId);
+    const target = drag.targetId ? rowByID.get(drag.targetId) : undefined;
+    const placement = drag.placement;
+    const active = drag.active;
+    if (active) event.preventDefault();
+    clearDrag();
+    if (
+      !active ||
+      !source ||
+      !target ||
+      !placement ||
+      !validDropTarget(source, target) ||
+      isExistingPlacement(source, target, placement)
+    )
+      return;
+    onPlace(source, target, placement);
   }
 
   return (
@@ -1276,6 +1644,17 @@ function Gantt({
             className="relative flex min-w-0 items-center border-r border-border-subtle px-2"
           >
             <span className="truncate">{column.label}</span>
+            {column.key === "name" && hierarchyAction ? (
+              <button
+                type="button"
+                className="ml-auto grid size-6 shrink-0 place-items-center rounded-action text-text-secondary hover:bg-surface-muted hover:text-brand-strong"
+                aria-label={`${hierarchyAction === "collapse" ? "Collapse" : "Expand"} all rows`}
+                title={`${hierarchyAction === "collapse" ? "Collapse" : "Expand"} all rows`}
+                onClick={onToggleAll}
+              >
+                <HierarchyToggleIcon action={hierarchyAction} />
+              </button>
+            ) : null}
             <div
               role="separator"
               aria-label={`Resize ${column.label} column`}
@@ -1399,8 +1778,22 @@ function Gantt({
             {windowRows.map((row, windowIndex) => (
               <div
                 key={row.id}
-                className="grid border-b border-border-subtle text-xs"
+                className={`group relative grid border-b text-xs ${
+                  canShowCreateActions(row, projectStatus.get(row.projectId)) &&
+                  expandedRowID === row.id
+                    ? "z-20"
+                    : ""
+                } ${busyRowID === row.id ? "bg-brand-soft" : ""} ${
+                  dropTarget?.indicatorRowId === row.id &&
+                  dropTarget.placement === "before"
+                    ? "border-t-2 border-t-brand border-b-border-subtle"
+                    : dropTarget?.indicatorRowId === row.id &&
+                        dropTarget.placement === "after"
+                      ? "border-b-2 border-b-brand"
+                      : "border-b-border-subtle"
+                }`}
                 role="row"
+                aria-busy={busyRowID === row.id ? true : undefined}
                 aria-rowindex={rowWindow.start + windowIndex + 1}
                 aria-level={row.depth + 1}
                 aria-expanded={
@@ -1408,77 +1801,202 @@ function Gantt({
                 }
                 data-portfolio-row={row.id}
                 style={{
-                  height: rowHeight,
+                  height: rowHeightAt(
+                    rowWindow.start + windowIndex,
+                    expandedRowIndex,
+                  ),
                   gridTemplateColumns: columnTemplate,
+                }}
+                onMouseEnter={() => {
+                  if (
+                    canShowCreateActions(
+                      row,
+                      projectStatus.get(row.projectId),
+                    ) &&
+                    !dragSourceRef.current
+                  )
+                    setHoveredRowID(row.id);
+                }}
+                onMouseLeave={() => {
+                  setHoveredRowID((current) =>
+                    current === row.id ? undefined : current,
+                  );
+                }}
+                onPointerDownCapture={(event) => {
+                  const focusInput = focusInputFromPointer(event.pointerType);
+                  focusInputRef.current = focusInput;
+                  if (focusInput === "mouse")
+                    setKeyboardOrTouchFocusedRowID((current) =>
+                      current === row.id ? undefined : current,
+                    );
+                }}
+                onFocus={() => {
+                  if (
+                    focusInputRef.current !== "mouse" &&
+                    canShowCreateActions(row, projectStatus.get(row.projectId))
+                  )
+                    setKeyboardOrTouchFocusedRowID(row.id);
+                }}
+                onBlur={(event) => {
+                  const nextTarget = event.relatedTarget;
+                  if (
+                    nextTarget instanceof Node &&
+                    event.currentTarget.contains(nextTarget)
+                  )
+                    return;
+                  setKeyboardOrTouchFocusedRowID((current) =>
+                    current === row.id ? undefined : current,
+                  );
+                }}
+                onDragOver={(event) => {
+                  const sourceID = dragSourceRef.current ?? dragSourceID;
+                  const source = sourceID ? rowByID.get(sourceID) : undefined;
+                  if (!source || !validDropTarget(source, row)) return;
+                  event.preventDefault();
+                  event.dataTransfer.dropEffect = "move";
+                  const placement = dragPlacement(event);
+                  setDropTarget({
+                    indicatorRowId: dropIndicatorRowId(row, placement),
+                    placement,
+                  });
+                  autoScrollDuringDrag(event.clientY);
+                }}
+                onDrop={(event) => {
+                  const sourceID = dragSourceRef.current ?? dragSourceID;
+                  const source = sourceID ? rowByID.get(sourceID) : undefined;
+                  const placement = dragPlacement(event);
+                  if (!source || !validDropTarget(source, row)) {
+                    clearDrag();
+                    return;
+                  }
+                  event.preventDefault();
+                  clearDrag();
+                  if (isExistingPlacement(source, row, placement)) return;
+                  onPlace(source, row, placement);
                 }}
               >
                 <GridCell>
                   {row.kind === "project" ? "" : row.wbsNumber}
                 </GridCell>
                 <div
-                  className="group relative flex min-w-0 items-center gap-1 overflow-hidden border-r border-border-subtle px-2"
+                  className={`relative flex min-w-0 flex-col border-r border-border-subtle px-2 ${
+                    canShowCreateActions(row, projectStatus.get(row.projectId))
+                      ? "overflow-visible"
+                      : "overflow-hidden"
+                  } ${
+                    canShowCreateActions(
+                      row,
+                      projectStatus.get(row.projectId),
+                    ) && expandedRowID === row.id
+                      ? "z-30"
+                      : ""
+                  }`}
                   role="gridcell"
                   style={{
                     paddingLeft: `${Math.min(row.depth, 8) * 10 + 6}px`,
                   }}
+                  data-row-name-stack={row.id}
                 >
-                  {row.hasChildren ? (
-                    <button
-                      type="button"
-                      className="grid size-6 shrink-0 place-items-center rounded-action hover:bg-surface-muted"
-                      aria-label={`${collapsed.has(row.id) ? "Expand" : "Collapse"} ${row.name}`}
-                      aria-expanded={!collapsed.has(row.id)}
-                      onClick={() => onToggle(row.id)}
-                    >
-                      {collapsed.has(row.id) ? "▸" : "▾"}
-                    </button>
-                  ) : (
-                    <span className="w-5 shrink-0" />
-                  )}
-                  <button
-                    ref={(element) => {
-                      if (element) rowNameRefs.current.set(row.id, element);
-                      else rowNameRefs.current.delete(row.id);
-                    }}
-                    type="button"
-                    className="min-w-0 truncate text-left font-semibold hover:text-brand-strong hover:underline"
-                    title={row.name}
-                    onClick={() =>
-                      row.kind === "project"
-                        ? onOpenProject(row.projectId)
-                        : onOpenWBS({
-                            projectId: row.projectId,
-                            nodeId: row.id,
-                          })
-                    }
+                  <div
+                    className="flex h-10 min-w-0 shrink-0 items-center gap-1 overflow-hidden pr-7"
+                    data-row-name-line={row.id}
                   >
-                    {row.name}
-                  </button>
-                  {row.status === "locked" ? (
-                    <span className="rounded-action bg-surface-muted px-1.5 py-0.5 text-[10px] font-bold">
-                      Locked
-                    </span>
-                  ) : null}
-                  {row.incompleteEffort ? (
-                    <span
-                      role="img"
-                      title="Contains task without effort"
-                      aria-label="Contains task without effort"
+                    {row.kind !== "project" &&
+                    projectStatus.get(row.projectId) === "open" ? (
+                      <button
+                        type="button"
+                        draggable={canDragRow(row)}
+                        className="grid size-6 shrink-0 touch-none cursor-grab place-items-center rounded-action text-muted hover:bg-surface-muted disabled:cursor-not-allowed disabled:opacity-50"
+                        aria-label={`Reorder ${row.name}`}
+                        title={
+                          restrictiveRoleFilter
+                            ? "Show all roles to reorder WBS items."
+                            : "Drag to reorder"
+                        }
+                        disabled={restrictiveRoleFilter || Boolean(busyRowID)}
+                        onDragStart={(event) => {
+                          if (!canDragRow(row)) {
+                            event.preventDefault();
+                            return;
+                          }
+                          event.dataTransfer.effectAllowed = "move";
+                          event.dataTransfer.setData("text/plain", row.id);
+                          setHoveredRowID(undefined);
+                          setKeyboardOrTouchFocusedRowID(undefined);
+                          dragSourceRef.current = row.id;
+                          setDragSourceID(row.id);
+                          setDropTarget(undefined);
+                        }}
+                        onDragEnd={clearDrag}
+                        onPointerDown={(event) => startTouchDrag(event, row)}
+                        onPointerMove={moveTouchDrag}
+                        onPointerUp={finishTouchDrag}
+                        onPointerCancel={clearDrag}
+                      >
+                        ⋮⋮
+                      </button>
+                    ) : null}
+                    {row.hasChildren ? (
+                      <button
+                        type="button"
+                        className="grid size-6 shrink-0 place-items-center rounded-action hover:bg-surface-muted"
+                        aria-label={`${collapsed.has(row.id) ? "Expand" : "Collapse"} ${row.name}`}
+                        aria-expanded={!collapsed.has(row.id)}
+                        onClick={() => onToggle(row.id)}
+                      >
+                        {collapsed.has(row.id) ? "▸" : "▾"}
+                      </button>
+                    ) : (
+                      <span className="w-5 shrink-0" />
+                    )}
+                    <button
+                      ref={(element) => {
+                        if (element) rowNameRefs.current.set(row.id, element);
+                        else rowNameRefs.current.delete(row.id);
+                      }}
+                      type="button"
+                      className="min-w-0 flex-1 truncate text-left font-semibold hover:text-brand-strong hover:underline"
+                      title={row.name}
+                      onClick={() =>
+                        row.kind === "project"
+                          ? onOpenProject(row.projectId)
+                          : onOpenWBS({
+                              projectId: row.projectId,
+                              nodeId: row.id,
+                            })
+                      }
                     >
-                      !
-                    </span>
-                  ) : null}
-                  {row.incompleteSchedule ? (
-                    <span
-                      role="img"
-                      title="Contains unscheduled task"
-                      aria-label="Contains unscheduled task"
-                    >
-                      ◌
-                    </span>
-                  ) : null}
+                      {row.name}
+                    </button>
+                    {row.status === "locked" ? (
+                      <span className="shrink-0 rounded-action bg-surface-muted px-1.5 py-0.5 text-[10px] font-bold">
+                        Locked
+                      </span>
+                    ) : null}
+                    {row.incompleteEffort ? (
+                      <span
+                        role="img"
+                        className="shrink-0"
+                        title="Contains task without effort"
+                        aria-label="Contains task without effort"
+                      >
+                        !
+                      </span>
+                    ) : null}
+                    {row.incompleteSchedule ? (
+                      <span
+                        role="img"
+                        className="shrink-0"
+                        title="Contains unscheduled task"
+                        aria-label="Contains unscheduled task"
+                      >
+                        ◌
+                      </span>
+                    ) : null}
+                  </div>
                   <RowActions
                     row={row}
+                    expanded={expandedRowID === row.id}
                     authoritativeRows={authoritativeRows}
                     projectStatus={projectStatus.get(row.projectId)}
                     restrictiveRoleFilter={restrictiveRoleFilter}
@@ -1533,7 +2051,7 @@ function Gantt({
           className="relative"
           style={{
             width: timelineWidth,
-            minHeight: rows.length * rowHeight,
+            minHeight: totalRowHeight,
           }}
         >
           <div
@@ -1542,11 +2060,17 @@ function Gantt({
               paddingBottom: bottomSpacerHeight,
             }}
           >
-            {windowRows.map((row) => (
+            {windowRows.map((row, windowIndex) => (
               <div
                 key={row.id}
                 className="border-b border-border-subtle"
-                style={{ height: rowHeight }}
+                data-portfolio-timeline-row={row.id}
+                style={{
+                  height: rowHeightAt(
+                    rowWindow.start + windowIndex,
+                    expandedRowIndex,
+                  ),
+                }}
               >
                 <div
                   className="relative h-full w-full overflow-hidden text-left"
@@ -1586,7 +2110,7 @@ function Gantt({
           </div>
           <svg
             className="pointer-events-none absolute inset-0"
-            style={{ width: timelineWidth, height: rows.length * rowHeight }}
+            style={{ width: timelineWidth, height: totalRowHeight }}
             aria-hidden="true"
           >
             <defs>
@@ -1658,6 +2182,26 @@ function GanttConfigurationIcon() {
   );
 }
 
+function HierarchyToggleIcon({ action }: { action: "collapse" | "expand" }) {
+  const first = action === "collapse" ? "M7 8l5-4 5 4" : "M7 4l5 4 5-4";
+  const second = action === "collapse" ? "M7 16l5-4 5 4" : "M7 12l5 4 5-4";
+  return (
+    <svg
+      className="size-4"
+      viewBox="0 0 24 20"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d={first} />
+      <path d={second} />
+    </svg>
+  );
+}
+
 type RowAction = {
   value: string;
   label: string;
@@ -1668,6 +2212,7 @@ type RowAction = {
 
 function RowActions({
   row,
+  expanded,
   authoritativeRows,
   projectStatus,
   restrictiveRoleFilter,
@@ -1678,6 +2223,7 @@ function RowActions({
   onDelete,
 }: {
   row: PortfolioRow;
+  expanded: boolean;
   authoritativeRows: PortfolioRow[];
   projectStatus?: "open" | "locked";
   restrictiveRoleFilter: boolean;
@@ -1692,12 +2238,10 @@ function RowActions({
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const open = projectStatus === "open";
-  const quickAction =
-    row.kind === "project" && row.status === "open"
-      ? "task"
-      : row.kind !== "project" && open && !row.completed
-        ? "child"
-        : undefined;
+  const canAddSibling = row.kind !== "project" && open;
+  const canAddChild =
+    (row.kind === "project" && row.status === "open") ||
+    (row.kind !== "project" && open && !row.completed);
   const siblings = authoritativeRows
     .filter(
       (candidate) =>
@@ -1825,51 +2369,99 @@ function RowActions({
     else if (value === "delete-task") onDelete(row);
   }
 
-  if (!quickAction && actions.length === 0) return null;
+  if (!canAddSibling && !canAddChild && actions.length === 0) return null;
 
   return (
-    <div
-      className={`absolute inset-y-0 right-1 z-20 flex items-center justify-end gap-1 bg-surface pl-1 transition-opacity ${
-        menuOpen
-          ? "pointer-events-auto opacity-100"
-          : "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100"
-      }`}
-      data-row-actions={row.id}
-      onKeyDown={(event) => {
-        if (event.key === "Escape") {
-          event.stopPropagation();
-          closeMenuAndFocus();
-        }
-      }}
-    >
-      {quickAction ? (
-        <button
-          type="button"
-          className="grid size-7 place-items-center rounded-action text-brand-strong hover:bg-brand-soft disabled:opacity-50"
-          aria-label={`${quickAction === "task" ? "Add Task" : "Add Child"} for ${row.name}`}
-          title={`${quickAction === "task" ? "Add Task to" : "Add Child under"} ${row.name}`}
-          disabled={busy}
-          onClick={() =>
-            onOpenWBS({
-              projectId: row.projectId,
-              createParentId: quickAction === "task" ? null : row.id,
-            })
-          }
+    <>
+      {canAddSibling || canAddChild ? (
+        <div
+          className={`absolute top-10 z-40 flex h-6 w-max max-w-none items-center gap-0.5 whitespace-nowrap bg-surface pr-2 shadow-sm transition-opacity ${
+            expanded
+              ? "pointer-events-auto opacity-100"
+              : "pointer-events-none opacity-0"
+          }`}
+          data-row-create-actions={row.id}
+          style={{
+            left: 0,
+            paddingLeft:
+              Math.min(row.depth, 8) * 10 +
+              6 +
+              (row.kind === "project" ? 0 : 28) +
+              (row.hasChildren ? 28 : 24),
+          }}
         >
-          {quickAction === "task" ? <AddTaskIcon /> : <AddChildIcon />}
-        </button>
+          <span
+            aria-hidden="true"
+            className="shrink-0 text-[10px] leading-none text-brand-strong"
+          >
+            ⊕
+          </span>
+          {canAddSibling ? (
+            <button
+              type="button"
+              className="h-4 shrink-0 rounded-action px-1 text-[10px] font-extrabold leading-none text-brand-strong hover:bg-brand-soft disabled:opacity-50"
+              aria-label={`Add Sibling for ${row.name}`}
+              title={`Add Sibling after ${row.name}`}
+              disabled={busy}
+              onClick={() =>
+                onOpenWBS({
+                  projectId: row.projectId,
+                  createAfterId: row.id,
+                })
+              }
+            >
+              Add Sibling
+            </button>
+          ) : null}
+          {canAddSibling && canAddChild ? (
+            <span
+              aria-hidden="true"
+              className="shrink-0 text-[10px] leading-none text-border-strong"
+            >
+              |
+            </span>
+          ) : null}
+          {canAddChild ? (
+            <button
+              type="button"
+              className="h-4 shrink-0 rounded-action px-1 text-[10px] font-extrabold leading-none text-brand-strong hover:bg-brand-soft disabled:opacity-50"
+              aria-label={`Add Child for ${row.name}`}
+              title={`Add Child under ${row.name}`}
+              disabled={busy}
+              onClick={() =>
+                onOpenWBS({
+                  projectId: row.projectId,
+                  createParentId: row.kind === "project" ? null : row.id,
+                })
+              }
+            >
+              Add Child
+            </button>
+          ) : null}
+        </div>
       ) : null}
       {actions.length > 0 ? (
         <>
           <button
             ref={triggerRef}
             type="button"
-            className="grid size-7 place-items-center rounded-action border border-transparent bg-surface text-base font-black hover:border-border-strong disabled:opacity-50"
+            className={`absolute right-0 top-2 grid size-6 place-items-center rounded-action border border-transparent bg-surface text-base font-black transition-opacity hover:border-border-strong disabled:opacity-50 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100 ${
+              menuOpen
+                ? "pointer-events-auto opacity-100"
+                : "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100"
+            }`}
             aria-label={`More actions for ${row.name}`}
             aria-haspopup="menu"
             aria-expanded={menuOpen}
             title={`More actions for ${row.name}`}
             disabled={busy}
+            data-row-actions={row.id}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                event.stopPropagation();
+                closeMenuAndFocus();
+              }
+            }}
             onClick={toggleMenu}
           >
             ⋯
@@ -1927,50 +2519,14 @@ function RowActions({
             : null}
         </>
       ) : null}
-    </div>
-  );
-}
-
-function AddTaskIcon() {
-  return (
-    <svg
-      className="size-4"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.8"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <rect x="4" y="4" width="16" height="16" rx="2" />
-      <path d="M12 8v8M8 12h8" />
-    </svg>
-  );
-}
-
-function AddChildIcon() {
-  return (
-    <svg
-      className="size-4"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.8"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M6 4v8a4 4 0 0 0 4 4h4" />
-      <path d="M14 12v8M10 16h8" />
-    </svg>
+    </>
   );
 }
 
 function GridCell({ children }: { children: string }) {
   return (
     <div
-      className="flex min-w-0 items-center overflow-hidden border-r border-border-subtle px-2 text-[11px]"
+      className="flex h-10 min-w-0 items-center overflow-hidden border-r border-border-subtle px-2 text-[11px]"
       role="gridcell"
       title={children}
     >
@@ -2102,7 +2658,8 @@ function visiblePortfolioRows(
     while (collapsedDepths.length > 0 && row.depth <= collapsedDepths.at(-1)!)
       collapsedDepths.pop();
     if (collapsedDepths.length === 0) visible.push(row);
-    if (collapsed.has(row.id)) collapsedDepths.push(row.depth);
+    if (row.hasChildren && collapsed.has(row.id))
+      collapsedDepths.push(row.depth);
   }
   return visible;
 }
@@ -2464,13 +3021,62 @@ function sameStrings(left: string[], right: string[]): boolean {
   );
 }
 
+function canShowCreateActions(
+  row: PortfolioRow,
+  projectStatus?: "open" | "locked",
+): boolean {
+  return row.kind === "project"
+    ? row.status === "open"
+    : projectStatus === "open";
+}
+
+function rowHeightAt(index: number, expandedIndex: number): number {
+  return index === expandedIndex ? expandedRowHeight : rowHeight;
+}
+
+function rowTop(index: number, expandedIndex: number): number {
+  return (
+    Math.max(0, index) * rowHeight +
+    (expandedIndex >= 0 && expandedIndex < index
+      ? expandedRowHeight - rowHeight
+      : 0)
+  );
+}
+
+function rowsHeight(rowCount: number, expandedIndex: number): number {
+  return rowTop(rowCount, expandedIndex);
+}
+
+function rowIndexAtOffset(
+  rowCount: number,
+  offset: number,
+  expandedIndex: number,
+): number {
+  if (rowCount <= 0) return 0;
+  const boundedOffset = Math.max(0, offset);
+  if (expandedIndex < 0)
+    return Math.min(rowCount - 1, Math.floor(boundedOffset / rowHeight));
+
+  const expandedTop = expandedIndex * rowHeight;
+  if (boundedOffset < expandedTop)
+    return Math.min(rowCount - 1, Math.floor(boundedOffset / rowHeight));
+  if (boundedOffset < expandedTop + expandedRowHeight) return expandedIndex;
+
+  return Math.min(
+    rowCount - 1,
+    Math.floor((boundedOffset - (expandedRowHeight - rowHeight)) / rowHeight),
+  );
+}
+
 function rowWindowForViewport(
   rowCount: number,
   scrollTop: number,
   clientHeight: number,
+  expandedIndex: number,
 ): { start: number; end: number } {
-  const visibleCount = Math.max(1, Math.ceil(clientHeight / rowHeight));
-  const start = Math.max(0, Math.floor(scrollTop / rowHeight) - rowOverscan);
+  const visibleCount = Math.max(1, Math.ceil(clientHeight / rowHeight) + 1);
+  const firstVisible = rowIndexAtOffset(rowCount, scrollTop, expandedIndex);
+  const start = Math.max(0, firstVisible - rowOverscan);
   return {
     start,
     end: Math.min(

@@ -54,6 +54,7 @@ type WBSRequest = {
   project: Project;
   nodeId?: string;
   createParentId?: string | null;
+  createAfterId?: string;
   moveNodeId?: string;
 };
 type ProjectEditRequest = { key: number; project: Project };
@@ -121,6 +122,7 @@ export function App() {
     projectId: string;
     nodeId?: string;
     createParentId?: string | null;
+    createAfterId?: string;
     moveNodeId?: string;
   }) {
     const requestVersion = beginHomeOverlayRequest();
@@ -132,6 +134,7 @@ export function App() {
         project,
         nodeId: request.nodeId,
         createParentId: request.createParentId,
+        createAfterId: request.createAfterId,
         moveNodeId: request.moveNodeId,
       });
     } catch {
@@ -254,6 +257,7 @@ export function App() {
           loadPublicHolidayDates={publicHolidaysGateway.calendar}
           initialNodeId={wbsRequest.nodeId}
           initialCreateParentId={wbsRequest.createParentId}
+          initialCreateAfterId={wbsRequest.createAfterId}
           initialMoveNodeId={wbsRequest.moveNodeId}
           onCreated={(node) => {
             finishHomeOverlayRequest(wbsRequest.key, node.id, true);
