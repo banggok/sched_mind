@@ -68,12 +68,14 @@ type Store interface {
 	Find(context.Context, string, string) (*domain.Node, error)
 	Allocations(context.Context, string, string) (*AllocationGroups, error)
 	Create(context.Context, string, string, *string, string, bool, time.Time, func(context.Context, string) error, func(context.Context, []string) error) (*domain.Node, error)
+	CreateSibling(context.Context, string, string, string, string, time.Time, func(context.Context, string) error) (*domain.Node, error)
 	Rename(context.Context, string, string, string, time.Time) (*domain.Node, error)
 	UpdateExecutable(context.Context, string, string, WriteExecutableInput, time.Time, func(context.Context, string) error) (*domain.Node, error)
 	PreviewExecutableSchedule(context.Context, string, string, PreviewExecutableInput, time.Time, func(context.Context, string) error) (*SchedulePreview, error)
 	Complete(context.Context, string, string, time.Time, time.Time, time.Time, func(context.Context, []string) error) (*domain.Node, error)
 	Reopen(context.Context, string, string, time.Time, func(context.Context, []string) error) (*domain.Node, error)
 	Reorder(context.Context, string, string, domain.Direction, time.Time, func(context.Context, string) error) error
+	Place(context.Context, string, string, string, domain.Placement, time.Time, func(context.Context, string) error) error
 	Move(context.Context, string, string, string, *string, bool, time.Time, func(context.Context, string) error, func(context.Context, []string) error) error
 	Delete(context.Context, string, string, time.Time, func(context.Context, string) error, func(context.Context, []string) error) error
 }
@@ -155,6 +157,27 @@ func (s *Service) Create(ctx context.Context, projectID string, parentID *string
 	}
 	if value == nil {
 		return nil, errors.New("create WBS: store returned nil")
+	}
+	return value, nil
+}
+func (s *Service) CreateSibling(ctx context.Context, projectID, insertAfterID, name string) (*domain.Node, error) {
+	ctx = schedulingimpact.WithOperation(ctx, projectID, schedulingimpact.ModeOrdinary)
+	if strings.TrimSpace(insertAfterID) == "" {
+		return nil, domain.ErrCreatePositionInvalid
+	}
+	if _, err := domain.NormalizeName(name); err != nil {
+		return nil, err
+	}
+	id, err := s.newID()
+	if err != nil {
+		return nil, fmt.Errorf("generate WBS ID: %w", err)
+	}
+	value, err := s.store.CreateSibling(ctx, id, projectID, insertAfterID, name, s.now(), s.scheduler.RecalculateProjectSchedule)
+	if err != nil {
+		return nil, fmt.Errorf("create sibling WBS: %w", err)
+	}
+	if value == nil {
+		return nil, errors.New("create sibling WBS: store returned nil")
 	}
 	return value, nil
 }
@@ -242,6 +265,16 @@ func (s *Service) Reorder(ctx context.Context, p, id string, d domain.Direction)
 	}
 	if err := s.store.Reorder(ctx, p, id, d, s.now(), s.scheduler.RecalculateProjectSchedule); err != nil {
 		return fmt.Errorf("reorder WBS: %w", err)
+	}
+	return nil
+}
+func (s *Service) Place(ctx context.Context, p, id, targetID string, placement domain.Placement) error {
+	ctx = schedulingimpact.WithOperation(ctx, p, schedulingimpact.ModeOrdinary)
+	if strings.TrimSpace(targetID) == "" || targetID == id || (placement != domain.PlaceBefore && placement != domain.PlaceAfter) {
+		return domain.ErrReorderTargetInvalid
+	}
+	if err := s.store.Place(ctx, p, id, targetID, placement, s.now(), s.scheduler.RecalculateProjectSchedule); err != nil {
+		return fmt.Errorf("place WBS: %w", err)
 	}
 	return nil
 }

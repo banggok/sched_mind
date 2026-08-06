@@ -341,3 +341,100 @@ func TestRecommendAssigneesWithoutSchedulerCapabilityReturnsStableUnavailable_D1
 		t.Fatalf("error=%v", err)
 	}
 }
+
+type createSiblingStoreStub struct {
+	Store
+	createSibling func(context.Context, string, string, string, string, time.Time, func(context.Context, string) error) (*domain.Node, error)
+}
+
+func (s createSiblingStoreStub) CreateSibling(ctx context.Context, id, projectID, insertAfterID, name string, now time.Time, schedule func(context.Context, string) error) (*domain.Node, error) {
+	return s.createSibling(ctx, id, projectID, insertAfterID, name, now, schedule)
+}
+
+type placeStoreStub struct {
+	Store
+	place func(context.Context, string, string, string, domain.Placement, time.Time, func(context.Context, string) error) error
+}
+
+func (s placeStoreStub) Place(ctx context.Context, projectID, id, targetID string, placement domain.Placement, now time.Time, schedule func(context.Context, string) error) error {
+	return s.place(ctx, projectID, id, targetID, placement, now, schedule)
+}
+
+func TestCreateSiblingUsesAuthoritativeAnchorAndGeneratedIdentity_DeltaD03(t *testing.T) {
+	now := time.Date(2026, 8, 6, 5, 45, 0, 0, time.UTC)
+	storeCalls := 0
+	store := createSiblingStoreStub{createSibling: func(_ context.Context, id, projectID, insertAfterID, name string, gotNow time.Time, _ func(context.Context, string) error) (*domain.Node, error) {
+		storeCalls++
+		if id != "new-task" || projectID != "project" || insertAfterID != "anchor" || name != "New sibling" || gotNow != now {
+			t.Fatalf("unexpected create sibling args: id=%q project=%q anchor=%q name=%q now=%v", id, projectID, insertAfterID, name, gotNow)
+		}
+		parentID := "group"
+		return &domain.Node{ID: id, ProjectID: projectID, ParentID: &parentID, Name: name, Position: 3, Children: []domain.Node{}}, nil
+	}}
+	service := NewServiceWithDependencies(store, &schedulerSpy{}, func() time.Time { return now }, func() (string, error) { return "new-task", nil })
+
+	created, err := service.CreateSibling(context.Background(), "project", "anchor", "New sibling")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if storeCalls != 1 || created == nil || created.ID != "new-task" || created.ParentID == nil || *created.ParentID != "group" || created.Position != 3 {
+		t.Fatalf("store calls=%d created=%#v", storeCalls, created)
+	}
+}
+
+func TestCreateSiblingRejectsMissingAnchorBeforePersistence_DeltaD03(t *testing.T) {
+	storeCalls := 0
+	idCalls := 0
+	store := createSiblingStoreStub{createSibling: func(context.Context, string, string, string, string, time.Time, func(context.Context, string) error) (*domain.Node, error) {
+		storeCalls++
+		return nil, errors.New("unexpected store call")
+	}}
+	service := NewServiceWithDependencies(store, &schedulerSpy{}, time.Now, func() (string, error) {
+		idCalls++
+		return "unused", nil
+	})
+
+	created, err := service.CreateSibling(context.Background(), "project", " ", "New sibling")
+	if created != nil || !errors.Is(err, domain.ErrCreatePositionInvalid) || storeCalls != 0 || idCalls != 0 {
+		t.Fatalf("created=%#v err=%v store calls=%d id calls=%d", created, err, storeCalls, idCalls)
+	}
+}
+
+func TestPlaceDispatchesTargetPlacementAndRejectsInvalidIntent_DeltaD05_D09(t *testing.T) {
+	now := time.Date(2026, 8, 6, 5, 50, 0, 0, time.UTC)
+	storeCalls := 0
+	store := placeStoreStub{place: func(_ context.Context, projectID, id, targetID string, placement domain.Placement, gotNow time.Time, _ func(context.Context, string) error) error {
+		storeCalls++
+		if projectID != "project" || id != "source" || targetID != "target" || placement != domain.PlaceAfter || gotNow != now {
+			t.Fatalf("unexpected place args: project=%q source=%q target=%q placement=%q now=%v", projectID, id, targetID, placement, gotNow)
+		}
+		return nil
+	}}
+	service := NewServiceWithDependencies(store, &schedulerSpy{}, func() time.Time { return now }, func() (string, error) { return "unused", nil })
+
+	if err := service.Place(context.Background(), "project", "source", "target", domain.PlaceAfter); err != nil {
+		t.Fatal(err)
+	}
+	if storeCalls != 1 {
+		t.Fatalf("store calls=%d", storeCalls)
+	}
+
+	for _, test := range []struct {
+		name      string
+		targetID  string
+		placement domain.Placement
+	}{
+		{name: "missing target", targetID: "", placement: domain.PlaceBefore},
+		{name: "self target", targetID: "source", placement: domain.PlaceBefore},
+		{name: "unknown placement", targetID: "target", placement: domain.Placement("middle")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if err := service.Place(context.Background(), "project", "source", test.targetID, test.placement); !errors.Is(err, domain.ErrReorderTargetInvalid) {
+				t.Fatalf("err=%v", err)
+			}
+		})
+	}
+	if storeCalls != 1 {
+		t.Fatalf("invalid intent reached store: calls=%d", storeCalls)
+	}
+}

@@ -32,4 +32,7 @@ var (
 	ErrSchedulePreviewIncomplete  = errors.New("role, effort, and valid lag are required for schedule preview")
 	ErrSchedulePreviewUnavailable = errors.New("automatic schedule preview is available only for an open unfinished Task with Automatic Scheduling on")
 	ErrMoveNotAllowed             = errors.New("WBS cannot move further in that direction")
+	ErrCreatePositionInvalid      = errors.New("WBS create position is invalid")
+	ErrCreateAnchorConflict       = errors.New("WBS insert-after anchor is no longer valid")
+	ErrReorderTargetInvalid       = errors.New("WBS reorder target is invalid")
 )

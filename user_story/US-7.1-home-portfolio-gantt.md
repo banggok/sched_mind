@@ -35,7 +35,7 @@ without requiring a separate Project Structure page.
 
 The Home Gantt is a **read-only schedule projection plus the canonical WBS
 management workspace**. It is not a second scheduler, a second WBS aggregate,
-or a second mutation implementation. Add Task, Add Child, Project edit,
+or a second mutation implementation. Add Sibling, Add Child, Project edit,
 Task/Group edit, Dependency, completion, Reopen, move, reorder, delete,
 lifecycle, impact preview, validation, and rollback continue to use the same
 application contracts and business invariants as their owning stories.
@@ -86,20 +86,31 @@ Reference pages:
   from the Projects workflow after Home reaches the required capability parity.
 - Display Project, Group, and Task rows in a hierarchical left grid.
 - Display WBS, Name, Role, Assignee, Effort, Start Date, and End Date columns.
+- Remember the latest Project Grid column widths as a browser-local Home layout
+  preference and restore them when Home is opened again.
 - Switch the entire workspace between Execution and Commitment projections.
+- Remember the last successfully applied projection as a browser-local Home
+  preference and restore it when Home is opened again.
 - Display Project and Group recursive summary ranges and recursive Effort.
 - Display daily calendar columns including weekends and Public Holidays.
 - Display a three-row timeline header with working-day sequence, month/year,
   and calendar date.
 - Display read-only Task bars, Project/Group summary bars, and dependency arrows.
 - Expand and collapse Project and Group rows.
+- Provide one contextual **Collapse All / Expand All** action in the Name-column
+  header and remember collapse state as a browser-local Home preference.
 - Open shared Project, Group, and Task dialogs directly over Home by activating
   the row Name.
-- Provide distinct icon-only Add Task and Add Child quick actions.
+- Replace the single add icon with labelled Add Sibling/Add Child row actions
+  while keeping the overflow trigger independently anchored at the right edge
+  of the row.
 - Provide one row overflow menu for eligible Project lifecycle, WBS reorder,
   Move to, and Delete actions.
 - Provide Move Up/Down for adjacent siblings and Move to for parent changes,
   using the existing US-4.1 use cases.
+- Provide a dedicated leading drag handle for eligible Task and Group rows so a
+  user can reorder a complete WBS subtree before or after another sibling
+  without opening the overflow menu.
 - Provide Project lifecycle actions on both Projects and the active Project row
   in Home, using the same commands and confirmations.
 - Select saved filter, projection, Projects, and Task Roles through the Configure
@@ -117,7 +128,8 @@ Reference pages:
 - A second WBS mutation implementation dedicated to Home.
 - Inline editing of grid cells or names.
 - Dragging or resizing Project, Group, or Task bars.
-- Dragging rows to reorder or move WBS nodes.
+- Dragging a row to change parent, insert as a child, or move across Projects;
+  those operations remain owned by Move to and its existing constraints.
 - Choosing an explicit sibling index during Move to.
 - Creating, deleting, or retargeting dependency from the chart.
 - Editing generated or manual dates directly from the chart.
@@ -153,9 +165,16 @@ Reference pages:
 | System View             | Non-persisted logical view `All Active Projects`.                                                                                                                                                            |
 | Saved Filter            | Globally persisted name and selected active Project IDs.                                                                                                                                                     |
 | Configuration Draft     | Current saved-filter, projection, Project, and Role selection inside the Configure Gantt modal. Project selection may differ from persisted saved-filter content until Save; Role selection is session-only. |
-| Row Actions             | Icon-only quick creation and overflow controls rendered inside the Name cell and revealed on hover or keyboard focus.                                                                                        |
+| Projection Preference   | Browser-local UI preference containing only the last successfully applied `Execution` or `Commitment` selection. It is independent of backend saved filters.                                  |
+| Column Width Preference | Browser-local Home layout preference containing the latest bounded width of each Project Grid data column. It is independent of projection, filters, and backend business data.              |
+| Hierarchy Preference    | Browser-local Home UI preference containing collapsed Project/Group row identities only. It is independent of filters, projection, column widths, and backend WBS data.                     |
+| Row Actions             | Labelled quick-creation controls owned by the Name cell and rendered as a temporary floating second line over the Project Grid, plus an independent icon-only overflow trigger anchored at the right edge. An eligible row remains one line at rest and expands only while hovered or keyboard-focused; an ineligible row never expands for creation actions. |
+| Add Sibling            | Creates a new Task under the target row's current parent and inserts it immediately after the target in authoritative persisted sibling order.                                                            |
+| Add Child              | Existing create-child workflow. On Project it creates a root Task; on Group/Task it creates beneath the selected row and preserves existing executable-to-Grouping conversion rules.                    |
 | Restrictive Role Filter | Applied Role selection that does not include every currently available Role option, including `No role`; it may hide siblings.                                                                               |
 | Move Up / Move Down     | Adjacent-sibling reorder within the same parent; parent never changes.                                                                                                                                       |
+| Drag Handle             | Dedicated leading pointer/touch target on an eligible Task or Group row. It starts sibling reorder; the rest of the row is not draggable.                                                                    |
+| Drag Reorder            | Places a Task or complete Group subtree immediately before or after another authoritative sibling under the same parent; it never reparents.                                                                 |
 | Move to                 | Existing WBS move operation that changes parent within the same Project and moves the complete subtree; user does not choose sibling position.                                                               |
 
 ---
@@ -221,14 +240,18 @@ Grid and Timeline requirements:
 - the Project Grid and Timeline are separate sibling panels and must never
   overlap or paint over each other;
 - the Timeline takes the remaining viewport width after the Project Grid;
-- eligible row actions remain inside the Name cell and do not create a separate
-  grid column;
+- eligible row actions remain logically owned by the Name cell and do not create
+  a separate grid column; while revealed, the creation-label layer may float
+  horizontally over following Project Grid cells but must remain clipped at the
+  Project Grid/Timeline boundary;
 - vertical scrolling is synchronized so one logical row never separates from
   its bar;
 - grid column headers and all three timeline header rows remain visible while
   vertically scrolling;
 - horizontal timeline scrolling does not move the left grid;
 - every Project Grid column is individually resizable;
+- the latest valid width of every Project Grid column is stored browser-locally
+  and restored after refresh or navigating away from Home and returning;
 - changing total grid width reduces or expands the remaining Timeline width;
 - row heights remain identical across both panels;
 - Project and Group indentation remains readable at supported viewport sizes;
@@ -279,7 +302,10 @@ Each selected Project is displayed as a top-level row:
 - Open Project exposes the full editable Project fields allowed by US-3.1 and
   US-3.3.
 - Locked Project exposes Project Name as the only editable Project field.
-- An eligible Open Project row exposes icon-only Add Task as the quick action.
+- An eligible Open Project row exposes the labelled `Add Child` action only;
+  Project has no `Add Sibling` action because it is logical WBS level `0`.
+- Project has no drag handle and cannot participate as a reorder source or
+  sibling drop target.
 - The overflow menu exposes lifecycle actions valid for the current status:
   Open may expose Lock, Close, and eligible Delete; Locked may expose Reopen and
   Close.
@@ -301,7 +327,11 @@ Each Group row:
   US-4.3 summary and the US-4.1 rename capability;
 - Open Project allows rename in that dialog;
 - Locked Project opens the same summary dialog read-only;
-- Open Project exposes icon-only Add Child as the quick action;
+- In an Open Project, the row exposes labelled `Add Sibling | Add Child`
+  actions; when expanded, a newly created sibling renders after the Group's
+  complete visible subtree;
+- In an Open Project, the row exposes a dedicated leading drag handle for
+  same-parent sibling reorder; dragging the Group moves its complete subtree.
 - Open Project overflow exposes Move Up, Move Down, and Move to;
 - Group does not expose Delete while it has children and does not become
   executable merely because it is shown on Gantt.
@@ -318,12 +348,15 @@ Each executable Task row:
 - displays direct Effort or blank when Effort is absent;
 - activating Task Name opens the shared Edit Task dialog for unfinished,
   completed, and Locked Tasks;
-- an unfinished Task in an Open Project may expose icon-only Add Child according
-  to US-4.1 conversion rules;
-- an unfinished Task in an Open Project exposes eligible Move Up, Move Down,
-  Move to, and Delete through overflow;
-- a completed Task in an Open Project exposes Move Up, Move Down, and Move to
-  through overflow, but no Add Child or Delete; Reopen remains inside Edit Task;
+- an unfinished Task in an Open Project exposes labelled
+  `Add Sibling | Add Child` actions; Add Child remains subject to US-4.1
+  conversion rules;
+- an unfinished Task in an Open Project exposes a dedicated leading drag
+  handle plus eligible Move Up, Move Down, Move to, and Delete through overflow;
+- a completed Task in an Open Project also exposes the drag handle and labelled
+  `Add Sibling` plus
+  Move Up, Move Down, and Move to through overflow, but no Add Child or Delete;
+  Reopen remains inside Edit Task;
 - a Task in a Locked Project has no structural quick/overflow action, but Edit
   Task remains available for Actual Date according to US-6.2;
 - no Task allows direct cell or bar mutation.
@@ -365,7 +398,45 @@ Each executable Task row:
 - Successful reorder updates persisted sibling positions, derived WBS numbers,
   scheduler order where applicable, and the refreshed Home projection.
 
-### 8.3 Move to
+### 8.3 Drag Reorder
+
+- Drag reorder is available only through the dedicated leading handle on Task
+  and Group rows in an Open Project. Project, Locked, and Closed rows have no
+  handle. Completed Tasks remain eligible because reorder changes structure, not
+  completed executable data.
+- The rest of the row is not draggable. Starting pointer movement from Name,
+  expand/collapse, Add Sibling/Add Child, data cells, timeline, or `...` must not
+  initiate reorder.
+- A valid drop places the source immediately before or after a sibling under the
+  same authoritative parent. Drop indicators appear only at valid boundaries
+  between sibling blocks.
+- Drag reorder never changes parent, never inserts as a child, and never crosses
+  Projects. Move to remains the only parent-change workflow.
+- A Group moves with its entire subtree. If expanded, the visible Group and all
+  rendered descendants move as one block; no drop boundary may appear between
+  that Group and its descendants.
+- Moving an item across an expanded sibling Group treats that sibling's complete
+  subtree as one block. `After Group` means after its last descendant.
+- The client submits source identity, target sibling identity, and before/after
+  intent. It must not derive or submit an arbitrary position from virtualized or
+  filtered row indexes.
+- A Restrictive Role Filter disables drag handles and uses the same accessible
+  explanation as Move Up/Down: `Show all roles to reorder WBS items.`
+- Project filtering and expand/collapse state do not disable otherwise-valid
+  drag reorder.
+- Dragging near the vertical edge of the Project Grid auto-scrolls that grid so
+  long sibling lists can be reordered beyond the current viewport. Horizontal
+  timeline scrolling must not be captured by row drag.
+- Escape, pointer cancellation, drop outside a valid boundary, or drop into the
+  source's current position performs no mutation.
+- On valid drop, the source remains visually pending until the authoritative
+  reorder succeeds. Failure or stale conflict restores the confirmed original
+  order and refreshes Home.
+- Move Up/Down remains available in overflow as the keyboard-accessible and
+  non-drag fallback and must produce the same persisted ordering and business
+  effects as an equivalent drag drop.
+
+### 8.4 Move to
 
 - Move to uses the existing US-4.1 parent-change operation.
 - Source may be a Task or Group; a Group moves with its complete subtree.
@@ -410,15 +481,50 @@ Columns appear in this order:
 ### 9.2 Row Actions in Name
 
 - There is no Actions column.
-- Eligible action icons are positioned inside the Name cell.
-- Action icons are visually hidden at rest and revealed when the Name cell is
-  hovered or contains keyboard focus.
-- At most two controls are rendered for one row: one icon-only quick creation
-  action and one icon-only overflow trigger.
-- Controls remain keyboard reachable and available on non-hover/touch input.
-- Revealing controls must not change the grid column count or row height.
-- Every icon has an explicit accessible name and tooltip containing the target
-  row Name.
+- Eligible creation actions are rendered as compact text controls on a
+  temporary floating second line below the row Name, logically owned by the Name
+  cell but allowed to paint over following Project Grid separators.
+- At rest, the row keeps its existing single-line height and renders only the
+  primary line: drag handle when eligible, collapse/expand control, row Name,
+  status indicators, and the independently right-anchored `...` trigger.
+- Only a row with at least one eligible Add Sibling or Add Child action may
+  expand. While that eligible row is hovered or contains keyboard focus, it
+  temporarily expands and reveals the creation-label line below the primary
+  line. A row with no eligible creation action remains at the single-line height
+  even when hovered or focused for Name, lifecycle, or overflow actions.
+- The creation group uses one leading plus marker followed by separately
+  clickable labels and a non-interactive separator:
+  - Project: `⊕ Add Child`;
+  - eligible Group or unfinished Task: `⊕ Add Sibling | Add Child`;
+  - completed Task in an Open Project: `⊕ Add Sibling`.
+- The icon-only `...` overflow trigger is not moved into the creation-label
+  line. It remains independently anchored at the far right edge of the primary
+  Name line.
+- Creation labels are revealed only for an eligible row when the row is hovered
+  or a row control receives keyboard focus. Mouse-click focus on expand/collapse,
+  Name, or overflow must not pin the expanded height after the pointer leaves the
+  row. Overflow follows its existing hover/focus visibility independently and
+  does not make an ineligible row expand.
+- Controls remain keyboard reachable and available on non-hover/touch input;
+  focus-driven expansion is reserved for keyboard navigation and non-hover touch
+  interaction rather than ordinary mouse-click focus.
+- Keyboard order follows the visual action order: Add Sibling when present, Add
+  Child when present, then overflow.
+- Revealing controls must not change the grid column count, wrap or clip the
+  action labels, or move the overflow trigger. The creation-label line is a
+  content-width floating layer above Project Grid cell separators, may overlay
+  following Project Grid columns, and is clipped before the Timeline. It may
+  temporarily increase only the eligible hovered/focused row height. The
+  matching timeline row, virtualization spacers, dependency geometry, and
+  vertical scroll bounds must use the same temporary height so the split grid
+  remains aligned.
+- The creation-label line must never overlay or consume horizontal space from
+  the primary Name line. Long row Names remain readable/editable through normal
+  truncation within the primary line, independently of the creation controls
+  below.
+- Each labelled action and the overflow trigger has an explicit accessible name
+  containing the target row Name. The visual separator is not focusable and is
+  ignored by assistive technology.
 - Destructive Delete is separated at the bottom of overflow and uses the shared
   destructive treatment.
 
@@ -459,6 +565,10 @@ Home provides exactly two schedule-view options in this story:
 
 Actual and Forecast are absent.
 
+When Home is mounted, the initially applied projection follows the Projection
+Preference defined in Section 10.4. If no valid preference exists, Home starts
+in Execution view.
+
 ### 10.2 Atomic Projection Change
 
 Changing the selected projection updates one coherent workspace state:
@@ -485,6 +595,101 @@ Changing Execution/Commitment:
 - does not advance schedule version;
 - does not alter Actual Date or allocation;
 - does not change the active saved filter.
+
+### 10.4 Browser-Local Projection Preference
+
+The last **successfully applied** Execution/Commitment selection is remembered
+as a browser-local Home preference. This is UI preference persistence, not a
+business-data mutation and not part of the backend saved-filter model.
+
+Persistence and restore rules:
+
+- persist only the projection enum: `Execution` or `Commitment`;
+- update the preference only after Apply has committed the configuration to the
+  visible Home workspace; selecting a draft option before Apply does not update
+  it;
+- a successful Save As that also applies the current configuration updates the
+  preference to the applied projection; Save alone does not update it when the
+  projection draft is not applied;
+- Cancel preserves both the currently applied projection and its stored
+  preference;
+- restore the preference after a browser refresh, after navigating away from
+  Home and returning, and after reopening the frontend in the same browser
+  profile;
+- restoration is independent of the active system/saved filter and does not
+  select, modify, or save a filter;
+- this preference must not persist the active saved-filter identity, Project
+  checklist, Role selection, visible range, expansion state, scroll position,
+  task selection, search text, or any other Home configuration;
+- a missing, unknown, malformed, or unreadable preference falls back safely to
+  Execution;
+- inability to write browser storage must not block the current projection
+  change. The current session may continue with the applied projection even if
+  it cannot be restored later; no backend call or blocking error is required.
+
+### 10.5 Browser-Local Column Width Preference
+
+The latest Project Grid column widths are remembered as a separate browser-local
+Home layout preference. This is not part of a saved filter, projection
+preference, or backend business model.
+
+Persistence and restore rules:
+
+- persist one bounded numeric width for each known Project Grid column key;
+- update the preference whenever a mouse or keyboard resize changes a width;
+- restore the widths after browser refresh, navigation away from Home and back,
+  or reopening the frontend in the same browser profile;
+- clamp restored values to each column's current minimum and maximum so an old
+  preference cannot break the current layout;
+- ignore unknown column keys and use the current default for missing, malformed,
+  non-finite, or unreadable values;
+- storage failure does not block resizing in the current session and requires no
+  backend call or blocking error;
+- this preference stores no projection, saved-filter identity/content, Project
+  selection, Role selection, range, expansion state, scroll position, row
+  selection, or business data.
+
+### 10.6 Browser-Local Hierarchy Preference
+
+Home remembers collapsed Project and Group identities as a separate
+browser-local hierarchy preference. The preference changes presentation only;
+it is not part of a saved filter, schedule, WBS persistence, or backend business
+model.
+
+Persistence and restore rules:
+
+- with no valid stored preference, every Project and Group is expanded by
+  default;
+- persist only unique non-empty row identities that are currently marked
+  collapsed;
+- restore those identities after browser refresh, navigation away from Home and
+  back, or reopening the frontend in the same browser profile;
+- ignore stored identities that are absent, filtered out, or no longer
+  expandable in the current projection; they must not hide unrelated rows;
+- an individual expand/collapse action updates the in-memory and stored
+  preference;
+- automatic ancestor expansion required to reveal a newly created, edited, or
+  focused row also removes those ancestor identities from the stored preference;
+- missing, malformed, unreadable, or unwritable storage falls back safely to an
+  expanded hierarchy or preserves current-session interaction without blocking
+  Home;
+- this preference stores no projection, column width, saved-filter
+  identity/content, Project selection, Role selection, range, scroll position,
+  row selection, or business data.
+
+Bulk hierarchy action:
+
+- the Name-column header exposes one compact icon-only action with tooltip and
+  accessible name;
+- when at least one currently visible expandable row is expanded, the action is
+  **Collapse all rows** and collapses every expandable row in the currently
+  loaded, Role-adjusted hierarchy;
+- when no currently visible expandable row is expanded, the action is
+  **Expand all rows** and expands every expandable row in that same hierarchy;
+- the control is absent when the current hierarchy has no expandable row;
+- bulk actions preserve stored collapse identities belonging to Projects that
+  are not currently loaded or selected, and perform no backend request,
+  scheduler invocation, WBS mutation, filter mutation, or projection reload.
 
 ---
 
@@ -741,14 +946,23 @@ the rendered horizontal range:
 - The interactive Name has visible hover/focus treatment and does not rely on a
   pencil or eye icon.
 
-### 16.2 Quick Creation Icons
+### 16.2 Quick Creation Labels
 
-- Eligible Project row exposes one icon-only Add Task quick action.
-- Eligible Group or unfinished Task row exposes one visually distinct icon-only
-  Add Child quick action.
-- Completed Tasks and every Locked WBS row expose no creation icon.
-- Quick actions retain explicit accessible names and tooltips and invoke the
-  existing US-4.1 create/conversion workflow.
+- The existing single add icon is replaced by the labelled creation group
+  defined in Section 9.2.
+- Project exposes `Add Child` only. It opens the existing Create Task dialog and
+  creates a root Task under that Project using the existing root-Task create behaviour.
+- Eligible Group and unfinished Task rows expose both `Add Sibling` and
+  `Add Child` as separate buttons divided by a visual `|` separator.
+- Completed Task in an Open Project exposes `Add Sibling` only; completion does
+  not block creation of another Task beside it, but Add Child remains forbidden.
+- Locked Group/Task rows and every Closed Project context expose no creation
+  action.
+- The labelled creation group appears beside the row content. The `...` overflow
+  trigger remains at its current fixed trailing position on the right edge of
+  the row and is not visually grouped beside the add labels.
+- Labels retain explicit accessible names and invoke the US-4.1 create,
+  insertion, conversion, scheduling, and rollback contracts.
 
 ### 16.3 Overflow Menu
 
@@ -786,9 +1000,15 @@ Home → active Project row → overflow
 
 ### 16.5 Reorder and Move
 
-- Move Up/Down and Move to follow Section 8 and US-4.1.
-- Reorder works only against full adjacent sibling order and is disabled under a
-  Restrictive Role Filter.
+- Move Up/Down, drag reorder, and Move to follow Section 8 and US-4.1.
+- The drag handle appears at the leading edge of an eligible Task/Group row on
+  hover or row keyboard focus. It is visually separate from Name, creation
+  labels, and the right-anchored `...` overflow.
+- Move Up/Down remains the keyboard-accessible fallback; adding drag must not
+  remove or weaken either command.
+- Reorder works only against full authoritative sibling order and is disabled
+  under a Restrictive Role Filter. Drag reorder may cross multiple siblings in
+  one operation, while Move Up/Down remains adjacent-only.
 - Move to changes only parent and remains available under Role filtering.
 - The destination picker uses the authoritative full Project tree.
 - Completed Task/subtree structural eligibility remains exactly as defined by
@@ -796,8 +1016,10 @@ Home → active Project row → overflow
 
 ### 16.6 Shared Dialog Ownership
 
-- Project, Group, Task, Add Task, and Add Child use extracted reusable dialog/
-  form components that can be composed by Home and Projects where applicable.
+- Project, Group, Task, Add Sibling, and Add Child use extracted reusable
+  dialog/form components that can be composed by Home and Projects where
+  applicable. Both creation actions open the same Create Task form; only the
+  structural insertion intent differs.
 - Home invokes those components directly; it must not open Projects or an
   intermediate Project Structure page in the background.
 - Project edit, Group rename, Task edit, dependency, Actual Date, Reopen,
@@ -807,7 +1029,33 @@ Home → active Project row → overflow
 - Locked Project Edit permits Project Name only; Locked Task Edit permits
   Actual Date according to US-6.2; Locked Group summary is read-only.
 
-### 16.7 Add Child Conversion
+### 16.7 Add Sibling Insertion
+
+When Add Sibling is activated on a Group or Task row:
+
+- open the same Create Task dialog used by Add Child;
+- submit the selected row identity as the insertion anchor rather than deriving
+  a sibling index from the currently rendered rows;
+- create the new Task under the anchor's current authoritative parent;
+- insert the new Task immediately after the anchor in the full persisted sibling
+  order, including siblings hidden by the applied Role filter;
+- shift later sibling positions atomically while preserving their relative
+  order;
+- never convert or mutate the anchor merely because it is used as the insertion
+  reference;
+- when the anchor is an expanded Group, the new sibling appears after the
+  Group's complete subtree, not between the Group and its children;
+- keep the applied Role filter unchanged. The new Task may disappear from the
+  refreshed projection when its Role does not match that filter;
+- if the created Task is filtered out, retain focus on the nearest still-visible
+  ancestor or anchor row rather than clearing focus or changing the filter;
+- if the anchor is deleted, its Project is no longer Open, or authoritative
+  validation rejects the insertion before commit, create nothing and surface the
+  recoverable conflict;
+- creation, sibling-position changes, required scheduling, projection refresh,
+  and rollback follow the atomic US-4.1 contract.
+
+### 16.8 Add Child Conversion
 
 When Add Child targets an executable Task:
 
@@ -817,7 +1065,7 @@ When Add Child targets an executable Task:
 - cancellation leaves hierarchy and Home projection unchanged;
 - scheduling and impact coordination remain atomic.
 
-### 16.8 Projection Refresh
+### 16.9 Projection Refresh
 
 After a successful mutation:
 
@@ -825,11 +1073,13 @@ After a successful mutation:
 - include cross-Project transitive impacts from US-6.2;
 - preserve the applied saved filter, Project selection, Role selection, and
   unaffected expanded/collapsed rows where IDs still exist;
-- after Add Task or Add Child, use the confirmed created identity to reveal its
-  ancestor path, scroll the refreshed row into view, and move keyboard focus to
-  that row's Name action;
-- after a successful Project/Group/Task Edit, Move Up, Move Down, or Move to
-  that retains the entity, wait for the post-mutation projection, then reveal,
+- after Add Sibling or Add Child, use the confirmed created identity to reveal
+  its ancestor path, scroll the refreshed row into view, and move keyboard
+  focus to that row's Name action when it remains visible; when Role filtering
+  hides it, preserve the filter and focus the nearest visible anchor/ancestor;
+- after a successful Project/Group/Task Edit, Move Up, Move Down, drag
+  reorder, or Move to that retains the entity, wait for the post-mutation
+  projection, then reveal,
   scroll to, and focus the retained ID's Name action;
 - when the preserved Role selection intentionally excludes that new row, move
   focus to its nearest visible ancestor and resolve the focus request so a
@@ -886,7 +1136,10 @@ It selects every current Open and Locked Project.
   checklist draft but does not update the chart before Apply.
 - Projection, Project, and Role draft changes update the chart atomically only
   after Apply.
-- Cancel discards the modal draft and preserves the currently applied chart.
+- A successfully applied projection updates the browser-local Projection
+  Preference defined in Section 10.4.
+- Cancel discards the modal draft, preserves the currently applied chart, and
+  does not change the Projection Preference.
 - Save updates the selected persisted filter's Project IDs without implicitly
   applying the remaining projection or Role draft.
 - Save As persists the Project checklist under a new Name and applies the current
@@ -1240,7 +1493,7 @@ Keyboard users can:
 - select/deselect Projects;
 - expand/collapse Project and Group rows;
 - focus a row and open its form;
-- invoke Add Task/Add Child where available;
+- invoke Add Sibling/Add Child where available;
 - scroll the timeline without losing focused row context;
 - operate Save, Save As, and Delete dialogs.
 
@@ -1273,7 +1526,7 @@ Keyboard users can:
 3. The standalone Project Structure entry point/page is removed from Projects.
 4. Projects remains available for Project list/configuration/lifecycle, while
    active WBS management is initiated from Home.
-5. Opening Project, Group, Task, Add Task, or Add Child from Home keeps Home as
+5. Opening Project, Group, Task, Add Sibling, or Add Child from Home keeps Home as
    the route and visible background; no intermediate Projects/Project Structure
    page is mounted or forwarded.
 6. Home shows a synchronized left Project Grid and right daily Timeline without
@@ -1291,6 +1544,19 @@ Keyboard users can:
 11. WBS numbering reflects recursive hierarchy and current persisted sibling
     order and restarts per Project.
 12. Project and Group rows expand/collapse without changing persisted hierarchy.
+12A. The Name-column header exposes one contextual `Collapse all rows` or
+     `Expand all rows` action whenever the current hierarchy has at least one
+     expandable row.
+12B. Collapse All collapses every expandable row in the currently loaded,
+     Role-adjusted hierarchy; Expand All expands those rows without changing
+     WBS data, filters, projection, or scheduling.
+12C. Individual and bulk collapse state is restored after refresh or returning
+     to Home from a separate browser-local preference. Missing, malformed,
+     unreadable, or unwritable storage does not block Home and defaults safely
+     to expanded rows.
+12D. Stored identities that are absent, filtered out, or no longer expandable
+     do not hide unrelated rows. Bulk actions preserve identities belonging to
+     Projects outside the currently loaded hierarchy.
 13. Project/Group Role and Assignee are blank; Task Role and Assignee show their
     direct values or blank.
 14. Project/Group Effort equals recursive known Task Effort; Task shows direct
@@ -1304,11 +1570,30 @@ Keyboard users can:
     summary/rename dialog, and Task Name opens Edit Task.
 17. Timeline bars and non-Name row space remain read-only and do not implicitly
     open mutation dialogs.
-18. Name cell reveals at most one quick creation icon plus one overflow trigger
-    on hover or keyboard focus, without adding an Actions column.
-19. Add Task and Add Child use distinct icon-only controls with accessible names
-    and tooltips.
-20. Open Project row exposes eligible Add Task and lifecycle actions; Locked
+18. At rest, each row remains at the existing single-line height and shows
+    only its primary line. Hover or keyboard focus temporarily expands only a
+    row that has at least one eligible creation action. A mouse click on a primary
+    row control does not retain that expanded height after hover ends. A row with
+    no Add Sibling or Add Child action remains single-line. The revealed second
+    line is a content-width floating layer over Project Grid separators and does
+    not add an Actions column or clip its labels at the Name-column width.
+19. Project shows `Add Child`; eligible Group/unfinished Task shows
+    `Add Sibling | Add Child`; completed Open Task shows `Add Sibling` only.
+19A. A single leading plus marker and non-interactive `|` separator reproduce the
+     approved compact label treatment while each label remains a separate
+     keyboard-accessible button.
+19B. The `...` overflow trigger remains independently anchored at the far right
+     edge of the primary Name line and does not move into the creation-label
+     line.
+19C. Add Sibling opens the shared Create Task dialog, uses the selected row as an
+     authoritative insertion anchor, and creates a Task immediately after it in
+     full persisted sibling order under the same parent.
+19D. Add Sibling on an expanded Group renders the new Task after the complete
+     Group subtree; it never inserts between the Group and its children.
+19E. Role filtering does not change sibling placement. A newly created Task may
+     be filtered out after refresh; the applied filter remains unchanged and
+     focus returns to the nearest visible anchor/ancestor.
+20. Open Project row exposes eligible Add Child and lifecycle actions; Locked
     Project row exposes Reopen/Close and Edit Project.
 21. Project lifecycle commands on Home and Projects use the same eligibility,
     confirmation, impact, transaction, error, and rollback contracts.
@@ -1316,10 +1601,11 @@ Keyboard users can:
     schedule inputs remain read-only.
 23. Open Group dialog allows Rename and displays US-4.3 summary in the same form;
     Locked Group dialog displays the same summary read-only.
-24. Unfinished Open Task exposes Add Child and eligible Move Up, Move Down,
-    Move to, and Delete.
-25. Completed Open Task still opens Edit Task and exposes Move Up, Move Down, and
-    Move to, but not Add Child or Delete; Reopen remains inside Edit Task.
+24. Unfinished Open Task exposes Add Sibling, Add Child, and eligible Move Up,
+    Move Down, Move to, and Delete.
+25. Completed Open Task still opens Edit Task and exposes Add Sibling, Move Up,
+    Move Down, and Move to, but not Add Child or Delete; Reopen remains inside
+    Edit Task.
 26. Locked Task still opens Edit Task for US-6.2 Actual Date and exposes no
     structural action.
 27. Destructive Delete is separated in overflow and uses existing confirmation
@@ -1334,6 +1620,21 @@ Keyboard users can:
 31. Selecting every Role option, including `No role`, restores reorder
     eligibility.
 32. Project filtering alone does not disable reorder.
+32A. Eligible Task and Group rows in an Open Project expose a dedicated leading
+     drag handle; Project, Locked, and Closed rows do not.
+32B. The row itself is not draggable. Name, expand/collapse, creation labels,
+     data cells, timeline, and overflow preserve their existing interactions.
+32C. Dragging places the source immediately before or after an authoritative
+     sibling under the same parent; no valid drop reparents or crosses Projects.
+32D. Dragging a Group moves the complete subtree while preserving descendant
+     parentage and internal order. Expanded Groups and their descendants are one
+     visual drop block.
+32E. Restrictive Role Filter disables drag reorder with the same accessible
+     reason as Move Up/Down; Project filtering does not.
+32F. Cancel, invalid drop, and same-position drop are no-ops. A valid drop is
+     atomic with required scheduling, and failure restores confirmed order.
+32G. Move Up/Down remains the keyboard-accessible fallback and yields the same
+     authoritative order as equivalent drag reorder.
 33. Move to changes only parent, moves the complete subtree, and never asks for
     sibling position.
 34. Move to remains available under Role filtering.
@@ -1351,6 +1652,24 @@ Keyboard users can:
 39. Projection switch updates grid values, bars, summaries, sequence, and
     dependency geometry coherently.
 40. Projection switch performs no business mutation or scheduler invocation.
+40A. After a projection is successfully applied, Home stores only that
+     `Execution`/`Commitment` value as a browser-local preference and restores it
+     after refresh, navigation away and back, or reopening the frontend in the
+     same browser profile.
+40B. Projection draft selection and Cancel do not update the stored preference;
+     only the successfully applied projection does.
+40C. Missing, invalid, unreadable, or unwritable browser storage falls back to
+     Execution or preserves the current-session switch without blocking Home.
+40D. Projection preference persistence does not persist or alter saved-filter
+     identity/content, Project selection, Role selection, range, expansion,
+     scroll, task selection, search, or business schedule data.
+40E. Home stores the latest bounded Project Grid column widths as a separate
+     browser-local preference and restores them after refresh or navigation away
+     and back. Malformed or unavailable storage falls back safely without
+     blocking current-session resize.
+40F. Collapse state uses a third independent browser-local preference containing
+     only collapsed row identities; it is not stored in projection, column-width,
+     or backend saved-filter data.
 41. Project/Group Start is recursive earliest complete selected-projection Start.
 42. Project/Group End is recursive latest complete selected-projection End.
 43. Partially scheduled scopes show aggregates from scheduled Tasks plus
@@ -1408,7 +1727,7 @@ Keyboard users can:
 65. Failed mutation/rollback does not leave Home showing unconfirmed hierarchy
     or schedule.
 66. Stale Home response cannot overwrite a newer confirmed mutation.
-67. Add Child conversion, Move, reorder, Delete, Actual Date, Reopen, and
+67. Add Sibling insertion, Add Child conversion, Move, reorder, Delete, Actual Date, Reopen, and
     lifecycle commands retain owning-story atomicity and impact handling.
 
 ### Project Selection
@@ -1484,6 +1803,15 @@ Keyboard users can:
 - Deep Group hierarchy.
 - Reorder/Move to completed from Home updates WBS numbering and keeps Home visible.
 - Collapse Project and nested Group, then refresh affected projection.
+- Collapse an individual Project and nested Group, refresh or navigate away and
+  back, and verify both remain collapsed.
+- Use Collapse All from a mixed hierarchy, verify every expandable row is
+  collapsed and the same header control becomes Expand All; then expand all and
+  verify the complete hierarchy returns.
+- Switch Project/Role selection, use a bulk hierarchy action, and verify stored
+  collapse identities for Projects outside the loaded hierarchy remain intact.
+- Corrupt or block hierarchy-preference browser storage and verify Home defaults
+  safely to expanded rows while current-session expand/collapse remains usable.
 - Long names and narrow viewport preserve row/bar alignment.
 
 ### 25.2 Projection and Aggregation
@@ -1495,6 +1823,22 @@ Keyboard users can:
 - Task without Effort mixed with Tasks having fractional-hour Effort.
 - Completed Task still contributes total Effort.
 - Unconfirmed schedule preview does not change Home summary.
+- Apply Commitment, refresh the browser, and verify Commitment remains applied.
+- Apply Commitment, navigate to another application page, return to Home, and
+  verify Commitment remains applied.
+- Select another projection in the configuration draft, Cancel, and verify both
+  the applied projection and stored preference remain unchanged.
+- Remove or corrupt the stored projection preference and verify Home falls back
+  to Execution without blocking rendering.
+- Make browser storage unavailable for writes and verify the projection still
+  changes for the current session without a backend mutation.
+- Verify restoring the projection does not restore or modify active filter,
+  Project/Role selection, range, expansion, scroll, task selection, or search.
+- Resize multiple Project Grid columns, navigate away from Home and return, and
+  verify the latest bounded widths are restored independently of projection and
+  saved filters.
+- Corrupt or block column-width browser storage and verify current-session
+  resizing remains usable with safe per-column defaults.
 
 ### 25.3 Calendar and Working-Day Sequence
 
@@ -1525,8 +1869,28 @@ Keyboard users can:
 
 - Activate Project, Group, and Task Name and verify shared dialogs open directly
   over Home without route/background change.
-- Add root Task from Open Project quick icon.
-- Add Child to Group from its distinct quick icon.
+- Hover/focus each row type and verify Project shows `Add Child`, eligible
+  Group/unfinished Task shows `Add Sibling | Add Child`, completed Task shows
+  `Add Sibling`, and Locked WBS shows no creation action.
+- Verify a row without creation eligibility remains single-line when hovered and
+  when its Name or overflow receives keyboard focus.
+- Resize Name to its minimum, hover an eligible row, and verify the floating
+  creation labels remain complete over following Project Grid separators and do
+  not cross into the Timeline.
+- Verify the `...` overflow trigger stays anchored at the right edge while add
+  labels appear, including with a long truncated row Name.
+- While an eligible row is hovered, click expand/collapse and `...`; after the
+  pointer leaves, verify the row and matching timeline row return to single-line
+  height even though the clicked control or overflow menu still owns focus.
+- Add Child from Open Project and verify the existing root-Task behaviour.
+- Add Sibling after a top-level Task and after a nested Task.
+- Add Sibling after an expanded Group and verify the created Task renders after
+  the Group's complete subtree.
+- Add Sibling beside a completed Task and verify the completed Task is unchanged.
+- Add Sibling under a Restrictive Role Filter and verify authoritative full-order
+  insertion; when the new Task does not match the filter, preserve the filter and
+  focus the nearest visible anchor/ancestor.
+- Add Child to Group.
 - Add Child to executable Task with confirmed conversion.
 - Cancel conversion.
 - Open Group summary and rename the Group in the same dialog.
@@ -1535,8 +1899,22 @@ Keyboard users can:
 - Open Locked Project and rename only Project Name.
 - Open Locked Task and enter Actual Date while planning fields remain read-only.
 - Move Up/Down swaps one adjacent sibling and updates persisted order.
-- Move Up/Down is disabled under a Restrictive Role Filter and restored after
-  all Role options are selected.
+- Drag a Task before and after non-adjacent siblings and verify the exact
+  persisted order, WBS numbering, focus restoration, and schedule refresh.
+- Drag an expanded Group across siblings and verify its complete visible subtree
+  follows while descendant hierarchy and internal order remain unchanged.
+- Verify no drop boundary appears between a Group and its descendants, and that
+  dropping after an expanded Group means after its complete subtree.
+- Cancel with Escape, drop outside, and drop into the original position; verify
+  no persistence or scheduling request.
+- Attempt cross-parent/cross-Project drop and verify no valid indicator or
+  mutation. Simulate stale target and persistence/scheduling failure and verify
+  rollback to confirmed order.
+- Verify drag starts only from the handle, supports vertical grid auto-scroll,
+  and does not capture Name, expand/collapse, creation labels, timeline scroll,
+  or right-anchored overflow interactions.
+- Move Up/Down and drag reorder are disabled under a Restrictive Role Filter and
+  restored after all Role options are selected.
 - Move to changes parent while a Role filter is active and includes a valid
   destination hidden by that filter.
 - Delete an eligible unfinished leaf Task through overflow and verify
@@ -1579,17 +1957,17 @@ Keyboard users can:
 
 - Keyboard opens filter, checks Projects, and Save As.
 - Keyboard expands Project/Group, activates Name, opens overflow, and invokes
-  eligible quick actions.
+  eligible creation labels.
 - Screen reader receives row type, WBS, status, dates, Effort, and
   scheduled/unscheduled state.
 - Public Holiday and dependency source are understandable without colour.
 - Focus survives projection refresh when the focused entity still exists.
-- Successful Add Task/Add Child focuses the newly created row after that row is
-  available in the refreshed projection, including outside the current virtual
-  row window.
-- Successful Edit, Move Up/Down, and Move to focus the retained row Name only
-  after the confirmed post-mutation projection is rendered; the stale row or
-  disabled overflow trigger is not accepted as focus evidence.
+- Successful visible Add Sibling/Add Child focuses the newly created row after
+  that row is available in the refreshed projection, including outside the
+  current virtual row window.
+- Successful Edit, Move Up/Down, drag reorder, and Move to focus the retained
+  row Name only after the confirmed post-mutation projection is rendered; the
+  stale row or disabled overflow trigger is not accepted as focus evidence.
 - A Role filter that excludes the new row preserves its selection, focuses the
   nearest visible ancestor, and leaves no pending focus request.
 
@@ -1607,14 +1985,16 @@ Inspect at minimum:
 - Home routing/navigation, fallback, and removal of Project Structure entry;
 - reusable dialog boundaries with no Projects/Project Structure background route;
 - row action eligibility, overflow composition, and lifecycle command reuse;
-- persisted WBS ordering, adjacent reorder, Role-filter disablement, and Move to
-  destination resolution;
+- persisted WBS ordering, adjacent and anchor-based drag reorder, Group
+  subtree movement, Role-filter disablement, and Move to destination resolution;
 - recursive row composition and date/Effort aggregation;
 - date-only and working-day sequence calculation;
 - active Project and saved-filter domain invariants;
 - normalized unique Name and optimistic concurrency;
 - portfolio read query and N+1 prevention;
 - cache/request identity and stale-response handling;
+- browser-local hierarchy restore, contextual bulk action, and safe storage
+  fallback;
 - virtualization and dependency geometry boundaries;
 - lifecycle, Closed exclusion, and Locked restrictions;
 - accessibility and responsive states.
@@ -1628,10 +2008,15 @@ Use the lowest meaningful boundaries for:
 - repository uniqueness, atomic update/delete, and stale Project IDs;
 - set-based portfolio projection mapping and ordering;
 - frontend request/cache race behaviour;
+- projection-preference parsing, apply-only persistence, safe fallback, and
+  storage-failure behaviour;
+- hierarchy-preference parsing, deterministic identity persistence, individual
+  and bulk restore, unknown-identity handling, and storage-failure behaviour;
 - row virtualization and visible dependency selection;
 - component interaction and form integration;
 - action matrix by Project status, WBS type, and completion state;
-- reorder boundary/Role-filter behavior and full-tree Move to destinations.
+- reorder boundary/Role-filter behavior, authoritative before/after drag
+  placement, subtree invariants, rollback, and full-tree Move to destinations.
 
 ### 26.3 Acceptance-Level Tests
 
@@ -1639,13 +2024,18 @@ Provide public-boundary evidence for:
 
 - root Home navigation;
 - active Project selection and portfolio rendering;
-- Execution/Commitment switching;
+- Execution/Commitment switching and browser-local restoration after refresh
+  or Home remount;
+- individual and bulk hierarchy collapse/expand with browser-local restoration,
+  unknown-identity preservation, and no WBS/projection mutation;
 - daily header/holiday behaviour;
 - direct Home Project/Group/Task dialog workflows with no background route
   transition;
-- Add Task/Add Child quick-action workflows;
+- Add Sibling/Add Child labelled-action workflows, exact sibling insertion,
+  expanded-Group placement, Role-filter preservation, and right-anchored overflow;
 - Group summary plus rename in one dialog;
-- sibling Move Up/Down, Role-filter disabled reason, Move to, and Delete;
+- sibling Move Up/Down, handle-only drag reorder with Group subtree movement,
+  Role-filter disabled reason, Move to, and Delete;
 - Project lifecycle actions from both Home and Projects;
 - completed Task Edit/Reopen and Locked Task Actual Date;
 - read-only bars/dependencies;
@@ -1670,11 +2060,20 @@ Implementation must assess and update:
 - replacement/migration of Project Structure acceptance workflows to Home;
 - portfolio read application/query service and transport contract;
 - saved-filter domain/application/persistence/transport/UI;
+- frontend browser-local projection-preference ownership, storage key/versioning,
+  parsing, fallback, and failure handling with no backend schema/API change;
+- frontend browser-local hierarchy-preference ownership, storage key/versioning,
+  bulk-action scope, parsing, fallback, and failure handling with no backend
+  schema/API change;
 - database migration for saved filters and normalized uniqueness/version;
 - Project/WBS/Member/Dependency/Public Holiday read composition;
+- WBS create-command support for an authoritative insert-after anchor, atomic
+  sibling-position shifting, concurrent insertion safety, and rollback;
 - cache and schedule projection clock integration;
 - frontend design-system needs for treegrid, split grid/timeline, hover/focus
-  actions inside Name, overflow menu, disabled-action explanation, bars, holiday cells,
+  labelled creation actions on a second line below Name, independently
+  right-anchored overflow,
+  disabled-action explanation, bars, holiday cells,
   tooltip, empty/loading/error states, and virtualization;
 - project architecture and product context;
 - US-3.1, US-3.3, US-4.1, US-4.2, US-4.3, US-5.1, US-6.1, and
@@ -1694,7 +2093,7 @@ project-wide agent rule; this story alone does not require one.
 3. Projects remains available for Project list/configuration/lifecycle.
 4. Project lifecycle actions are available on both Projects and eligible active
    Project rows in Home and use the same application commands.
-5. Project, Group, Task, Add Task, and Add Child dialogs invoked from Home render
+5. Project, Group, Task, Add Sibling, and Add Child dialogs invoked from Home render
    directly over Home without routing through Projects or Project Structure.
 6. Home displays a portfolio Gantt inspired by GanttPRO but governed by SchedMind
    rules.
@@ -1703,13 +2102,17 @@ project-wide agent rule; this story alone does not require one.
    persisted sibling position.
 9. Execution/Commitment dates never determine vertical row order.
 10. Grid columns are WBS, Name, Role, Assignee, Effort, Start, and End.
-11. Row action icons are rendered inside Name and appear on hover or keyboard
-    focus; there is no Actions column.
+11. Labelled creation actions are rendered on a temporary second line below
+    the row Name, inside the Name cell. Rows remain one line at rest and only the
+    hovered or keyboard-focused row expands; there is no Actions column.
 12. Activating row Name is the primary Edit/View action; bars and non-Name row
     space remain read-only.
-13. Add Task and Add Child remain distinct icon-only quick actions.
-14. Secondary actions use one overflow trigger; at most two action controls are
-    visible per row.
+13. Project shows `⊕ Add Child`; eligible Group/unfinished Task shows
+    `⊕ Add Sibling | Add Child`; completed Open Task shows `⊕ Add Sibling`.
+14. Add Sibling and Add Child are separate text buttons. The separator is visual
+    only, the labels never overlay the primary Name line, and the icon-only
+    `...` overflow remains independently anchored at the far right edge of the
+    primary Name line rather than inside the add-label line.
 15. Open Project overflow may expose Lock, Close, and eligible Delete; Locked
     Project overflow may expose Reopen and Close.
 16. Locked Project Edit allows Project Name only; Project Settings remain
@@ -1770,3 +2173,56 @@ project-wide agent rule; this story alone does not require one.
     required.
 54. Project Grid data columns are individually resizable and Timeline consumes
     the remaining width without overlap.
+54A. The latest bounded width of every Project Grid column is stored as a
+     browser-local layout preference and restored after refresh or returning to
+     Home. Unknown/malformed values fall back per column, and storage failure does
+     not block current-session resizing.
+54B. The Name-column header uses one contextual icon-only Collapse All/Expand All
+     action. It is hidden when the current hierarchy has no expandable row.
+55. The last successfully applied Execution/Commitment projection is stored as
+    a browser-local preference and restored when Home is opened again.
+56. Projection preference persistence stores only the projection enum and is
+    independent of backend saved filters and all other Home configuration.
+57. No valid stored preference defaults to Execution; browser-storage read/write
+    failure must not block Home or the current-session projection switch.
+58. Draft projection changes are not remembered until Apply succeeds; Cancel
+    leaves the prior preference unchanged.
+59. Add Sibling is available on eligible Group, unfinished Task, and completed
+    Task rows in an Open Project; it is unavailable on Project, Locked, and
+    Closed contexts.
+60. Add Sibling always creates a Task under the anchor's same authoritative
+    parent immediately after the anchor in full persisted sibling order.
+61. An expanded Group's sibling renders after its entire subtree; Add Sibling
+    never creates a child or inserts inside the subtree.
+62. Role filters do not influence insertion order and are not changed after
+    create, even when the new Task becomes hidden.
+63. Add Child retains the existing behaviour: Project creates a root Task;
+    Group/Task creates beneath the row, including established conversion.
+64. Create plus sibling-position shifting and any required scheduling are one
+    atomic operation; failure creates no Task and leaves ordering unchanged.
+65. Eligible Task and Group rows in an Open Project expose a dedicated leading
+    drag handle; Project, Locked, and Closed rows do not.
+66. Only the handle initiates row reorder. Name, expand/collapse, Add controls,
+    data cells, timeline, and the right-anchored overflow do not.
+67. Drag reorder places the source before or after a sibling under the same
+    authoritative parent and never reparents or crosses Projects.
+68. Dragging a Group moves its entire subtree while preserving every descendant's
+    hierarchy and internal order.
+69. Expanded Groups are indivisible visual blocks for drop targeting; no item may
+    be dropped between a Group and its descendants.
+70. A Restrictive Role Filter disables drag reorder with
+    `Show all roles to reorder WBS items.`; Project filtering alone does not.
+71. Move Up/Down remains available as the keyboard-accessible fallback and is
+    behaviourally equivalent to adjacent drag reorder.
+72. Escape, pointer cancellation, invalid boundary, and same-position drop are
+    no-ops without scheduling.
+73. Valid drag reorder, required scheduling, persistence, and confirmed refresh
+    are atomic; stale or failed mutation restores the prior confirmed order.
+74. Vertical auto-scroll supports drag across long sibling lists without
+    capturing horizontal Timeline scrolling.
+75. Collapsed Project/Group identities are stored in a separate browser-local
+    hierarchy preference and restored after refresh or returning to Home; no
+    valid preference defaults every row to expanded.
+76. Collapse All/Expand All affects only expandable rows in the currently loaded,
+    Role-adjusted hierarchy, preserves collapse identities for unloaded Projects,
+    and performs no backend or scheduler mutation.

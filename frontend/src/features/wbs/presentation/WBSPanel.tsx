@@ -16,6 +16,7 @@ type Draft = {
   mode: "create" | "move";
   node?: WBSNode;
   parentId?: string;
+  insertAfterId?: string;
 };
 
 export function WBSPanel({
@@ -27,6 +28,7 @@ export function WBSPanel({
   loadPublicHolidayDates,
   initialNodeId,
   initialCreateParentId,
+  initialCreateAfterId,
   initialMoveNodeId,
   onCreated,
   onMutated,
@@ -43,6 +45,7 @@ export function WBSPanel({
   ): Promise<string[]>;
   initialNodeId?: string;
   initialCreateParentId?: string | null;
+  initialCreateAfterId?: string;
   initialMoveNodeId?: string;
   onCreated?(node: WBSNode): void;
   onMutated?(nodeId: string): void;
@@ -90,6 +93,12 @@ export function WBSPanel({
           ) {
             setDraft(undefined);
             setError("The selected parent no longer exists.");
+          } else if (
+            initialCreateAfterId !== undefined &&
+            !findNode(confirmedTree, initialCreateAfterId)
+          ) {
+            setDraft(undefined);
+            setError("The selected sibling no longer exists.");
           } else if (initialMoveNodeId) {
             const selected = findNode(confirmedTree, initialMoveNodeId);
             if (selected)
@@ -109,6 +118,7 @@ export function WBSPanel({
         const actionCount =
           Number(initialNodeId !== undefined) +
           Number(initialCreateParentId !== undefined) +
+          Number(initialCreateAfterId !== undefined) +
           Number(initialMoveNodeId !== undefined);
         initialActionApplied.current = true;
         if (actionCount !== 1) {
@@ -136,6 +146,15 @@ export function WBSPanel({
           setName("");
           return;
         }
+        if (initialCreateAfterId !== undefined) {
+          if (!findNode(confirmedTree, initialCreateAfterId)) {
+            setError("The selected sibling no longer exists.");
+            return;
+          }
+          setDraft({ mode: "create", insertAfterId: initialCreateAfterId });
+          setName("");
+          return;
+        }
         if (initialMoveNodeId) {
           const selected = findNode(confirmedTree, initialMoveNodeId);
           if (selected) {
@@ -155,6 +174,7 @@ export function WBSPanel({
   }, [
     gateway,
     initialCreateParentId,
+    initialCreateAfterId,
     initialMoveNodeId,
     initialNodeId,
     project.id,
@@ -195,7 +215,10 @@ export function WBSPanel({
     const selected = draft.node;
     if (draft.mode === "create")
       void mutate(
-        () => gateway.create(project.id, draft.parentId, name, false),
+        () =>
+          draft.insertAfterId
+            ? gateway.createSibling(project.id, draft.insertAfterId, name)
+            : gateway.create(project.id, draft.parentId, name, false),
         onCreated,
       );
     else if (selected)
@@ -246,9 +269,11 @@ export function WBSPanel({
               {conversion
                 ? "This task will become a group"
                 : draft.mode === "create"
-                  ? draft.parentId
-                    ? "Add Child"
-                    : "Add Task"
+                  ? draft.insertAfterId
+                    ? "Add Sibling"
+                    : draft.parentId
+                      ? "Add Child"
+                      : "Add Task"
                   : "Move Item"}
             </h2>
             <div className="mt-5">

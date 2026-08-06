@@ -598,3 +598,170 @@ func TestAssigneeRecommendationEndpointMapsStableErrors_D17_AC31(t *testing.T) {
 		})
 	}
 }
+
+type structuralServiceStub struct {
+	Service
+	create        func(context.Context, string, *string, string, bool) (*domain.Node, error)
+	createSibling func(context.Context, string, string, string) (*domain.Node, error)
+	reorder       func(context.Context, string, string, domain.Direction) error
+	place         func(context.Context, string, string, string, domain.Placement) error
+}
+
+func (s structuralServiceStub) Create(ctx context.Context, projectID string, parentID *string, name string, confirm bool) (*domain.Node, error) {
+	if s.create == nil {
+		return nil, errors.New("unexpected create call")
+	}
+	return s.create(ctx, projectID, parentID, name, confirm)
+}
+
+func (s structuralServiceStub) CreateSibling(ctx context.Context, projectID, insertAfterID, name string) (*domain.Node, error) {
+	if s.createSibling == nil {
+		return nil, errors.New("unexpected create sibling call")
+	}
+	return s.createSibling(ctx, projectID, insertAfterID, name)
+}
+
+func (s structuralServiceStub) Reorder(ctx context.Context, projectID, id string, direction domain.Direction) error {
+	if s.reorder == nil {
+		return errors.New("unexpected adjacent reorder call")
+	}
+	return s.reorder(ctx, projectID, id, direction)
+}
+
+func (s structuralServiceStub) Place(ctx context.Context, projectID, id, targetID string, placement domain.Placement) error {
+	if s.place == nil {
+		return errors.New("unexpected target placement call")
+	}
+	return s.place(ctx, projectID, id, targetID, placement)
+}
+
+func TestCreateSiblingEndpointUsesInsertAfterIntentWithoutClientParentOrPosition_DeltaD03(t *testing.T) {
+	calls := 0
+	service := structuralServiceStub{createSibling: func(_ context.Context, projectID, insertAfterID, name string) (*domain.Node, error) {
+		calls++
+		if projectID != "project" || insertAfterID != "anchor" || name != "New sibling" {
+			t.Fatalf("scope=%q anchor=%q name=%q", projectID, insertAfterID, name)
+		}
+		parentID := "group"
+		return &domain.Node{ID: "new", ProjectID: projectID, ParentID: &parentID, Name: name, Position: 4, Children: []domain.Node{}}, nil
+	}}
+	request := httptest.NewRequest(http.MethodPost, "/api/projects/project/wbs", strings.NewReader(`{"name":"New sibling","insertAfterWbsId":"anchor"}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	reopenMux(service).ServeHTTP(response, request)
+
+	if response.Code != http.StatusCreated || calls != 1 {
+		t.Fatalf("status=%d calls=%d body=%s", response.Code, calls, response.Body.String())
+	}
+	var payload struct {
+		Data struct {
+			ID       string  `json:"id"`
+			ParentID *string `json:"parentId"`
+			Position int     `json:"position"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Data.ID != "new" || payload.Data.ParentID == nil || *payload.Data.ParentID != "group" || payload.Data.Position != 4 {
+		t.Fatalf("confirmed response=%#v", payload.Data)
+	}
+}
+
+func TestCreateSiblingEndpointRejectsConflictingStructuralIntent_DeltaD03(t *testing.T) {
+	calls := 0
+	service := structuralServiceStub{
+		create: func(context.Context, string, *string, string, bool) (*domain.Node, error) {
+			calls++
+			return nil, errors.New("unexpected create")
+		},
+		createSibling: func(context.Context, string, string, string) (*domain.Node, error) {
+			calls++
+			return nil, errors.New("unexpected create sibling")
+		},
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/projects/project/wbs", strings.NewReader(`{"name":"Invalid","parentId":"group","insertAfterWbsId":"anchor"}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	reopenMux(service).ServeHTTP(response, request)
+
+	assertErrorCode(t, response, http.StatusBadRequest, "WBS_CREATE_POSITION_INVALID")
+	if calls != 0 {
+		t.Fatalf("mutation calls=%d", calls)
+	}
+}
+
+func TestReorderEndpointDispatchesTargetBeforeAfterAndKeepsAdjacentFallback_DeltaD05(t *testing.T) {
+	placeCalls := 0
+	reorderCalls := 0
+	service := structuralServiceStub{
+		place: func(_ context.Context, projectID, id, targetID string, placement domain.Placement) error {
+			placeCalls++
+			if projectID != "project" || id != "source" || targetID != "target" || placement != domain.PlaceBefore {
+				t.Fatalf("place scope=%q source=%q target=%q placement=%q", projectID, id, targetID, placement)
+			}
+			return nil
+		},
+		reorder: func(_ context.Context, projectID, id string, direction domain.Direction) error {
+			reorderCalls++
+			if projectID != "project" || id != "source" || direction != domain.MoveDown {
+				t.Fatalf("reorder scope=%q source=%q direction=%q", projectID, id, direction)
+			}
+			return nil
+		},
+	}
+	for _, test := range []struct {
+		name string
+		body string
+	}{
+		{name: "target placement", body: `{"targetSiblingId":"target","placement":"before"}`},
+		{name: "adjacent fallback", body: `{"direction":"down"}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, "/api/projects/project/wbs/source/reorder", strings.NewReader(test.body))
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			reopenMux(service).ServeHTTP(response, request)
+			if response.Code != http.StatusNoContent {
+				t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+			}
+		})
+	}
+	if placeCalls != 1 || reorderCalls != 1 {
+		t.Fatalf("place calls=%d reorder calls=%d", placeCalls, reorderCalls)
+	}
+}
+
+func TestReorderEndpointRejectsMixedOrIncompletePlacementIntent_DeltaD05_D09(t *testing.T) {
+	calls := 0
+	service := structuralServiceStub{
+		place:   func(context.Context, string, string, string, domain.Placement) error { calls++; return nil },
+		reorder: func(context.Context, string, string, domain.Direction) error { calls++; return nil },
+	}
+	for _, body := range []string{
+		`{"direction":"up","targetSiblingId":"target","placement":"before"}`,
+		`{"placement":"after"}`,
+		`{"targetSiblingId":"target"}`,
+	} {
+		request := httptest.NewRequest(http.MethodPost, "/api/projects/project/wbs/source/reorder", strings.NewReader(body))
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		reopenMux(service).ServeHTTP(response, request)
+		assertErrorCode(t, response, http.StatusConflict, "WBS_REORDER_TARGET_INVALID")
+	}
+	if calls != 0 {
+		t.Fatalf("mutation calls=%d", calls)
+	}
+}
+
+func TestCreateSiblingEndpointMapsStaleAnchorAsRecoverableConflict_DeltaD03_D09(t *testing.T) {
+	service := structuralServiceStub{createSibling: func(context.Context, string, string, string) (*domain.Node, error) {
+		return nil, domain.ErrCreateAnchorConflict
+	}}
+	request := httptest.NewRequest(http.MethodPost, "/api/projects/project/wbs", strings.NewReader(`{"name":"New sibling","insertAfterWbsId":"deleted-anchor"}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	reopenMux(service).ServeHTTP(response, request)
+
+	assertErrorCode(t, response, http.StatusConflict, "WBS_CREATE_ANCHOR_CONFLICT")
+}

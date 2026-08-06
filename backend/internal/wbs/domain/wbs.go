@@ -8,9 +8,14 @@ import (
 
 type Direction string
 
+type Placement string
+
 const (
 	MoveUp   Direction = "up"
 	MoveDown Direction = "down"
+
+	PlaceBefore Placement = "before"
+	PlaceAfter  Placement = "after"
 )
 
 type Timeline struct {

@@ -9,9 +9,13 @@
 > **Product decision update — US-7.1:** Home Portfolio Gantt is the canonical
 > active-Project WBS presentation surface. The standalone Project Structure
 > entry point is removed. Home reuses the same Project, Group, and Task forms and
-> the same Add Task/Add Child, rename, reorder, move, and delete application
-> use cases. The Gantt cells, bars, and dependency arrows remain read-only;
-> US-4.1 remains the owner of WBS mutation and conversion rules.
+> the same Add Sibling/Add Child, rename, reorder, move, and delete application
+> use cases. Home may invoke sibling reorder through Move Up/Down or a dedicated
+> drag handle; both paths use the same authoritative reorder command. Add
+> Sibling introduces an authoritative insert-after anchor but
+> does not create a second WBS aggregate. The Gantt cells, bars, and dependency
+> arrows remain read-only; US-4.1 remains the owner of WBS mutation and
+> conversion rules.
 
 > **Product decision updates — US-6.1 and US-4.3:** WBS mutations use the
 > concrete portfolio scheduler when Automatic Scheduling is ON. Dependency
@@ -67,7 +71,8 @@ duplicating mutation rules.
 
 ### In Scope
 
-- Create, rename, move and delete WBS
+- Create root, child, and explicitly positioned sibling WBS; rename, sibling
+  reorder through command or Home drag handle, move, and delete WBS
 - Unlimited hierarchy
 - Automatic conversion between Grouping and Executable WBS
 - Manage executable attributes owned by this story: Role, Assignee, Effort, Capacity Allocation Percentage integration, Manual Execution Timeline, Manual Commitment Timeline, Actual Start, Actual End
@@ -96,7 +101,13 @@ duplicating mutation rules.
 - Grouping WBS cannot own executable attributes. A Group may display the
   read-only recursive descendant summary defined by US-4.3; the summary is not
   persisted on the Group.
-- When adding the first child to an Executable WBS, display a warning and move executable attributes to the first child.
+- Add Child retains the existing workflow. On Project it creates a root Task;
+  on WBS it creates beneath the selected row, and adding the first child to an
+  Executable WBS displays a warning and moves executable attributes to the
+  first child.
+- Add Sibling creates a new Executable WBS under the selected non-Project
+  row's same parent and immediately after that row in full persisted sibling
+  order.
 - Manual Execution/Commitment Timeline is editable only when Automatic Scheduling is OFF and the Project is Open.
 - Actual Date is only available on Executable WBS. Actual Start and Actual End are entered together after completion. On Locked Project, baseline remains unchanged while Actual Allocation may recalculate impacted Open Projects.
 - All other WBS/Task create, edit, delete, move, reorder, conversion, and planning mutations are rejected while the Project is Locked. Project Name rename is a Project-level exception owned by US-3.1 and does not make Group/Task structure editable.
@@ -115,14 +126,99 @@ WBS commands.
   with the read-only US-4.3 Group summary.
 - Activating Task Name opens Edit Task for unfinished, completed, and Locked
   Tasks. Completed Task Reopen remains inside that dialog under US-4.2.
-- Project Add Task and eligible Group/Task Add Child remain visually distinct
-  icon-only quick actions.
-- Move Up, Move Down, Move to, and Delete are secondary actions in the Home row
-  overflow menu.
+- Home replaces the single add icon with labelled creation actions: Project
+  shows `Add Child`; eligible Group/unfinished Task shows
+  `Add Sibling | Add Child`; completed Task shows `Add Sibling` only.
+- The `...` overflow trigger remains independently anchored at the right edge of
+  the row and is not moved beside the creation labels.
+- Move Up, Move Down, Move to, and Delete remain secondary actions in the Home
+  row overflow menu.
+- Eligible Task and Group rows also expose a dedicated leading drag handle for
+  same-parent sibling reorder. The Project row has no drag handle, and the rest
+  of the row is not a drag surface.
 - Home invokes reusable dialogs/use cases directly and must not mount an
   intermediate Project Structure page.
 - Acceptance-level evidence for active WBS management must exercise the Home
   workflow rather than the removed Project Structure workflow.
+
+---
+
+## Create Position Rules
+
+- Project is logical WBS level `0` and has no Add Sibling action. Project Add
+  Child opens the standard Create Task dialog and creates a root WBS using the
+  existing root-create position behaviour.
+- Add Child on Group or unfinished Task keeps the existing child-create and
+  Executable-to-Grouping conversion behaviour. Completed Task cannot Add Child.
+- Add Sibling is available for Group, unfinished Task, and completed Task while
+  the owning Project is Open. Locked and Closed Projects reject it.
+- Add Sibling opens the same Create Task dialog as Add Child and always creates
+  a new Executable WBS; the anchor's Group/Task/completed state is not copied to
+  the new Task.
+- The create command expresses exactly one structural intent: existing
+  root/child creation or sibling insertion. `insert_after_wbs_id` is mutually
+  exclusive with a client-selected parent/position; when it is present, the
+  backend derives both parent and position from the authoritative anchor.
+- The command carries the selected WBS identity as an insert-after anchor. The
+  backend resolves the anchor from the authoritative tree; the client must not
+  calculate or submit a position based only on filtered/rendered rows.
+- The new Task receives the anchor's authoritative parent and is inserted
+  immediately after the anchor in full persisted sibling order. Every later
+  sibling shifts atomically while retaining its relative order.
+- An expanded Group's descendants remain children. Its new sibling renders only
+  after the complete subtree; insertion never occurs between the Group and its
+  first child.
+- Role filtering does not change the authoritative parent or position. A created
+  Task may be absent from the refreshed filtered Home projection.
+- If the anchor no longer exists, the Project is no longer Open, or the anchor
+  cannot be resolved consistently when the transaction executes, the command
+  fails without creating a Task or changing any sibling position.
+- Concurrent create/reorder operations must preserve one gap-free deterministic
+  sibling order. The persistence boundary may serialize them or return a
+  recoverable conflict, but may not lose a Task, duplicate a position, or create
+  the Task under a different parent than the resolved anchor.
+- Task creation, sibling-position updates, executable conversion when applicable,
+  required scheduling, and confirmed projection state commit or roll back as one
+  unit.
+- Scheduler invocation follows the created Task's established scheduling impact.
+  A Name-only Add Sibling does not trigger scheduling merely because later
+  numeric positions shift: existing siblings keep the same relative priority.
+  A created Task with scheduling inputs or any other established concrete
+  scheduling trigger follows US-6.1.
+- Existing sibling-name uniqueness, validation, impact confirmation, and error
+  mapping remain authoritative.
+
+---
+
+## Sibling Reorder Rules
+
+- Reorder is valid only for a Task or Group in an Open Project. Project level
+  `0`, Locked Projects, and Closed Projects cannot be reordered. A completed
+  Task in an Open Project remains structurally reorderable.
+- Move Up/Down swaps one adjacent sibling. Home drag reorder may place the source
+  immediately before or after any sibling under the same authoritative parent.
+- Drag reorder is sibling reorder only. It never changes parent, never moves
+  across Projects, and never replaces the existing Move to workflow.
+- A Group is reordered as one subtree. Every descendant keeps its parent and
+  internal sibling order while the complete subtree changes position together.
+- The reorder command carries source WBS identity, target sibling identity, and
+  `before` or `after` placement. The backend resolves the authoritative shared
+  parent and resulting positions; the client must not submit an arbitrary index
+  derived from rendered rows.
+- Source and target must still exist under the same parent in the same Open
+  Project when the transaction executes. Stale, cross-parent, cross-Project,
+  self/descendant, or otherwise invalid placement fails without changing order.
+- Dropping into the source's existing position is a no-op and must not invoke
+  persistence, scheduling, or impact confirmation.
+- A Restrictive Role Filter disables drag reorder and Move Up/Down because hidden
+  siblings make placement ambiguous. Project filtering alone does not disable
+  reorder.
+- Successful reorder updates one gap-free persisted sibling order. Derived WBS
+  numbers, subtree priority, summaries, dependencies, and affected scheduling
+  refresh through the existing reorder contract.
+- Position updates, required scheduling, confirmed projection refresh, and error
+  handling are atomic. Failure or concurrency conflict restores the confirmed
+  original order and cannot detach or partially move descendants.
 
 ---
 
@@ -162,7 +258,21 @@ WBS commands.
 
 ## Acceptance Criteria
 
-1. Engineering Lead can create root and child WBS.
+1. Engineering Lead can create root, child, and sibling WBS.
+1A. Add Sibling accepts an existing non-Project WBS as an authoritative
+    insert-after anchor, creates a Task under the same parent, and places it
+    immediately after that anchor in full persisted sibling order.
+1B. Add Sibling on an expanded Group places the Task after the complete
+    subtree, not between the Group and its children.
+1C. Completed Task in an Open Project may Add Sibling but not Add Child;
+    Locked and Closed Project contexts reject both structural mutations.
+1D. Add Child preserves existing behaviour, including Project root creation
+    and executable-to-Grouping conversion.
+1E. Create and position shifting are atomic; Cancel or failed validation,
+    scheduling, persistence, or stale-anchor resolution creates nothing and
+    leaves order unchanged.
+1F. Sibling insertion accepts an authoritative anchor identity, not a
+    client-computed sibling index or independently editable parent/position.
 2. Unlimited hierarchy is supported.
 3. Leaf WBS automatically becomes Executable.
 4. Parent WBS automatically becomes Grouping.
@@ -192,11 +302,23 @@ WBS commands.
 27. On an Open unfinished automatic Task, blur previews generated dates and automatic dependency ownership without persisting the Task when Role, valid Effort, and valid Lag are present. Assignee may be selected or explicitly cleared: a selected Assignee previews its reconciled schedule, while a cleared Assignee still calls preview to remove stale automatic ownership and return a missing-Assignee unscheduled projection. Missing or invalid Role, Effort, or Lag makes no preview request.
 28. Home is the canonical active WBS management surface and the standalone Project Structure entry point is removed.
 29. Activating Group Name opens one summary/rename dialog; activating Task Name opens Edit Task for unfinished, completed, and Locked Tasks.
-30. Add Task and Add Child are distinct icon-only quick actions; Move Up, Move Down, Move to, and Delete are placed in one row overflow menu according to eligibility.
+30. Home uses labelled Add Sibling/Add Child controls while the `...` overflow
+    remains anchored at the right edge; Move Up, Move Down, Move to, and Delete
+    remain in overflow according to eligibility.
 31. Move Up/Down swap only adjacent siblings under the same parent and are disabled at the unavailable boundary.
-32. Home disables Move Up/Down while a restrictive Role filter may hide siblings and explains that all Roles must be shown; Move to remains available.
+31A. Eligible Open-Project Task and Group rows support same-parent drag reorder
+     through a dedicated handle; Project and Locked/Closed rows do not.
+31B. Drag reorder places the complete source Task/Group subtree immediately
+     before or after an authoritative sibling and never changes parent.
+31C. A Group's descendants follow the Group as one subtree while retaining their
+     hierarchy and internal order.
+32. Home disables Move Up/Down and drag reorder while a restrictive Role filter
+    may hide siblings and explains that all Roles must be shown; Move to remains
+    available.
 33. Move to changes parent only, offers no sibling-position input, and resolves all valid destinations from the full authoritative Project tree.
-34. A completed Task in an Open Project may be reordered or moved under existing BAU, but cannot Add Child or Delete; its executable data and Actual Date remain immutable.
+34. A completed Task in an Open Project may Add Sibling, reorder, or move under
+    existing BAU, but cannot Add Child or Delete; its executable data and Actual
+    Date remain immutable.
 35. Active WBS acceptance-level tests exercise `Home → row action/dialog → confirm → refreshed Home` and prove that no Projects/Project Structure background navigation occurs.
 36. Successful eligible Task deletion atomically removes every Sprint Task relation for that Task; any delete failure preserves both the Task and its Sprint relations.
 37. First assignment and Edit Task expose the US-6.5 ranked Assignee list when Role, Effort, Capacity Allocation Percentage, and Lag are valid.
@@ -212,6 +334,17 @@ WBS commands.
 
 - Create root WBS with Name only and verify scheduler is not invoked and generated dates remain empty.
 - Create nested WBS under an existing Group with Name only and verify scheduler is not invoked.
+- Add Sibling after a top-level Task and a nested Task and verify same-parent
+  insertion immediately after the anchor.
+- Add Sibling after an expanded Group and verify the new Task appears after
+  the complete subtree.
+- Add Sibling beside a completed Task and verify completed data and Actual Date
+  remain unchanged.
+- Cancel Add Sibling and verify no Task or sibling-position change is persisted.
+- Add Sibling while Role filtering hides other siblings and verify position is
+  calculated against the full persisted order.
+- Create a Name-only sibling and verify later position numbers shift without
+  invoking scheduling or changing existing relative scheduler priority.
 - Convert Executable to Grouping and verify concrete scheduling still runs when executable data or dependency endpoints move.
 - Rename WBS.
 - Move a leaf to another Grouping WBS.
@@ -247,6 +380,10 @@ WBS commands.
 - Delete a Grouping WBS that still has children.
 - Bypass frontend and call delete API for a parent with children.
 - Project lifecycle restriction rejects mutation for Locked or Closed Project where required by approved Project rules.
+- Delete or close the anchor/Project before Add Sibling commit and verify the
+  command fails without creation or position change.
+- Concurrent Add Sibling/reorder operations preserve one gap-free sibling
+  order without lost Tasks or duplicate positions.
 - Concurrent move/delete operations preserve one valid tree.
 
 ### Regression
@@ -256,7 +393,8 @@ WBS commands.
 - Executable-to-Grouping conversion preserves executable data in the first child.
 - Grouping-to-Executable conversion does not invent executable field values.
 - Actual Start and Actual End persist atomically.
-- Failed move or delete leaves hierarchy, dates, and Sprint Task relations unchanged.
+- Failed create, move, or delete leaves hierarchy, positions, dates, and Sprint
+  Task relations unchanged.
 - Older in-flight list/tree responses cannot restore stale hierarchy after mutation.
 
 ---
@@ -269,6 +407,9 @@ WBS commands.
 - API
 - Frontend
 - WBS conversion
+- Same-parent insert-after creation and sibling position shifting
+- Expanded-Group sibling placement and filtered full-order insertion
+- Concurrent insertion/reorder conflict safety and create rollback
 - Move subtree and cycle prevention
 - Leaf-only deletion
 - Concrete scheduler trigger and observable date update
@@ -297,6 +438,11 @@ available and may not claim completion from a no-op adapter.
 - Automatic Grouping/Executable conversion.
 - Group and whole-Project summary is a recursive read-only projection from descendant Tasks
   owned by US-4.3; it is neither a Group executable attribute nor writable Project state.
+- Add Sibling creates a new Task immediately after an existing non-Project
+  anchor under the same authoritative parent. Project offers Add Child only.
+- Completed Task in an Open Project may Add Sibling but may not Add Child.
+- Add Sibling position is resolved from the full persisted order, never the
+  filtered visible subset, and create/position/scheduling commit atomically.
 - A node and its subtree may move to any valid parent within the same Project.
 - Tree cycles and cross-Project moves are prohibited.
 - Only leaf WBS nodes may be deleted; parents must have all children moved or deleted first.
@@ -422,7 +568,7 @@ commit or roll back atomically.
 ### Actual Date, Completion, and Allocation
 
 - Actual Start and Actual End are date-only, valid only on Executable WBS, and required together.
-- Setting complete Actual Date completes the Executable WBS. A completed Task remains read-only for normal planning and executable-field mutation. While the Project is Open, established sibling reorder and Move to may change only its structural parent/position; Add Child and Delete remain unavailable.
+- Setting complete Actual Date completes the Executable WBS. A completed Task remains read-only for normal planning and executable-field mutation. While the Project is Open, Add Sibling may create a separate Task beside it and established sibling reorder/Move to may change only its structural parent/position; Add Child and Delete remain unavailable.
 - On an Open Project, Actual Date actualizes Execution/Commitment dates, creates Actual Allocation, uses Actual End for readiness, and recalculates impacted scope according to US-6.2.
 - On a Locked Project, Actual Date may be entered without changing protected dates/dependencies/order; Actual Allocation is persisted and may recalculate impacted Open Projects.
 - `US-4.2 — Reopen Completed Task` clears both Actual Start and Actual End only while the owning Project is Open. Locked Project must be reopened first.
@@ -430,11 +576,20 @@ commit or roll back atomically.
 ### Reorder
 
 - Move Up and Move Down atomically swap adjacent siblings under the same parent
-  and are the keyboard-accessible reorder mechanism.
-- The unavailable boundary direction is disabled.
-- Home places both actions in row overflow.
+  and remain the keyboard-accessible reorder mechanism.
+- Home additionally exposes a dedicated drag handle on eligible Task and Group
+  rows. The rest of the row, Name, expand/collapse control, creation labels,
+  timeline, and `...` overflow are not drag surfaces.
+- Drag reorder accepts an authoritative sibling anchor plus before/after
+  placement and can cross multiple sibling positions in one operation. It cannot
+  change parent or Project.
+- A Group and its full descendant subtree move as one structural block.
+  Descendant parent IDs and relative internal order remain unchanged.
+- The unavailable Move Up/Down boundary direction is disabled. A same-position
+  drag drop is a no-op.
+- Home places Move Up/Down in row overflow as the keyboard and non-drag fallback.
 - When the applied Role filter does not include every available Role option,
-  including `No role`, Home disables both directions and explains
+  including `No role`, Home disables Move Up/Down and drag reorder and explains
   `Show all roles to reorder WBS items.`
 - Project filtering alone does not disable reorder.
 - Reorder changes persisted sibling position and may affect scheduler ordering;
@@ -483,14 +638,22 @@ the WBS feature.
 - Home row Name opens the reusable Project/Group/Task dialog directly over Home.
 - Group summary and rename are proven in one Open-Project dialog; Locked Group
   remains read-only.
-- Add Task and Add Child use distinct icon-only controls.
+- Project shows labelled Add Child; eligible Group/unfinished Task shows
+  `Add Sibling | Add Child`; completed Task shows Add Sibling only.
+- The creation labels are separate controls and the `...` overflow remains
+  independently anchored at the right edge of the row.
+- Add Sibling exact same-parent insertion is proven against full authoritative
+  sibling order, including an expanded Group and a Restrictive Role Filter.
 - Overflow eligibility is proven for Open Group, unfinished Task, completed Task,
   and Locked rows.
 - Move Up/Down boundary behavior and restrictive-Role-filter disabled reason are
   proven against full persisted sibling order.
+- Drag reorder is proven for Task and expanded Group subtree movement, valid
+  before/after sibling placement, same-position/cancel no-op, invalid
+  cross-parent rejection, and atomic rollback.
 - Move to remains available under Role filtering and lists a valid hidden
   destination from the authoritative full tree.
-- Completed Task may reorder/move but cannot Add Child/Delete.
+- Completed Task may Add Sibling/reorder/move but cannot Add Child/Delete.
 - Delete remains confirmed and backend-authoritative.
 - Successful eligible Task deletion atomically removes Sprint Task relations owned by US-8.1; rollback preserves both Task and relations.
 - No acceptance workflow navigates through or renders the removed Project

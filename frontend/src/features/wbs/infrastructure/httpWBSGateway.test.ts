@@ -775,3 +775,146 @@ describe("HTTP WBS gateway reopen command", () => {
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 });
+
+describe("HTTP WBS gateway sibling structural commands", () => {
+  it("sends an authoritative insert-after anchor and returns the confirmed sibling_DeltaD03", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: { ...taskResponse(null, "new-sibling"), parentId: "group" },
+        }),
+        {
+          status: 201,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const gateway = createHTTPWBSGateway("/api");
+
+    const created = await gateway.createSibling(
+      "project",
+      "anchor",
+      "New sibling",
+    );
+
+    expect(created.id).toBe("new-sibling");
+    expect(created.parentId).toBe("group");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/projects/project/wbs",
+      expect.objectContaining({ method: "POST" }),
+    );
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(JSON.parse(String(init.body))).toEqual({
+      insertAfterWbsId: "anchor",
+      name: "New sibling",
+    });
+    expect(String(init.body)).not.toContain("parentId");
+    expect(String(init.body)).not.toContain("position");
+  });
+
+  it("sends source target and before-after placement for drag reorder_DeltaD05", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const gateway = createHTTPWBSGateway("/api");
+
+    await gateway.place("project", "source", "target", "after");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/projects/project/wbs/source/reorder",
+      expect.objectContaining({ method: "POST" }),
+    );
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(JSON.parse(String(init.body))).toEqual({
+      targetSiblingId: "target",
+      placement: "after",
+    });
+    expect(String(init.body)).not.toContain("direction");
+    expect(String(init.body)).not.toContain("parentId");
+    expect(String(init.body)).not.toContain("position");
+  });
+});
+
+describe("HTTP WBS gateway sibling conflict mapping", () => {
+  it("maps a stale insert-after anchor, invalidates confirmed caches, and exposes a recoverable Home message_DeltaD03_D09", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ data: [taskResponse()] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            code: "WBS_CREATE_ANCHOR_CONFLICT",
+            message: "stale anchor",
+          }),
+          {
+            status: 409,
+            headers: { "Content-Type": "application/json" },
+          },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ data: [] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    const gateway = createHTTPWBSGateway("/api");
+    const confirmedChange = vi.fn();
+    const unsubscribe = gateway.subscribeToConfirmedChanges?.(confirmedChange);
+
+    await gateway.tree("project");
+    await expect(
+      gateway.createSibling("project", "deleted-anchor", "New sibling"),
+    ).rejects.toThrow(
+      "The selected sibling is no longer available. Home will keep the confirmed order; refresh and try again.",
+    );
+    await expect(gateway.tree("project")).resolves.toEqual([]);
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(confirmedChange).toHaveBeenCalledTimes(1);
+    unsubscribe?.();
+  });
+
+  it("invalidates confirmed caches when target placement becomes stale_DeltaD05_D09", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ data: [taskResponse()] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ code: "WBS_REORDER_TARGET_INVALID" }), {
+          status: 409,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ data: [] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    const gateway = createHTTPWBSGateway("/api");
+
+    await gateway.tree("project");
+    await expect(
+      gateway.place("project", "source", "deleted-target", "after"),
+    ).rejects.toThrow(
+      "The selected reorder target is no longer valid. Refresh Home and try again.",
+    );
+    await expect(gateway.tree("project")).resolves.toEqual([]);
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+});

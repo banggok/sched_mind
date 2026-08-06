@@ -118,6 +118,49 @@ func (r *Repository) Create(ctx context.Context, id, p string, parent *string, n
 	return result, err
 }
 
+func (r *Repository) CreateSibling(ctx context.Context, id, p, insertAfterID, name string, now time.Time, _ func(context.Context, string) error) (*domain.Node, error) {
+	var result *domain.Node
+	err := r.tx(ctx, p, func(_ context.Context, tx *gorm.DB, _ projectModel) error {
+		anchor, err := findNode(tx, p, insertAfterID, true)
+		if err != nil {
+			if errors.Is(err, domain.ErrNotFound) {
+				return domain.ErrCreateAnchorConflict
+			}
+			return err
+		}
+		var siblings []nodeModel
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("project_id = ? AND parent_key = ?", p, anchor.ParentKey).Order("position ASC").Order("id ASC").Find(&siblings).Error; err != nil {
+			return err
+		}
+		anchorIndex := -1
+		for index := range siblings {
+			if siblings[index].ID == anchor.ID {
+				anchorIndex = index
+				break
+			}
+		}
+		if anchorIndex < 0 {
+			return domain.ErrCreateAnchorConflict
+		}
+		position := anchorIndex + 2
+		if err := shiftSiblingPositionsForInsert(tx, p, anchor.ParentKey, siblings, position); err != nil {
+			return err
+		}
+		value, err := domain.New(id, p, anchor.ParentID, name, position, now)
+		if err != nil {
+			return err
+		}
+		model := fromDomain(*value)
+		if err := tx.Create(&model).Error; err != nil {
+			return mapConflict(err)
+		}
+		loaded := toDomain(model, false)
+		result = &loaded
+		return nil
+	})
+	return result, err
+}
+
 func (r *Repository) Rename(ctx context.Context, p, id, name string, now time.Time) (*domain.Node, error) {
 	var out *domain.Node
 	err := r.tx(ctx, p, func(_ context.Context, tx *gorm.DB, _ projectModel) error {
@@ -449,6 +492,76 @@ func (r *Repository) Reorder(ctx context.Context, p, id string, d domain.Directi
 	})
 }
 
+func (r *Repository) Place(ctx context.Context, p, id, targetID string, placement domain.Placement, now time.Time, schedule func(context.Context, string) error) error {
+	return r.tx(ctx, p, func(txContext context.Context, tx *gorm.DB, project projectModel) error {
+		source, err := findNode(tx, p, id, true)
+		if err != nil {
+			if errors.Is(err, domain.ErrNotFound) {
+				return domain.ErrReorderTargetInvalid
+			}
+			return err
+		}
+		target, err := findNode(tx, p, targetID, true)
+		if err != nil {
+			if errors.Is(err, domain.ErrNotFound) {
+				return domain.ErrReorderTargetInvalid
+			}
+			return err
+		}
+		if source.ID == target.ID || source.ParentKey != target.ParentKey {
+			return domain.ErrReorderTargetInvalid
+		}
+		var siblings []nodeModel
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("project_id = ? AND parent_key = ?", p, source.ParentKey).Order("position ASC").Order("id ASC").Find(&siblings).Error; err != nil {
+			return err
+		}
+		sourceIndex, targetIndex := -1, -1
+		for index := range siblings {
+			if siblings[index].ID == source.ID {
+				sourceIndex = index
+			}
+			if siblings[index].ID == target.ID {
+				targetIndex = index
+			}
+		}
+		if sourceIndex < 0 || targetIndex < 0 {
+			return domain.ErrReorderTargetInvalid
+		}
+		ordered := append([]nodeModel(nil), siblings...)
+		moving := ordered[sourceIndex]
+		ordered = append(ordered[:sourceIndex], ordered[sourceIndex+1:]...)
+		newTargetIndex := -1
+		for index := range ordered {
+			if ordered[index].ID == target.ID {
+				newTargetIndex = index
+				break
+			}
+		}
+		if newTargetIndex < 0 {
+			return domain.ErrReorderTargetInvalid
+		}
+		insertIndex := newTargetIndex
+		if placement == domain.PlaceAfter {
+			insertIndex++
+		} else if placement != domain.PlaceBefore {
+			return domain.ErrReorderTargetInvalid
+		}
+		ordered = append(ordered, nodeModel{})
+		copy(ordered[insertIndex+1:], ordered[insertIndex:])
+		ordered[insertIndex] = moving
+		if sameSiblingOrder(siblings, ordered) {
+			return nil
+		}
+		if err := persistSiblingOrder(tx, p, source.ParentKey, ordered, source.ID, now); err != nil {
+			return err
+		}
+		if project.AutomaticScheduling {
+			return schedule(txContext, p)
+		}
+		return nil
+	})
+}
+
 func (r *Repository) Move(ctx context.Context, p, id, conversionID string, parent *string, confirm bool, now time.Time, schedule func(context.Context, string) error, invalidate func(context.Context, []string) error) error {
 	return r.tx(ctx, p, func(txContext context.Context, tx *gorm.DB, project projectModel) error {
 		all, err := loadLocked(tx, p)
@@ -622,6 +735,58 @@ func earlierDate(existing, actual *time.Time) *time.Time {
 	value := schedulingdomain.DateOnly(*existing)
 	return &value
 }
+func shiftSiblingPositionsForInsert(tx *gorm.DB, projectID, parentKey string, siblings []nodeModel, insertPosition int) error {
+	if insertPosition < 1 || insertPosition > len(siblings)+1 {
+		return domain.ErrCreatePositionInvalid
+	}
+	offset := len(siblings) + 1
+	if err := tx.Model(&nodeModel{}).
+		Where("project_id = ? AND parent_key = ? AND position >= ?", projectID, parentKey, insertPosition).
+		Update("position", gorm.Expr("position + ?", offset)).Error; err != nil {
+		return err
+	}
+	for _, sibling := range siblings {
+		if sibling.Position < insertPosition {
+			continue
+		}
+		if err := tx.Model(&nodeModel{}).Where("id = ?", sibling.ID).Update("position", sibling.Position+1).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func persistSiblingOrder(tx *gorm.DB, projectID, parentKey string, ordered []nodeModel, sourceID string, now time.Time) error {
+	offset := len(ordered) + 1
+	if err := tx.Model(&nodeModel{}).
+		Where("project_id = ? AND parent_key = ?", projectID, parentKey).
+		Update("position", gorm.Expr("position + ?", offset)).Error; err != nil {
+		return err
+	}
+	for index, sibling := range ordered {
+		updates := map[string]any{"position": index + 1}
+		if sibling.ID == sourceID {
+			updates["updated_at"] = now
+		}
+		if err := tx.Model(&nodeModel{}).Where("id = ?", sibling.ID).Updates(updates).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func sameSiblingOrder(left, right []nodeModel) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index].ID != right[index].ID {
+			return false
+		}
+	}
+	return true
+}
+
 func nextPosition(db *gorm.DB, p, key string) (int, error) {
 	var max int
 	if err := db.Model(&nodeModel{}).Where("project_id = ? AND parent_key = ?", p, key).Select("COALESCE(MAX(position),0)").Scan(&max).Error; err != nil {
