@@ -37,6 +37,25 @@ func (service *Service) List(ctx context.Context, query listing.Query) (listing.
 	return service.repository.List(ctx, query)
 }
 
+func (service *Service) ListMembers(
+	ctx context.Context,
+	roleID string,
+	query listing.Query,
+) (listing.Page[MemberUsage], error) {
+	role, err := service.repository.FindByID(ctx, roleID)
+	if err != nil {
+		return listing.Page[MemberUsage]{}, err
+	}
+	if role == nil {
+		return listing.Page[MemberUsage]{}, errors.New("list role members: repository returned nil without error")
+	}
+	result, err := service.repository.ListMembers(ctx, roleID, query)
+	if err != nil {
+		return listing.Page[MemberUsage]{}, fmt.Errorf("list role members: %w", err)
+	}
+	return result, nil
+}
+
 func (service *Service) Create(ctx context.Context, name string) (*domain.Role, error) {
 	id, err := service.newID()
 	if err != nil {
@@ -103,25 +122,8 @@ func (service *Service) Update(
 }
 
 func (service *Service) Delete(ctx context.Context, id string) error {
-	role, err := service.repository.FindByID(ctx, id)
-	if err != nil {
-		return err
-	}
-	if role == nil {
-		return errors.New("delete role: repository returned nil without error")
-	}
-
-	inUse, err := service.repository.IsInUse(ctx, id)
-	if err != nil {
-		return fmt.Errorf("check role usage: %w", err)
-	}
-	if inUse {
-		return domain.ErrInUse
-	}
-
 	if err := service.repository.Delete(ctx, id); err != nil {
 		return fmt.Errorf("delete role: %w", err)
 	}
-
 	return nil
 }

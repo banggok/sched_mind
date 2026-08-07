@@ -1,4 +1,8 @@
-import type { RolesGateway } from "../application/rolesGateway";
+import type {
+  RoleAuditGateway,
+  RoleMemberUsage,
+  RolesGateway,
+} from "../application/rolesGateway";
 import type { Role } from "../domain/role";
 import { RequestCache } from "../../../shared/infrastructure/RequestCache";
 
@@ -7,6 +11,18 @@ interface RoleDTO {
   name: string;
   createdAt: string;
   updatedAt: string;
+}
+
+interface RoleMemberUsageDTO {
+  id: string;
+  name: string;
+}
+
+interface ListRoleMembersDTO {
+  data: RoleMemberUsageDTO[];
+  page: number;
+  pageSize: number;
+  total: number;
 }
 
 interface ListRolesDTO {
@@ -35,7 +51,7 @@ export class RolesAPIError extends Error {
 export function createHTTPRolesGateway(
   apiBaseURL: string,
   onRolesChanged: () => void = () => undefined,
-): RolesGateway {
+): RoleAuditGateway {
   const listRequests = new Map<
     string,
     RequestCache<
@@ -66,6 +82,24 @@ export function createHTTPRolesGateway(
           total: payload.total,
         };
       }, signal);
+    },
+    async listMembers(roleId, query, signal) {
+      const parameters = new URLSearchParams({
+        search: query.search,
+        page: String(query.page),
+        pageSize: String(query.pageSize),
+      });
+      const response = await fetch(
+        `${apiBaseURL}/roles/${encodeURIComponent(roleId)}/members?${parameters}`,
+        { signal },
+      );
+      const payload = await readResponse<ListRoleMembersDTO>(response);
+      return {
+        items: payload.data.map(mapRoleMemberUsage),
+        page: payload.page,
+        pageSize: payload.pageSize,
+        total: payload.total,
+      };
     },
     async create(name) {
       const response = await fetch(`${apiBaseURL}/roles`, {
@@ -135,4 +169,8 @@ function mapRole(dto: RoleDTO): Role {
     createdAt: new Date(dto.createdAt),
     updatedAt: new Date(dto.updatedAt),
   };
+}
+
+function mapRoleMemberUsage(dto: RoleMemberUsageDTO): RoleMemberUsage {
+  return { id: dto.id, name: dto.name };
 }

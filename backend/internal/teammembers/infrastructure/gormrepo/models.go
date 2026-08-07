@@ -9,7 +9,7 @@ import (
 type teamMemberModel struct {
 	ID               string         `gorm:"type:uuid;primaryKey"`
 	Name             string         `gorm:"size:100;not null"`
-	RoleID           string         `gorm:"type:uuid;not null;index"`
+	RoleID           string         `gorm:"type:uuid;index"`
 	Role             roleModel      `gorm:"foreignKey:RoleID;references:ID"`
 	DailyCapacity    string         `gorm:"type:numeric(4,1);not null"`
 	BufferPercentage string         `gorm:"type:numeric(5,2);not null"`

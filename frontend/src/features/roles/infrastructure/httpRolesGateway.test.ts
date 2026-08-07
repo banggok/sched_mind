@@ -43,6 +43,39 @@ describe("HTTP roles gateway", () => {
     );
   });
 
+  it("lists active members using a Role with bounded query parameters", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            data: [{ id: "member-1", name: "Ayu" }],
+            page: 2,
+            pageSize: 10,
+            total: 11,
+          }),
+          { status: 200 },
+        ),
+      ),
+    );
+
+    const result = await createHTTPRolesGateway("/configured-api").listMembers(
+      "role/id",
+      { search: "ay", page: 2, pageSize: 10 },
+    );
+
+    expect(result).toEqual({
+      items: [{ id: "member-1", name: "Ayu" }],
+      page: 2,
+      pageSize: 10,
+      total: 11,
+    });
+    expect(fetch).toHaveBeenCalledWith(
+      "/configured-api/roles/role%2Fid/members?search=ay&page=2&pageSize=10",
+      { signal: undefined },
+    );
+  });
+
   it("reuses list results until a mutation invalidates them", async () => {
     const fetchMock = vi
       .fn()
@@ -169,7 +202,7 @@ describe("HTTP roles gateway", () => {
           JSON.stringify({
             code: "ROLE_IN_USE",
             message:
-              "Role is assigned to one or more team members and cannot be deleted",
+              "Role is assigned to one or more active team members and cannot be deleted",
           }),
           { status: 409 },
         ),
@@ -181,7 +214,7 @@ describe("HTTP roles gateway", () => {
     ).rejects.toEqual(
       new RolesAPIError(
         "ROLE_IN_USE",
-        "Role is assigned to one or more team members and cannot be deleted",
+        "Role is assigned to one or more active team members and cannot be deleted",
       ),
     );
   });

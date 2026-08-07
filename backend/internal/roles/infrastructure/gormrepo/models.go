@@ -19,11 +19,21 @@ func (roleModel) TableName() string {
 
 type teamMemberModel struct {
 	ID        string         `gorm:"type:uuid;primaryKey"`
-	RoleID    string         `gorm:"type:uuid;not null;index"`
+	Name      string         `gorm:"size:100;not null"`
+	RoleID    string         `gorm:"type:uuid;index"`
 	Role      roleModel      `gorm:"foreignKey:RoleID;references:ID;constraint:OnDelete:RESTRICT"`
 	DeletedAt gorm.DeletedAt `gorm:"index"`
 }
 
 func (teamMemberModel) TableName() string {
 	return "team_members"
+}
+
+type wbsNodeModel struct {
+	ID     string  `gorm:"type:uuid;primaryKey"`
+	RoleID *string `gorm:"type:uuid;index"`
+}
+
+func (wbsNodeModel) TableName() string {
+	return "wbs_nodes"
 }

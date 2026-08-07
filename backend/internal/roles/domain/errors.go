@@ -8,5 +8,6 @@ var (
 	ErrNameInvalid  = errors.New("role name contains unsupported characters")
 	ErrNameExists   = errors.New("role name already exists")
 	ErrNotFound     = errors.New("role not found")
-	ErrInUse        = errors.New("role is assigned to one or more team members and cannot be deleted")
+	ErrInUse        = errors.New("role is assigned to one or more active team members and cannot be deleted")
+	ErrInUseByTask  = errors.New("role is assigned to one or more tasks and cannot be deleted")
 )

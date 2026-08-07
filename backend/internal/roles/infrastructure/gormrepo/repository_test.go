@@ -139,7 +139,7 @@ func TestRepositoryPreventsDeletingAssignedRole(t *testing.T) {
 	}
 }
 
-func TestRepositoryTreatsSoftDeletedMemberAsHistoricalRoleReference(t *testing.T) {
+func TestRepositorySoftDeletedMemberDoesNotBlockRoleDelete_US11_AC9_AC12(t *testing.T) {
 	t.Parallel()
 
 	database := openTestDatabase(t)
@@ -158,8 +158,118 @@ func TestRepositoryTreatsSoftDeletedMemberAsHistoricalRoleReference(t *testing.T
 		t.Fatal(err)
 	}
 
-	if err := repository.Delete(context.Background(), role.ID); !errors.Is(err, domain.ErrInUse) {
-		t.Fatalf("Delete() error = %v, want ErrInUse", err)
+	usage, err := repository.ListMembers(context.Background(), role.ID, listing.Query{Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatalf("ListMembers() error = %v", err)
+	}
+	if usage.Total != 0 {
+		t.Fatalf("ListMembers() total = %d, want 0 active Members", usage.Total)
+	}
+	if err := repository.Delete(context.Background(), role.ID); err != nil {
+		t.Fatalf("Delete() error = %v, want nil", err)
+	}
+	var detached struct {
+		RoleID *string `gorm:"column:role_id"`
+	}
+	if err := database.Unscoped().Table("team_members").Select("role_id").Where("id = ?", "member-id").Take(&detached).Error; err != nil {
+		t.Fatalf("read historical Member after Role delete: %v", err)
+	}
+	if detached.RoleID != nil {
+		t.Fatalf("historical Member role_id = %v, want nil after Role delete", *detached.RoleID)
+	}
+}
+
+func TestRepositoryRejectsRoleDeleteWhenTaskStillReferencesRole_US11_AC17(t *testing.T) {
+	t.Parallel()
+
+	database := openTestDatabase(t)
+	repository := New(database)
+	role, err := domain.NewRole("role-id", "Backend", time.Now().UTC())
+	if err != nil || role == nil {
+		t.Fatalf("NewRole() role = %#v, error = %v", role, err)
+	}
+	if err := repository.Create(context.Background(), *role); err != nil {
+		t.Fatal(err)
+	}
+	if err := AssignRoleForTest(database, "historical-member", role.ID); err != nil {
+		t.Fatalf("AssignRoleForTest() error = %v", err)
+	}
+	if err := database.Delete(&teamMemberModel{}, "id = ?", "historical-member").Error; err != nil {
+		t.Fatalf("soft delete historical Member: %v", err)
+	}
+	roleID := role.ID
+	if err := database.Create(&wbsNodeModel{ID: "task-id", RoleID: &roleID}).Error; err != nil {
+		t.Fatalf("create Task Role reference: %v", err)
+	}
+
+	if err := repository.Delete(context.Background(), role.ID); !errors.Is(err, domain.ErrInUseByTask) {
+		t.Fatalf("Delete() error = %v, want ErrInUseByTask", err)
+	}
+	if _, err := repository.FindByID(context.Background(), role.ID); err != nil {
+		t.Fatalf("FindByID() after rejected delete error = %v", err)
+	}
+	var historical struct {
+		RoleID *string `gorm:"column:role_id"`
+	}
+	if err := database.Unscoped().Table("team_members").Select("role_id").
+		Where("id = ?", "historical-member").Take(&historical).Error; err != nil {
+		t.Fatalf("read historical Member after rejected delete: %v", err)
+	}
+	if historical.RoleID == nil || *historical.RoleID != role.ID {
+		t.Fatalf("historical Member role_id = %v, want preserved %q", historical.RoleID, role.ID)
+	}
+}
+
+func TestRepositoryListsOnlyActiveMembersUsingRole_US11_AC16(t *testing.T) {
+	t.Parallel()
+
+	database := openTestDatabase(t)
+	repository := New(database)
+	role, err := domain.NewRole("role-id", "Backend", time.Now().UTC())
+	if err != nil || role == nil {
+		t.Fatalf("NewRole() role = %#v, error = %v", role, err)
+	}
+	otherRole, err := domain.NewRole("other-role", "Frontend", time.Now().UTC())
+	if err != nil || otherRole == nil {
+		t.Fatalf("NewRole() other role = %#v, error = %v", otherRole, err)
+	}
+	if err := repository.Create(context.Background(), *role); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.Create(context.Background(), *otherRole); err != nil {
+		t.Fatal(err)
+	}
+	for _, member := range []teamMemberModel{
+		{ID: "member-b", Name: "Bima", RoleID: role.ID},
+		{ID: "member-a", Name: "Ayu", RoleID: role.ID},
+		{ID: "member-other", Name: "Ayu Other", RoleID: otherRole.ID},
+		{ID: "member-deleted", Name: "Ayu Deleted", RoleID: role.ID},
+	} {
+		if err := database.Create(&member).Error; err != nil {
+			t.Fatalf("create member %s: %v", member.ID, err)
+		}
+	}
+	if err := database.Delete(&teamMemberModel{}, "id = ?", "member-deleted").Error; err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := repository.ListMembers(context.Background(), role.ID, listing.Query{Search: "a", Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatalf("ListMembers() error = %v", err)
+	}
+	if result.Total != 1 || len(result.Items) != 1 {
+		t.Fatalf("ListMembers() = %#v, want one active matching Member", result)
+	}
+	if result.Items[0].ID != "member-a" || result.Items[0].Name != "Ayu" {
+		t.Fatalf("item = %#v, want Ayu", result.Items[0])
+	}
+
+	all, err := repository.ListMembers(context.Background(), role.ID, listing.Query{Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatalf("ListMembers() all error = %v", err)
+	}
+	if all.Total != 2 || len(all.Items) != 2 || all.Items[0].Name != "Ayu" || all.Items[1].Name != "Bima" {
+		t.Fatalf("all Members = %#v, want Ayu then Bima only", all)
 	}
 }
 

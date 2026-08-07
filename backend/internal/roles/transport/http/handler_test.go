@@ -9,24 +9,44 @@ import (
 	"testing"
 	"time"
 
+	roleapplication "github.com/banggok/sched_mind/backend/internal/roles/application"
 	"github.com/banggok/sched_mind/backend/internal/roles/domain"
 	"github.com/banggok/sched_mind/backend/internal/shared/listing"
 )
 
 type serviceStub struct {
-	roles       []domain.Role
-	listQuery   listing.Query
-	createRole  *domain.Role
-	createError error
-	updateRole  *domain.Role
-	updateError error
-	deleteError error
+	roles        []domain.Role
+	members      []roleapplication.MemberUsage
+	listQuery    listing.Query
+	memberQuery  listing.Query
+	memberRoleID string
+	membersError error
+	createRole   *domain.Role
+	createError  error
+	updateRole   *domain.Role
+	updateError  error
+	deleteError  error
 }
 
 func (service *serviceStub) List(_ context.Context, query listing.Query) (listing.Page[domain.Role], error) {
 	service.listQuery = query
 	return listing.Page[domain.Role]{
 		Items: service.roles, Page: query.Page, PageSize: query.PageSize, Total: int64(len(service.roles)),
+	}, nil
+}
+
+func (service *serviceStub) ListMembers(
+	_ context.Context,
+	roleID string,
+	query listing.Query,
+) (listing.Page[roleapplication.MemberUsage], error) {
+	service.memberRoleID = roleID
+	service.memberQuery = query
+	if service.membersError != nil {
+		return listing.Page[roleapplication.MemberUsage]{}, service.membersError
+	}
+	return listing.Page[roleapplication.MemberUsage]{
+		Items: service.members, Page: query.Page, PageSize: query.PageSize, Total: int64(len(service.members)),
 	}, nil
 }
 
@@ -200,6 +220,27 @@ func TestUpdateAndDeleteFailures(t *testing.T) {
 	}
 }
 
+func TestDeleteRoleTaskConflictContract(t *testing.T) {
+	t.Parallel()
+
+	router := http.NewServeMux()
+	New(&serviceStub{deleteError: domain.ErrInUseByTask}).Register(router)
+	request := httptest.NewRequest(http.MethodDelete, "/api/roles/role-id", nil)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", response.Code)
+	}
+	var payload errorResponse
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.Code != "ROLE_IN_USE_BY_TASK" || payload.Message != domain.ErrInUseByTask.Error() {
+		t.Fatalf("payload = %#v, want Task-specific role conflict", payload)
+	}
+}
+
 func TestCreateRejectsNilServiceResult(t *testing.T) {
 	t.Parallel()
 
@@ -216,5 +257,55 @@ func TestCreateRejectsNilServiceResult(t *testing.T) {
 
 	if response.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500", response.Code)
+	}
+}
+
+func TestListRoleMembersReturnsNotFoundForMissingRole_US11_AC16(t *testing.T) {
+	t.Parallel()
+
+	router := http.NewServeMux()
+	New(&serviceStub{membersError: domain.ErrNotFound}).Register(router)
+	request := httptest.NewRequest(http.MethodGet, "/api/roles/missing/members?page=1&pageSize=10", nil)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", response.Code)
+	}
+	var payload errorResponse
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.Code != "ROLE_NOT_FOUND" {
+		t.Fatalf("code = %q, want ROLE_NOT_FOUND", payload.Code)
+	}
+}
+
+func TestListRoleMembersResponse(t *testing.T) {
+	t.Parallel()
+
+	service := &serviceStub{members: []roleapplication.MemberUsage{{ID: "member-1", Name: "Ayu"}}}
+	router := http.NewServeMux()
+	New(service).Register(router)
+
+	request := httptest.NewRequest(http.MethodGet, "/api/roles/role-1/members?search=ay&page=2&pageSize=10", nil)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", response.Code)
+	}
+	var payload memberUsageListResponse
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if service.memberRoleID != "role-1" {
+		t.Fatalf("role ID = %q, want role-1", service.memberRoleID)
+	}
+	if service.memberQuery != (listing.Query{Search: "ay", Page: 2, PageSize: 10}) {
+		t.Fatalf("query = %#v, want parsed search and pagination", service.memberQuery)
+	}
+	if len(payload.Data) != 1 || payload.Data[0].ID != "member-1" || payload.Data[0].Name != "Ayu" {
+		t.Fatalf("data = %#v, want Ayu", payload.Data)
 	}
 }

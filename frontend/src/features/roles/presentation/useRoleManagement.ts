@@ -191,7 +191,9 @@ function errorMessage(error: unknown, fallback: string): string {
     case "ROLE_NOT_FOUND":
       return "This role no longer exists. Refresh the list and try again.";
     case "ROLE_IN_USE":
-      return "Role is assigned to one or more members and cannot be deleted";
+      return "Role is assigned to one or more active team members and cannot be deleted";
+    case "ROLE_IN_USE_BY_TASK":
+      return "Role is assigned to one or more tasks and cannot be deleted";
     default:
       return fallback;
   }

@@ -5,10 +5,12 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/banggok/sched_mind/backend/internal/roles/application"
 	"github.com/banggok/sched_mind/backend/internal/roles/domain"
 	"github.com/banggok/sched_mind/backend/internal/shared/listing"
 	sharedpersistence "github.com/banggok/sched_mind/backend/internal/shared/persistence"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type Repository struct {
@@ -42,6 +44,38 @@ func (repository *Repository) List(ctx context.Context, query listing.Query) (li
 
 	return listing.Page[domain.Role]{
 		Items: roles, Page: query.Page, PageSize: query.PageSize, Total: total,
+	}, nil
+}
+
+func (repository *Repository) ListMembers(
+	ctx context.Context,
+	roleID string,
+	query listing.Query,
+) (listing.Page[application.MemberUsage], error) {
+	statement := repository.database.WithContext(ctx).Model(&teamMemberModel{}).Where("role_id = ?", roleID)
+	if search := strings.ToLower(strings.TrimSpace(query.Search)); search != "" {
+		statement = statement.Where("LOWER(name) LIKE ?", sharedpersistence.EscapeLike(search)+"%")
+	}
+
+	var total int64
+	if err := statement.Count(&total).Error; err != nil {
+		return listing.Page[application.MemberUsage]{}, err
+	}
+
+	var members []teamMemberModel
+	if err := statement.Select("id, name").
+		Order("LOWER(name) ASC").Order("id ASC").
+		Limit(query.PageSize).Offset((query.Page - 1) * query.PageSize).
+		Find(&members).Error; err != nil {
+		return listing.Page[application.MemberUsage]{}, err
+	}
+
+	items := make([]application.MemberUsage, 0, len(members))
+	for _, member := range members {
+		items = append(items, application.MemberUsage{ID: member.ID, Name: member.Name})
+	}
+	return listing.Page[application.MemberUsage]{
+		Items: items, Page: query.Page, PageSize: query.PageSize, Total: total,
 	}, nil
 }
 
@@ -101,28 +135,46 @@ func (repository *Repository) Update(ctx context.Context, role domain.Role) erro
 	return nil
 }
 
-func (repository *Repository) IsInUse(ctx context.Context, id string) (bool, error) {
-	var count int64
-	if err := repository.database.WithContext(ctx).Unscoped().
-		Model(&teamMemberModel{}).
-		Where("role_id = ?", id).
-		Count(&count).Error; err != nil {
-		return false, err
-	}
-	return count > 0, nil
-}
-
 func (repository *Repository) Delete(ctx context.Context, id string) error {
-	result := repository.database.WithContext(ctx).
-		Where("id = ?", id).
-		Delete(&roleModel{})
-	if result.Error != nil {
-		return mapConstraintError(result.Error)
-	}
-	if result.RowsAffected == 0 {
-		return domain.ErrNotFound
-	}
-	return nil
+	return repository.database.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var role roleModel
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&role, "id = ?", id).Error; errors.Is(err, gorm.ErrRecordNotFound) {
+			return domain.ErrNotFound
+		} else if err != nil {
+			return err
+		}
+
+		var activeMembers int64
+		if err := tx.Model(&teamMemberModel{}).Where("role_id = ?", id).Count(&activeMembers).Error; err != nil {
+			return err
+		}
+		if activeMembers > 0 {
+			return domain.ErrInUse
+		}
+
+		var taskReferences int64
+		if err := tx.Model(&wbsNodeModel{}).Where("role_id = ?", id).Count(&taskReferences).Error; err != nil {
+			return err
+		}
+		if taskReferences > 0 {
+			return domain.ErrInUseByTask
+		}
+
+		if err := tx.Unscoped().Model(&teamMemberModel{}).
+			Where("role_id = ? AND deleted_at IS NOT NULL", id).
+			Update("role_id", nil).Error; err != nil {
+			return err
+		}
+
+		result := tx.Delete(&role)
+		if result.Error != nil {
+			return mapConstraintError(result.Error)
+		}
+		if result.RowsAffected == 0 {
+			return domain.ErrNotFound
+		}
+		return nil
+	})
 }
 
 func toDomain(model roleModel) domain.Role {
