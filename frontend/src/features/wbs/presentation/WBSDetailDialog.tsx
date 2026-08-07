@@ -61,11 +61,40 @@ export function WBSDetailDialog({
   onReopened(node: WBSNode, message: string): void;
   nested?: boolean;
 }) {
+  const nodeScheduling = node.scheduling ?? {
+    version: 0,
+    source: "inherit" as const,
+    localStatus: "open" as const,
+    effectiveAutomaticScheduling: project.automaticScheduling,
+    effectiveSchedulingStartDate: project.schedulingStartDate,
+    inheritedAutomaticScheduling: project.automaticScheduling,
+    inheritedSchedulingStartDate: project.schedulingStartDate,
+    inheritedAutomaticSource: { id: project.id, name: project.name },
+    inheritedStartDateSource: { id: project.id, name: project.name },
+    automaticSource: { id: project.id, name: project.name },
+    startDateSource: { id: project.id, name: project.name },
+    effectiveLifecycle: project.status,
+  };
   const [roles, setRoles] = useState<Role[]>([]);
   const [members, setMembers] = useState<TeamMember[]>([]);
   const [optionsLoadError, setOptionsLoadError] = useState("");
   const [optionsReloadVersion, setOptionsReloadVersion] = useState(0);
   const [name, setName] = useState(node.name);
+  const [groupSchedulingSource, setGroupSchedulingSource] = useState(
+    nodeScheduling.source,
+  );
+  const [groupAutomaticScheduling, setGroupAutomaticScheduling] = useState(
+    nodeScheduling.automaticScheduling ??
+      nodeScheduling.effectiveAutomaticScheduling,
+  );
+  const [groupSchedulingStartDate, setGroupSchedulingStartDate] = useState(
+    nodeScheduling.schedulingStartDate ?? "",
+  );
+  const [groupEnableConfirmationOpen, setGroupEnableConfirmationOpen] =
+    useState(false);
+  const [groupLifecycleConfirmation, setGroupLifecycleConfirmation] = useState<
+    "open" | "locked"
+  >();
   const [role, setRole] = useState(node.executable.roleId ?? "");
   const [assignee, setAssignee] = useState(node.executable.assigneeId ?? "");
   const [effort, setEffort] = useState(
@@ -165,10 +194,18 @@ export function WBSDetailDialog({
   const completed = Boolean(
     node.executable.actualStart && node.executable.actualEnd,
   );
-  const readOnly = completed || project.status !== "open";
-  const canReopen = completed && project.status === "open";
+  const planningOpen = nodeScheduling.effectiveLifecycle === "open";
+  const readOnly = completed || !planningOpen;
+  const canReopen = completed && planningOpen;
   const manual =
-    project.status === "open" && !project.automaticScheduling && !completed;
+    planningOpen && !nodeScheduling.effectiveAutomaticScheduling && !completed;
+  const groupPlanningEditable =
+    node.hasChildren && planningOpen && nodeScheduling.localStatus === "open";
+  const groupCanReopen =
+    node.hasChildren &&
+    project.status === "open" &&
+    nodeScheduling.localStatus === "locked" &&
+    nodeScheduling.lockOwner?.id === node.id;
   function clearRecommendation() {
     recommendationController.current?.abort();
     recommendationController.current = undefined;
@@ -339,8 +376,8 @@ export function WBSDetailDialog({
 
   async function previewSchedule(overrides?: { effort?: string }) {
     if (
-      project.status !== "open" ||
-      !project.automaticScheduling ||
+      !planningOpen ||
+      !nodeScheduling.effectiveAutomaticScheduling ||
       completed
     ) {
       return;
@@ -529,19 +566,94 @@ export function WBSDetailDialog({
       setReopenBusy(false);
     }
   }
-  async function saveGroup(event: FormEvent) {
-    event.preventDefault();
-    if (project.status !== "open" || busy) return;
+  function proposedGroupAutomaticScheduling() {
+    return groupSchedulingSource === "override"
+      ? groupAutomaticScheduling
+      : nodeScheduling.inheritedAutomaticScheduling;
+  }
+  const groupDraftDirty =
+    name !== node.name ||
+    groupSchedulingSource !== nodeScheduling.source ||
+    (groupSchedulingSource === "override" &&
+      (groupAutomaticScheduling !==
+        (nodeScheduling.automaticScheduling ??
+          nodeScheduling.effectiveAutomaticScheduling) ||
+        groupSchedulingStartDate !==
+          (nodeScheduling.schedulingStartDate ?? "")));
+  async function submitGroup(confirmEnable = false) {
+    if (!groupPlanningEditable || busy) return;
+    if (
+      !confirmEnable &&
+      !nodeScheduling.effectiveAutomaticScheduling &&
+      proposedGroupAutomaticScheduling()
+    ) {
+      setGroupEnableConfirmationOpen(true);
+      return;
+    }
     setBusy(true);
     setError("");
     try {
-      await gateway.rename(project.id, node.id, name);
+      await gateway.updateGroupScheduling(project.id, node.id, {
+        expectedVersion: nodeScheduling.version,
+        name,
+        schedulingSource: groupSchedulingSource,
+        automaticScheduling:
+          groupSchedulingSource === "override"
+            ? groupAutomaticScheduling
+            : undefined,
+        schedulingStartDate:
+          groupSchedulingSource === "override"
+            ? groupSchedulingStartDate || null
+            : undefined,
+      });
+      setGroupEnableConfirmationOpen(false);
       onChanged("Group updated.");
     } catch (reason: unknown) {
       setError(
         reason instanceof Error
           ? reason.message
           : "Group could not be updated.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+  function saveGroup(event: FormEvent) {
+    event.preventDefault();
+    void submitGroup();
+  }
+  function useGroupOverride() {
+    if (!groupPlanningEditable || busy) return;
+    setGroupSchedulingSource("override");
+    setGroupAutomaticScheduling(nodeScheduling.effectiveAutomaticScheduling);
+    setGroupSchedulingStartDate(
+      nodeScheduling.effectiveSchedulingStartDate ?? "",
+    );
+  }
+  function useInheritedGroupScheduling() {
+    if (!groupPlanningEditable || busy) return;
+    setGroupSchedulingSource("inherit");
+  }
+  async function changeGroupLifecycle(status: "open" | "locked") {
+    if (busy) return;
+    if (status === "locked" && !groupPlanningEditable) return;
+    if (status === "open" && !groupCanReopen) return;
+    setBusy(true);
+    setError("");
+    try {
+      await gateway.changeGroupStatus(
+        project.id,
+        node.id,
+        status,
+        nodeScheduling.version,
+      );
+      setGroupLifecycleConfirmation(undefined);
+      onChanged(status === "locked" ? "Group locked." : "Group reopened.");
+    } catch (reason: unknown) {
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : "Group status could not be updated.",
       );
     } finally {
       setBusy(false);
@@ -653,16 +765,177 @@ export function WBSDetailDialog({
             maxLength={200}
             label="Name"
             value={name}
-            disabled={project.status !== "open" || busy}
-            autoFocus={project.status === "open"}
+            disabled={!groupPlanningEditable || busy}
+            autoFocus={groupPlanningEditable}
             onChange={(event) => setName(event.target.value)}
           />
-          {project.status !== "open" ? (
+          {!groupPlanningEditable ? (
             <p className="mt-2 text-sm text-muted">
-              Group details are read-only while this Project is {project.status}
+              Planning fields are read-only while this scope is{" "}
+              {nodeScheduling.effectiveLifecycle}
+              {nodeScheduling.lockOwner
+                ? ` by ${nodeScheduling.lockOwner.name}`
+                : ""}
               .
             </p>
           ) : null}
+
+          <section
+            className="mt-5 rounded-surface border border-border-subtle p-4"
+            aria-labelledby="group-scheduling-heading"
+          >
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h4 id="group-scheduling-heading" className="font-extrabold">
+                  Scheduling
+                </h4>
+                <p className="mt-1 text-sm text-muted">
+                  Effective: Automatic Scheduling{" "}
+                  {nodeScheduling.effectiveAutomaticScheduling ? "ON" : "OFF"};
+                  start{" "}
+                  {nodeScheduling.effectiveSchedulingStartDate
+                    ? formatDateOnly(
+                        nodeScheduling.effectiveSchedulingStartDate,
+                      )
+                    : "no anchor"}
+                  .
+                </p>
+                <p className="mt-1 text-xs text-muted">
+                  Automatic value from {nodeScheduling.automaticSource.name}.
+                  Start date from {nodeScheduling.startDateSource.name}.
+                </p>
+              </div>
+              <span className="rounded-action bg-surface-muted px-2 py-1 text-xs font-bold">
+                {nodeScheduling.localStatus === "locked" ? "Locked" : "Open"}
+              </span>
+            </div>
+
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-label font-bold">Scheduling source</p>
+                <p className="mt-1 text-sm text-muted">
+                  {groupSchedulingSource === "inherit"
+                    ? `Inherited from ${nodeScheduling.inheritedAutomaticSource.name}`
+                    : "Custom for this Group"}
+                </p>
+              </div>
+              {groupPlanningEditable ? (
+                groupSchedulingSource === "inherit" ? (
+                  <Button
+                    type="button"
+                    disabled={busy}
+                    onClick={useGroupOverride}
+                  >
+                    Override scheduling settings
+                  </Button>
+                ) : (
+                  <Button
+                    type="button"
+                    disabled={busy}
+                    onClick={useInheritedGroupScheduling}
+                  >
+                    Use inherited scheduling settings
+                  </Button>
+                )
+              ) : null}
+            </div>
+
+            {groupSchedulingSource === "override" ? (
+              <div className="mt-4 space-y-4">
+                <div className="flex items-center justify-between gap-4 rounded-control border border-border-subtle px-3 py-3">
+                  <div>
+                    <p className="text-sm font-bold">Automatic Scheduling</p>
+                    <p className="mt-1 text-xs text-muted">
+                      Overrides only descendants of this Group. Project Buffer
+                      and Project Priority still apply.
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    role="switch"
+                    aria-label="Group automatic scheduling"
+                    aria-checked={groupAutomaticScheduling}
+                    className="ui-switch"
+                    compact
+                    disabled={!groupPlanningEditable || busy}
+                    onClick={() =>
+                      setGroupAutomaticScheduling((current) => !current)
+                    }
+                  >
+                    {groupAutomaticScheduling ? "ON" : "OFF"}
+                  </Button>
+                </div>
+                <div>
+                  <CalendarPopover
+                    label="Scheduling Start Date"
+                    buttonLabel={
+                      groupSchedulingStartDate
+                        ? formatDateOnly(groupSchedulingStartDate)
+                        : "Use inherited date"
+                    }
+                    disabled={!groupPlanningEditable || busy}
+                    initialDate={
+                      groupSchedulingStartDate ||
+                      nodeScheduling.effectiveSchedulingStartDate
+                    }
+                    instruction="Select a custom Group scheduling start date."
+                    selectedDates={
+                      groupSchedulingStartDate ? [groupSchedulingStartDate] : []
+                    }
+                    loadPublicHolidayDates={loadPublicHolidayDates}
+                    onSelect={(date) => {
+                      setGroupSchedulingStartDate(date);
+                      return true;
+                    }}
+                  />
+                  <div className="mt-2 flex items-center justify-between gap-3">
+                    <p className="text-xs text-muted">
+                      Leaving this empty inherits the nearest parent Group start
+                      date, then the Project date.
+                    </p>
+                    {groupSchedulingStartDate ? (
+                      <Button
+                        type="button"
+                        compact
+                        disabled={busy}
+                        onClick={() => setGroupSchedulingStartDate("")}
+                      >
+                        Use inherited date
+                      </Button>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {groupPlanningEditable && groupDraftDirty ? (
+              <p className="mt-4 text-xs text-muted">
+                Save Group changes before locking this Group.
+              </p>
+            ) : null}
+            <div className="mt-4 flex flex-wrap justify-end gap-2 border-t border-border-subtle pt-4">
+              {groupPlanningEditable ? (
+                <Button
+                  type="button"
+                  variant="danger"
+                  disabled={busy || groupDraftDirty}
+                  onClick={() => setGroupLifecycleConfirmation("locked")}
+                >
+                  Lock Group
+                </Button>
+              ) : groupCanReopen ? (
+                <Button
+                  type="button"
+                  variant="danger"
+                  loading={busy}
+                  onClick={() => setGroupLifecycleConfirmation("open")}
+                >
+                  Reopen Group
+                </Button>
+              ) : null}
+            </div>
+          </section>
+
           <div className="mt-5">
             <WBSSummary
               summary={summarizeWBS(node.children)}
@@ -677,10 +950,15 @@ export function WBSDetailDialog({
           ) : null}
           <div className="mt-6 flex justify-end gap-3">
             <Button type="button" disabled={busy} onClick={onClose}>
-              {project.status === "open" ? "Cancel" : "Close"}
+              {groupPlanningEditable ? "Cancel" : "Close"}
             </Button>
-            {project.status === "open" ? (
-              <Button type="submit" variant="primary" loading={busy}>
+            {groupPlanningEditable ? (
+              <Button
+                type="submit"
+                variant="primary"
+                loading={busy}
+                disabled={!groupDraftDirty}
+              >
                 Save
               </Button>
             ) : null}
@@ -765,8 +1043,8 @@ export function WBSDetailDialog({
                   aria-describedby="detail-lag-help"
                 />
                 <p id="detail-lag-help" className="mt-2 text-sm text-muted">
-                  Calendar-day offset applied once after blockers or the project
-                  scheduling start date.
+                  Calendar-day offset applied once after blockers or the
+                  effective scheduling start date.
                 </p>
               </div>
               <div>
@@ -887,8 +1165,8 @@ export function WBSDetailDialog({
                     </div>
                   ) : automaticRecommendationAnchorMissing ? (
                     <p>
-                      Automatic Scheduling needs a Project Scheduling Start Date
-                      before recommendations can be calculated. Candidates
+                      Automatic Scheduling needs an effective Scheduling Start
+                      Date before recommendations can be calculated. Candidates
                       remain alphabetical.
                     </p>
                   ) : recommendation ? (
@@ -1042,10 +1320,10 @@ export function WBSDetailDialog({
                     setActualEnd(end);
                   }}
                 />
-                {project.status === "locked" ? (
+                {nodeScheduling.effectiveLifecycle === "locked" ? (
                   <p className="mt-2 text-sm text-muted">
-                    Actual Date is the only Task field that remains writable
-                    while the Project is Locked. The locked planning baseline
+                    Actual Date remains writable as factual data while planning
+                    is locked. The protected Execution and Commitment baseline
                     will not change.
                   </p>
                 ) : null}
@@ -1085,7 +1363,7 @@ export function WBSDetailDialog({
             projectId={project.id}
             taskId={node.id}
             completed={completed}
-            manual={!project.automaticScheduling}
+            manual={!nodeScheduling.effectiveAutomaticScheduling}
             gateway={gateway}
           />
           {reopenOpen ? (
@@ -1113,8 +1391,8 @@ export function WBSDetailDialog({
                 </p>
                 <p className="text-sm text-muted">
                   Reopening removes both Actual Start and Actual End and returns
-                  the Task to unfinished. It is available only while the Project
-                  is Open.
+                  the Task to unfinished. It is available only while the
+                  effective scheduling scope is Open.
                 </p>
               </div>
               {reopenError ? (
@@ -1145,6 +1423,98 @@ export function WBSDetailDialog({
           ) : null}
         </>
       )}
+      {groupEnableConfirmationOpen ? (
+        <Dialog
+          nested
+          kind="alertdialog"
+          titleID="enable-group-scheduling-title"
+          closeOnBackdrop={!busy}
+          onClose={() => !busy && setGroupEnableConfirmationOpen(false)}
+        >
+          <h4
+            id="enable-group-scheduling-title"
+            className="text-xl font-extrabold"
+          >
+            Enable automatic scheduling for this Group?
+          </h4>
+          <p className="mt-3 leading-7 text-muted">
+            {groupSchedulingSource === "inherit"
+              ? `The Group will return to inherited scheduling from ${nodeScheduling.inheritedAutomaticSource.name}. Unfinished manual timelines in the affected subtree will be replaced when the inherited mode is ON.`
+              : "Unfinished manual Execution and Commitment timelines in the affected Group subtree will be replaced by scheduler-generated dates. Completed Tasks remain fixed."}
+          </p>
+          {error ? (
+            <Alert tone="danger" className="mt-4">
+              {error}
+            </Alert>
+          ) : null}
+          <div className="mt-6 flex flex-wrap justify-end gap-3">
+            <Button
+              type="button"
+              disabled={busy}
+              onClick={() => setGroupEnableConfirmationOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="primary"
+              loading={busy}
+              onClick={() => void submitGroup(true)}
+            >
+              Enable and save
+            </Button>
+          </div>
+        </Dialog>
+      ) : null}
+      {groupLifecycleConfirmation ? (
+        <Dialog
+          nested
+          kind="alertdialog"
+          titleID="group-lifecycle-confirmation-title"
+          closeOnBackdrop={!busy}
+          onClose={() => !busy && setGroupLifecycleConfirmation(undefined)}
+        >
+          <h4
+            id="group-lifecycle-confirmation-title"
+            className="text-xl font-extrabold"
+          >
+            {groupLifecycleConfirmation === "locked"
+              ? "Lock Group?"
+              : "Reopen Group?"}
+          </h4>
+          <p className="mt-3 leading-7 text-muted">
+            {groupLifecycleConfirmation === "locked"
+              ? "Locking freezes the Group's resolved scheduling configuration and protects descendant planning timelines and WBS changes. Actual Date remains factual and writable while the Project is not Closed."
+              : "Reopening removes this Group's local lock, re-resolves inherited scheduling settings, and may require reopening other protected scheduling scopes if their timelines must change."}
+          </p>
+          {error ? (
+            <Alert tone="danger" className="mt-4">
+              {error}
+            </Alert>
+          ) : null}
+          <div className="mt-6 flex flex-wrap justify-end gap-3">
+            <Button
+              type="button"
+              disabled={busy}
+              onClick={() => setGroupLifecycleConfirmation(undefined)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="danger-solid"
+              loading={busy}
+              onClick={() =>
+                void changeGroupLifecycle(groupLifecycleConfirmation)
+              }
+            >
+              {groupLifecycleConfirmation === "locked"
+                ? "Lock Group"
+                : "Reopen Group"}
+            </Button>
+          </div>
+        </Dialog>
+      ) : null}
     </Dialog>
   );
 }

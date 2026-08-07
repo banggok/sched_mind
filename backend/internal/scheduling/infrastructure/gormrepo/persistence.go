@@ -52,13 +52,13 @@ func (repository *Repository) persist(
 	dirtyTasks := make(map[string]struct{})
 	dirtyProjects := make(map[string]struct{}, len(dependencyDirtyProjects))
 	timelineImpactedProjects := make(map[string]struct{})
+	timelineImpactedTasks := make(map[string]struct{})
 	for projectID := range dependencyDirtyProjects {
 		dirtyProjects[projectID] = struct{}{}
 	}
 	taskChanges := make([]taskPersistenceChange, 0)
 	for taskID, task := range state.tasks {
-		project := state.projects[task.ProjectID]
-		if _, leaf := state.leafOrder[taskID]; !leaf || task.ActualStart != nil || task.ActualEnd != nil || project.Status != "open" || !project.AutomaticScheduling {
+		if _, leaf := state.leafOrder[taskID]; !leaf || task.ActualStart != nil || task.ActualEnd != nil || task.EffectiveLifecycle != "open" || !task.EffectiveAutomaticScheduling {
 			continue
 		}
 		executionSchedule, executionExists := execution.schedules[taskID]
@@ -96,13 +96,13 @@ func (repository *Repository) persist(
 		dirtyProjects[task.ProjectID] = struct{}{}
 		if timelineChanged {
 			timelineImpactedProjects[task.ProjectID] = struct{}{}
+			timelineImpactedTasks[taskID] = struct{}{}
 		}
 	}
 	// Open manual Tasks own authoritative dates. Their fixed allocation rows
 	// participate in the shared projection according to Project Priority.
 	for taskID, task := range state.tasks {
-		project := state.projects[task.ProjectID]
-		if _, leaf := state.leafOrder[taskID]; !leaf || project.Status != "open" || project.AutomaticScheduling || task.ActualStart != nil || task.ActualEnd != nil {
+		if _, leaf := state.leafOrder[taskID]; !leaf || task.EffectiveLifecycle != "open" || task.EffectiveAutomaticScheduling || task.ActualStart != nil || task.ActualEnd != nil {
 			continue
 		}
 		executionComplete := completeTimeline(task.ExecutionStart, task.ExecutionEnd)
@@ -121,7 +121,7 @@ func (repository *Repository) persist(
 	projectChanges := make([]projectPersistenceChange, 0, len(dirtyProjects))
 	for projectID := range dirtyProjects {
 		project, exists := state.projects[projectID]
-		if !exists || project.Status != "open" || !project.AutomaticScheduling {
+		if !exists || project.Status != "open" || !projectHasEffectiveAutomatic(state, projectID) {
 			continue
 		}
 		start, end := derivedProjectDates(state, projectID)
@@ -134,14 +134,46 @@ func (repository *Repository) persist(
 	}
 	sort.Slice(projectChanges, func(left, right int) bool { return projectChanges[left].ProjectID < projectChanges[right].ProjectID })
 
-	lockedImpactIDs, err := state.potentialLockedTimelineImpacts()
+	lockedImpacts, err := state.potentialLockedScopeImpacts()
 	if err != nil {
 		return err
 	}
-	lockedProjects := impactProjects(state, lockedImpactIDs, "locked")
-	openProjects := impactProjects(state, mapKeys(timelineImpactedProjects), "open")
+	lockedProjects := impactProjects(state, lockedImpacts.ProjectIDs, "locked")
+	lockedGroups := make([]schedulingimpact.Group, 0, len(lockedImpacts.GroupIDs))
+	for _, groupID := range lockedImpacts.GroupIDs {
+		if group, exists := state.impactGroup(groupID, "locked"); exists {
+			lockedGroups = append(lockedGroups, group)
+		}
+	}
+	_, _, ownerGroupID, _, _ := schedulingimpact.OperationScope(ctx)
+	openProjects := make([]schedulingimpact.Project, 0)
+	openGroups := make([]schedulingimpact.Group, 0)
+	if ownerGroupID == "" {
+		openProjects = impactProjects(state, mapKeys(timelineImpactedProjects), "open")
+	} else {
+		projectSeen := make(map[string]struct{})
+		groupSeen := make(map[string]struct{})
+		for taskID := range timelineImpactedTasks {
+			if state.isWithinGroup(taskID, ownerGroupID) {
+				continue
+			}
+			if group, exists := state.nearestGroupScope(taskID); exists {
+				if _, seen := groupSeen[group.ID]; !seen {
+					groupSeen[group.ID] = struct{}{}
+					openGroups = append(openGroups, group)
+				}
+				continue
+			}
+			task := state.tasks[taskID]
+			if _, seen := projectSeen[task.ProjectID]; seen {
+				continue
+			}
+			projectSeen[task.ProjectID] = struct{}{}
+			openProjects = append(openProjects, impactProjects(state, []string{task.ProjectID}, "open")...)
+		}
+	}
 	signature := persistenceSignature(state, taskChanges, projectChanges, generatedRows, dirtyTasks, dependencyDirtyProjects)
-	if err := schedulingimpact.Guard(ctx, signature, lockedProjects, openProjects); err != nil {
+	if err := schedulingimpact.GuardScopes(ctx, signature, lockedProjects, openProjects, lockedGroups, openGroups); err != nil {
 		return err
 	}
 
@@ -279,6 +311,9 @@ func schedulingStateSignature(state *portfolioState) string {
 			intPointerSignature(task.EffortMinutes), integerSignature(int64(task.LagDays)), integerSignature(int64(task.CapacityAllocationPercentage)),
 			dateSignature(task.ExecutionStart), dateSignature(task.ExecutionEnd), dateSignature(task.CommitmentStart), dateSignature(task.CommitmentEnd),
 			dateSignature(task.ActualStart), dateSignature(task.ActualEnd), stringPointerSignature(task.ExecutionUnscheduledReason), stringPointerSignature(task.CommitmentUnscheduledReason),
+			task.GroupSchedulingSource, boolPointerSignature(task.GroupAutomaticScheduling), dateSignature(task.GroupSchedulingStartDate),
+			task.GroupLocalStatus, integerSignature(task.GroupSchedulingVersion), boolPointerSignature(task.GroupLockedAutomaticScheduling), dateSignature(task.GroupLockedSchedulingStartDate),
+			fmt.Sprint(task.EffectiveAutomaticScheduling), dateSignature(task.EffectiveSchedulingStartDate), task.EffectiveLifecycle, task.EffectiveLockOwnerID, task.LocalGroupLockOwnerID,
 		}, ":"))
 	}
 
@@ -349,6 +384,13 @@ func intPointerSignature(value *int) string {
 		return "null"
 	}
 	return integerSignature(int64(*value))
+}
+
+func boolPointerSignature(value *bool) string {
+	if value == nil {
+		return "null"
+	}
+	return fmt.Sprint(*value)
 }
 
 func updateSignature(updates map[string]any) string {
@@ -430,9 +472,8 @@ func buildTimelineAllocationRowsWithOvercapacity(state *portfolioState, result *
 		}
 		consumed.Add(consumed, allocation.Minutes)
 		used[key] = consumed
-		project := state.projects[task.ProjectID]
-		manualFixed := allocation.Fixed && project.Status == "open" && !project.AutomaticScheduling && task.ActualStart == nil && task.ActualEnd == nil
-		if !manualFixed && (allocation.Fixed || task.ActualStart != nil || task.ActualEnd != nil || project.Status != "open" || !project.AutomaticScheduling) {
+		manualFixed := allocation.Fixed && task.EffectiveLifecycle == "open" && !task.EffectiveAutomaticScheduling && task.ActualStart == nil && task.ActualEnd == nil
+		if !manualFixed && (allocation.Fixed || task.ActualStart != nil || task.ActualEnd != nil || task.EffectiveLifecycle != "open" || !task.EffectiveAutomaticScheduling) {
 			continue
 		}
 		rows = append(rows, allocationModel{
@@ -455,10 +496,8 @@ func allocationPrecedes(state *portfolioState, left, right dailyAllocation) bool
 	leftTask, leftExists := state.tasks[left.TaskID]
 	rightTask, rightExists := state.tasks[right.TaskID]
 	if leftExists && rightExists {
-		leftProject := state.projects[leftTask.ProjectID]
-		rightProject := state.projects[rightTask.ProjectID]
-		leftAbsolute := left.Fixed && (leftTask.ActualStart != nil && leftTask.ActualEnd != nil || leftProject.Status == "locked")
-		rightAbsolute := right.Fixed && (rightTask.ActualStart != nil && rightTask.ActualEnd != nil || rightProject.Status == "locked")
+		leftAbsolute := left.Fixed && (leftTask.ActualStart != nil && leftTask.ActualEnd != nil || leftTask.EffectiveLifecycle == "locked")
+		rightAbsolute := right.Fixed && (rightTask.ActualStart != nil && rightTask.ActualEnd != nil || rightTask.EffectiveLifecycle == "locked")
 		if leftAbsolute != rightAbsolute {
 			return leftAbsolute
 		}

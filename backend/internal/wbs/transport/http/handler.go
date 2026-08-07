@@ -23,6 +23,9 @@ type Service interface {
 	Create(context.Context, string, *string, string, bool) (*domain.Node, error)
 	CreateSibling(context.Context, string, string, string) (*domain.Node, error)
 	Rename(context.Context, string, string, string) (*domain.Node, error)
+	UpdateGroupScheduling(context.Context, string, string, application.GroupSchedulingInput) (*domain.Node, error)
+	ChangeGroupStatus(context.Context, string, string, string, int64) (*domain.Node, error)
+	BulkReopenGroup(context.Context, string, string, string, int64) (*domain.Node, error)
 	UpdateExecutable(context.Context, string, string, application.WriteExecutableInput) (*domain.Node, error)
 	PreviewExecutableSchedule(context.Context, string, string, application.PreviewExecutableInput) (*application.SchedulePreview, error)
 	RecommendAssignees(context.Context, string, string, schedulingdomain.AssigneeRecommendationInput) (*schedulingdomain.AssigneeRecommendationResult, error)
@@ -43,6 +46,20 @@ type writeRequest struct {
 	InsertAfterWBSID  *string `json:"insertAfterWbsId"`
 	ConfirmConversion bool    `json:"confirmConversion"`
 }
+type groupSchedulingRequest struct {
+	ExpectedVersion     int64   `json:"expectedVersion"`
+	Name                *string `json:"name"`
+	SchedulingSource    string  `json:"schedulingSource"`
+	AutomaticScheduling *bool   `json:"automaticScheduling"`
+	SchedulingStartDate *string `json:"schedulingStartDate"`
+}
+
+type groupStatusRequest struct {
+	Status          string `json:"status"`
+	Token           string `json:"token,omitempty"`
+	ExpectedVersion int64  `json:"expectedVersion"`
+}
+
 type executableRequest struct {
 	Name                         *string         `json:"name"`
 	RoleID                       *string         `json:"roleId"`
@@ -101,15 +118,38 @@ type executableItem struct {
 	ActualStart                  *string      `json:"actualStart,omitempty"`
 	ActualEnd                    *string      `json:"actualEnd,omitempty"`
 }
+type schedulingSourceItem struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+type groupSchedulingItem struct {
+	Version                      int64                 `json:"version"`
+	Source                       string                `json:"source"`
+	AutomaticScheduling          *bool                 `json:"automaticScheduling"`
+	SchedulingStartDate          *string               `json:"schedulingStartDate"`
+	LocalStatus                  string                `json:"localStatus"`
+	EffectiveAutomaticScheduling bool                  `json:"effectiveAutomaticScheduling"`
+	EffectiveSchedulingStartDate *string               `json:"effectiveSchedulingStartDate"`
+	InheritedAutomaticScheduling bool                  `json:"inheritedAutomaticScheduling"`
+	InheritedSchedulingStartDate *string               `json:"inheritedSchedulingStartDate"`
+	InheritedAutomaticSource     schedulingSourceItem  `json:"inheritedAutomaticSource"`
+	InheritedStartDateSource     schedulingSourceItem  `json:"inheritedStartDateSource"`
+	AutomaticSource              schedulingSourceItem  `json:"automaticSource"`
+	StartDateSource              schedulingSourceItem  `json:"startDateSource"`
+	EffectiveLifecycle           string                `json:"effectiveLifecycle"`
+	LockOwner                    *schedulingSourceItem `json:"lockOwner,omitempty"`
+}
+
 type item struct {
-	ID          string         `json:"id"`
-	ProjectID   string         `json:"projectId"`
-	ParentID    *string        `json:"parentId,omitempty"`
-	Name        string         `json:"name"`
-	Position    int            `json:"position"`
-	HasChildren bool           `json:"hasChildren"`
-	Executable  executableItem `json:"executable"`
-	Children    []item         `json:"children"`
+	ID          string              `json:"id"`
+	ProjectID   string              `json:"projectId"`
+	ParentID    *string             `json:"parentId,omitempty"`
+	Name        string              `json:"name"`
+	Position    int                 `json:"position"`
+	HasChildren bool                `json:"hasChildren"`
+	Executable  executableItem      `json:"executable"`
+	Scheduling  groupSchedulingItem `json:"scheduling"`
+	Children    []item              `json:"children"`
 }
 type schedulePreviewItem struct {
 	Task item `json:"task"`
@@ -161,6 +201,9 @@ func (h *Handler) Register(m *http.ServeMux) {
 	m.HandleFunc("POST /api/projects/{projectId}/wbs", h.create)
 	m.HandleFunc("POST /api/projects/{projectId}/wbs/{wbsId}/children", h.child)
 	m.HandleFunc("PUT /api/projects/{projectId}/wbs/{wbsId}", h.rename)
+	m.HandleFunc("PUT /api/projects/{projectId}/wbs/{wbsId}/scheduling", h.groupScheduling)
+	m.HandleFunc("POST /api/projects/{projectId}/wbs/{wbsId}/status", h.groupStatus)
+	m.HandleFunc("POST /api/projects/{projectId}/wbs/{wbsId}/reopen-all", h.groupReopenAll)
 	m.HandleFunc("PUT /api/projects/{projectId}/wbs/{wbsId}/executable", h.executable)
 	m.HandleFunc("POST /api/projects/{projectId}/wbs/{wbsId}/executable/preview", h.previewExecutable)
 	m.HandleFunc("POST /api/projects/{projectId}/wbs/{wbsId}/assignee-recommendations", h.recommendAssignees)
@@ -249,6 +292,58 @@ func (h *Handler) rename(w http.ResponseWriter, r *http.Request) {
 	}
 	httpjson.Write(w, 200, response{mapNode(*v)})
 }
+func (h *Handler) groupScheduling(w http.ResponseWriter, r *http.Request) {
+	var payload groupSchedulingRequest
+	if !decode(w, r, &payload) {
+		return
+	}
+	var startDate *time.Time
+	if payload.SchedulingStartDate != nil && strings.TrimSpace(*payload.SchedulingStartDate) != "" {
+		value, err := time.Parse("2006-01-02", *payload.SchedulingStartDate)
+		if err != nil {
+			writeError(w, domain.ErrGroupSchedulingInvalid)
+			return
+		}
+		startDate = &value
+	}
+	value, err := h.service.UpdateGroupScheduling(r.Context(), r.PathValue("projectId"), r.PathValue("wbsId"), application.GroupSchedulingInput{ExpectedVersion: payload.ExpectedVersion, Name: payload.Name, Source: payload.SchedulingSource, AutomaticScheduling: payload.AutomaticScheduling, SchedulingStartDate: startDate})
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	httpjson.Write(w, http.StatusOK, response{mapNode(*value)})
+}
+
+func (h *Handler) groupStatus(w http.ResponseWriter, r *http.Request) {
+	var payload groupStatusRequest
+	if !decode(w, r, &payload) {
+		return
+	}
+	value, err := h.service.ChangeGroupStatus(r.Context(), r.PathValue("projectId"), r.PathValue("wbsId"), payload.Status, payload.ExpectedVersion)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	httpjson.Write(w, http.StatusOK, response{mapNode(*value)})
+}
+
+func (h *Handler) groupReopenAll(w http.ResponseWriter, r *http.Request) {
+	var payload groupStatusRequest
+	if !decode(w, r, &payload) {
+		return
+	}
+	token := strings.TrimSpace(r.Header.Get(schedulingimpact.ConfirmationTokenHeader))
+	if token == "" {
+		token = strings.TrimSpace(payload.Token)
+	}
+	value, err := h.service.BulkReopenGroup(r.Context(), r.PathValue("projectId"), r.PathValue("wbsId"), token, payload.ExpectedVersion)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	httpjson.Write(w, http.StatusOK, response{mapNode(*value)})
+}
+
 func (h *Handler) executable(w http.ResponseWriter, r *http.Request) {
 	var p executableRequest
 	if !decode(w, r, &p) {
@@ -580,6 +675,8 @@ func writeReopenError(w http.ResponseWriter, err error) {
 		status, code, message = 409, "PROJECT_CLOSED_READ_ONLY", domain.ErrProjectClosedReadOnly.Error()
 	case errors.Is(err, domain.ErrProjectLockedReadOnly):
 		status, code, message = 409, "PROJECT_LOCKED_READ_ONLY", domain.ErrProjectLockedReadOnly.Error()
+	case errors.Is(err, domain.ErrGroupLockedReadOnly):
+		status, code, message = 409, "GROUP_LOCKED_READ_ONLY", domain.ErrGroupLockedReadOnly.Error()
 	case errors.Is(err, domain.ErrTaskReopenConflict):
 		status, code, message = 409, "TASK_REOPEN_CONFLICT", "The Task was changed by another request. Refresh and try again."
 	}
@@ -614,6 +711,20 @@ func writeError(w http.ResponseWriter, err error) {
 		status, code = 409, "PROJECT_CLOSED_READ_ONLY"
 	case errors.Is(err, domain.ErrProjectLockedReadOnly):
 		status, code = 409, "PROJECT_LOCKED_READ_ONLY"
+	case errors.Is(err, domain.ErrGroupNotGroupingWBS):
+		status, code = 409, "GROUP_NOT_GROUPING_WBS"
+	case errors.Is(err, domain.ErrGroupLockedReadOnly):
+		status, code = 409, "GROUP_LOCKED_READ_ONLY"
+	case errors.Is(err, domain.ErrGroupCannotLockUnscheduled):
+		status, code = 409, "GROUP_CANNOT_LOCK_WITH_UNSCHEDULED_TASKS"
+	case errors.Is(err, domain.ErrGroupOverrideMustReset):
+		status, code = 409, "GROUP_OVERRIDE_MUST_BE_RESET_BEFORE_TASK_CONVERSION"
+	case errors.Is(err, domain.ErrGroupReopenRequired):
+		status, code = 409, "GROUP_REOPEN_REQUIRED"
+	case errors.Is(err, domain.ErrGroupSchedulingInvalid):
+		status, code = 400, "GROUP_SCHEDULING_INVALID"
+	case errors.Is(err, domain.ErrGroupSchedulingStale):
+		status, code = 409, "GROUP_SCHEDULING_STALE"
 	case errors.Is(err, domain.ErrIncompletePredecessor):
 		status, code = 409, "ACTUAL_DATE_PREDECESSOR_UNFINISHED"
 	case errors.Is(err, domain.ErrActualDatePair):
@@ -731,6 +842,7 @@ func mapReopenNode(value domain.Node) map[string]any {
 		"name":        value.Name,
 		"position":    value.Position,
 		"hasChildren": value.HasChildren,
+		"scheduling":  groupSchedulingItem{Version: value.Scheduling.Version, Source: value.Scheduling.Source, AutomaticScheduling: value.Scheduling.AutomaticScheduling, SchedulingStartDate: date(value.Scheduling.SchedulingStartDate), LocalStatus: value.Scheduling.LocalStatus, EffectiveAutomaticScheduling: value.Scheduling.EffectiveAutomatic, EffectiveSchedulingStartDate: date(value.Scheduling.EffectiveStartDate), InheritedAutomaticScheduling: value.Scheduling.InheritedAutomatic, InheritedSchedulingStartDate: date(value.Scheduling.InheritedStartDate), InheritedAutomaticSource: schedulingSourceItem{ID: value.Scheduling.InheritedAutomaticSourceID, Name: value.Scheduling.InheritedAutomaticSourceName}, InheritedStartDateSource: schedulingSourceItem{ID: value.Scheduling.InheritedStartDateSourceID, Name: value.Scheduling.InheritedStartDateSourceName}, AutomaticSource: schedulingSourceItem{ID: value.Scheduling.AutomaticSourceID, Name: value.Scheduling.AutomaticSourceName}, StartDateSource: schedulingSourceItem{ID: value.Scheduling.StartDateSourceID, Name: value.Scheduling.StartDateSourceName}, EffectiveLifecycle: value.Scheduling.EffectiveLifecycle, LockOwner: reopenLockOwner(value)},
 		"executable": map[string]any{
 			"roleId":                       value.Executable.RoleID,
 			"assigneeId":                   value.Executable.AssigneeID,
@@ -748,12 +860,28 @@ func mapReopenNode(value domain.Node) map[string]any {
 	}
 }
 
+func reopenLockOwner(value domain.Node) *schedulingSourceItem {
+	if value.Scheduling.LockOwnerID == "" {
+		return nil
+	}
+	return &schedulingSourceItem{ID: value.Scheduling.LockOwnerID, Name: value.Scheduling.LockOwnerName}
+}
+
 func mapNode(value domain.Node) item {
 	children := make([]item, 0, len(value.Children))
 	for _, child := range value.Children {
 		children = append(children, mapNode(child))
 	}
-	return item{ID: value.ID, ProjectID: value.ProjectID, ParentID: value.ParentID, Name: value.Name, Position: value.Position, HasChildren: value.HasChildren, Executable: executableItem{RoleID: value.Executable.RoleID, AssigneeID: value.Executable.AssigneeID, EffortMinutes: value.Executable.EffortMinutes, LagDays: value.Executable.LagDays, CapacityAllocationPercentage: value.Executable.CapacityAllocationPercentage, ExecutionTimeline: timelineItem{Start: date(value.Executable.ExecutionTimeline.Start), End: date(value.Executable.ExecutionTimeline.End)}, CommitmentTimeline: timelineItem{Start: date(value.Executable.CommitmentTimeline.Start), End: date(value.Executable.CommitmentTimeline.End)}, ExecutionUnscheduledReason: value.Executable.ExecutionUnscheduledReason, CommitmentUnscheduledReason: value.Executable.CommitmentUnscheduledReason, ActualStart: date(value.Executable.ActualStart), ActualEnd: date(value.Executable.ActualEnd)}, Children: children}
+	var lockOwner *schedulingSourceItem
+	if value.Scheduling.LockOwnerID != "" {
+		lockOwner = &schedulingSourceItem{ID: value.Scheduling.LockOwnerID, Name: value.Scheduling.LockOwnerName}
+	}
+	return item{
+		ID: value.ID, ProjectID: value.ProjectID, ParentID: value.ParentID, Name: value.Name, Position: value.Position, HasChildren: value.HasChildren,
+		Executable: executableItem{RoleID: value.Executable.RoleID, AssigneeID: value.Executable.AssigneeID, EffortMinutes: value.Executable.EffortMinutes, LagDays: value.Executable.LagDays, CapacityAllocationPercentage: value.Executable.CapacityAllocationPercentage, ExecutionTimeline: timelineItem{Start: date(value.Executable.ExecutionTimeline.Start), End: date(value.Executable.ExecutionTimeline.End)}, CommitmentTimeline: timelineItem{Start: date(value.Executable.CommitmentTimeline.Start), End: date(value.Executable.CommitmentTimeline.End)}, ExecutionUnscheduledReason: value.Executable.ExecutionUnscheduledReason, CommitmentUnscheduledReason: value.Executable.CommitmentUnscheduledReason, ActualStart: date(value.Executable.ActualStart), ActualEnd: date(value.Executable.ActualEnd)},
+		Scheduling: groupSchedulingItem{Version: value.Scheduling.Version, Source: value.Scheduling.Source, AutomaticScheduling: value.Scheduling.AutomaticScheduling, SchedulingStartDate: date(value.Scheduling.SchedulingStartDate), LocalStatus: value.Scheduling.LocalStatus, EffectiveAutomaticScheduling: value.Scheduling.EffectiveAutomatic, EffectiveSchedulingStartDate: date(value.Scheduling.EffectiveStartDate), InheritedAutomaticScheduling: value.Scheduling.InheritedAutomatic, InheritedSchedulingStartDate: date(value.Scheduling.InheritedStartDate), InheritedAutomaticSource: schedulingSourceItem{ID: value.Scheduling.InheritedAutomaticSourceID, Name: value.Scheduling.InheritedAutomaticSourceName}, InheritedStartDateSource: schedulingSourceItem{ID: value.Scheduling.InheritedStartDateSourceID, Name: value.Scheduling.InheritedStartDateSourceName}, AutomaticSource: schedulingSourceItem{ID: value.Scheduling.AutomaticSourceID, Name: value.Scheduling.AutomaticSourceName}, StartDateSource: schedulingSourceItem{ID: value.Scheduling.StartDateSourceID, Name: value.Scheduling.StartDateSourceName}, EffectiveLifecycle: value.Scheduling.EffectiveLifecycle, LockOwner: lockOwner},
+		Children:   children,
+	}
 }
 func date(value *time.Time) *string {
 	if value == nil {

@@ -287,7 +287,12 @@ func (calendar *actualCalendar) remaining(date time.Time) int {
 }
 
 func (r *Repository) Allocations(ctx context.Context, projectID, taskID string) (*application.AllocationGroups, error) {
-	if _, err := loadProject(r.db.WithContext(ctx), projectID, false); err != nil {
+	project, err := loadProject(r.db.WithContext(ctx), projectID, false)
+	if err != nil {
+		return nil, err
+	}
+	resolver, _, err := loadGroupResolver(r.db.WithContext(ctx), project, false)
+	if err != nil {
 		return nil, err
 	}
 	task, err := findNode(r.db.WithContext(ctx), projectID, taskID, false)
@@ -313,13 +318,13 @@ func (r *Repository) Allocations(ctx context.Context, projectID, taskID string) 
 	if err != nil {
 		return nil, err
 	}
-	var project projectModel
-	if err := r.db.WithContext(ctx).Select("id, project_buffer, automatic_scheduling").First(&project, "id = ?", projectID).Error; err != nil {
-		return nil, fmt.Errorf("load allocation project: %w", err)
-	}
 	var rows []actualAllocationModel
 	if err := r.db.WithContext(ctx).Where("task_id = ?", taskID).Order("timeline ASC, allocation_date ASC, sequence ASC").Find(&rows).Error; err != nil {
 		return nil, fmt.Errorf("load task allocations: %w", err)
+	}
+	effective, err := resolver.EffectiveFor(task.ID)
+	if err != nil {
+		return nil, err
 	}
 	for _, persisted := range rows {
 		allocated, err := allocationInteger(persisted.AllocatedMinutes)
@@ -343,7 +348,7 @@ func (r *Repository) Allocations(ctx context.Context, projectID, taskID string) 
 			if err != nil {
 				return nil, fmt.Errorf("read remaining capacity: %w", err)
 			}
-			if !project.AutomaticScheduling {
+			if !effective.AutomaticScheduling {
 				dailyLimit := roundedPercentageMinutes(capacity, task.CapacityAllocationPercentage)
 				if allocated > dailyLimit {
 					overcapacity = allocated - dailyLimit

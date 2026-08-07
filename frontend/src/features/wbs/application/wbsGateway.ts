@@ -27,6 +27,17 @@ export interface WBSGateway {
     name: string,
   ): Promise<WBSNode>;
   rename(projectId: string, id: string, name: string): Promise<void>;
+  updateGroupScheduling(
+    projectId: string,
+    id: string,
+    input: GroupSchedulingInput,
+  ): Promise<WBSNode>;
+  changeGroupStatus(
+    projectId: string,
+    id: string,
+    status: "open" | "locked",
+    expectedVersion: number,
+  ): Promise<WBSNode>;
   reorder(
     projectId: string,
     id: string,
@@ -70,6 +81,14 @@ export interface WBSGateway {
   ): Promise<void>;
   reopen(projectId: string, id: string): Promise<WBSNode>;
 }
+export interface GroupSchedulingInput {
+  expectedVersion: number;
+  name: string;
+  schedulingSource: "inherit" | "override";
+  automaticScheduling?: boolean;
+  schedulingStartDate?: string | null;
+}
+
 export interface ExecutableInput {
   name: string;
   roleId?: string;

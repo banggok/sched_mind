@@ -1,5 +1,7 @@
 # US-6.5 — Recommend Assignee by Simulated Completion
 
+> **Product decision update — US-4.4:** Recommendation eligibility and simulation mode resolve from effective Task lifecycle and Group/Project scheduling configuration. Effective Automatic Scheduling ON uses the concrete scheduler with the effective Group/Project Scheduling Start Date; effective OFF uses the existing advisory manual simulation. Effectively Locked Tasks are not recommendable.
+
 > **Authority:** This story owns Assignee recommendation for unfinished
 > executable Tasks, including candidate eligibility, batch simulation, ranking,
 > recommendation metadata, freshness, fallback behaviour, and Task-form field
@@ -293,11 +295,11 @@ the automatic scheduler.
 
 ### 8.2 Missing Automatic Anchor
 
-Scheduling Start Date behaviour remains owned by US-3.3 and US-6.1.
+Scheduling Start Date behaviour remains owned by US-3.3, US-4.4, and US-6.1.
 
-- Recommendation must not invent `today` or another anchor when Automatic
-  Scheduling is `ON`.
-- Bila concrete scheduler tidak menghasilkan Execution End karena Project
+- Recommendation must not invent `today` or another anchor when effective
+  Automatic Scheduling is `ON`.
+- Bila concrete scheduler tidak menghasilkan Execution End karena effective
   Scheduling Start Date atau scheduler prerequisite lain tidak tersedia,
   recommendation ranking tidak dijalankan for that draft.
 - Candidate list remains usable alphabetically and the UI explains the existing
@@ -858,10 +860,10 @@ Save
 
 ### AC-7 — Automatic ON does not invent an anchor
 
-**Given** Automatic Scheduling is `ON` and concrete scheduler prerequisites do
-not yield Execution End
+**Given** effective Automatic Scheduling is `ON` and concrete scheduler
+prerequisites do not yield Execution End
 **When** recommendation is requested
-**Then** system does not use today as a replacement Project anchor
+**Then** system does not use today as a replacement effective scheduling anchor
 **And** candidate ranking is unavailable/alphabetical with existing unscheduled
 explanation.
 

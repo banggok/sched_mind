@@ -1,11 +1,13 @@
 # US-4.3 — View Group and Project Summary
 
+> **Product decision update — US-4.4:** The existing Home Group dialog now also composes Group scheduling source/effective values and eligible Lock/Reopen controls. The US-4.3 Execution/Commitment/Effort summary remains read-only and derived; Group scheduling configuration does not turn aggregate summary values into writable Group timeline attributes.
+
 > **Product decision update — US-7.1:** Home Portfolio Gantt is the canonical
 > active-Project WBS surface and reuses this story's recursive confirmed-
 > descendant date and known-Effort semantics for Project and Group rows. The
 > standalone Project Structure entry point is removed. US-7.1 owns Gantt
 > composition and row actions; this story owns the shared read-only aggregation
-> rules and the combined Group summary/rename dialog composition.
+> rules and the combined Group summary/edit dialog composition.
 
 > **Product decision update — US-6.2:** Completion now requires a complete Actual
 > Date pair (`Actual Start` and `Actual End`). Effort Completion counts a Task as
@@ -29,7 +31,7 @@ SchedMind tidak mempunyai entity Group atau Task yang terpisah dari WBS:
 
 The previous Group dialog only displayed direct-item count and an
 informational message. The Home Group dialog must instead combine a useful
-recursive summary with Group rename when the owning Project is Open.
+recursive summary with editable Group fields when the owning Project is Open.
 
 Project adalah WBS level `0` tanpa root WBS record terpisah. Karena itu Edit Project harus menampilkan summary yang sama untuk keseluruhan Project, dengan seluruh Task dalam Project diperlakukan sebagai descendant dari WBS level `0`. Summary Project ditempatkan pada combined Edit Project form; Add Project tidak mempunyai confirmed Task subtree dan tidak menampilkan summary.
 
@@ -69,7 +71,7 @@ Summary adalah projection dari current confirmed Task data. Summary bukan execut
 ### 4.1 In Scope
 
 - Mengganti informational alert pada Group dialog dengan useful read-only summary.
-- Menggabungkan Group rename dan Group summary dalam satu dialog pada Open Project.
+- Menggabungkan editable Group fields dan Group summary dalam satu dialog pada Open Project; per US-4.4 ordinary Group Name + scheduling edits share one atomic Save.
 - Menampilkan Group dialog read-only pada Locked Project.
 - Menampilkan summary yang sama pada combined Edit Project form karena Project adalah WBS level `0`.
 - Mengagregasi seluruh descendant Task secara rekursif untuk selected Group atau seluruh Task dalam selected Project.
@@ -98,7 +100,7 @@ Summary adalah projection dari current confirmed Task data. Summary bukan execut
 - Mengubah Execution atau Commitment scheduling algorithm.
 - Menambahkan backend endpoint, database column, migration, aggregate table, atau new summary-specific production query hanya untuk summary ini.
 - Mengubah Add Project menjadi summary view; Add Project belum mempunyai confirmed Task data.
-- Mengubah business rule Group rename, Task edit, Reopen Task, Project lifecycle, atau dependency behaviour; story ini hanya menggabungkan existing Group rename dengan summary dalam satu dialog.
+- Mengubah Task edit, Reopen Task, Project lifecycle, atau dependency behaviour. Group scheduling/edit mutation semantics are extended only by US-4.4; this story keeps summary fields read-only and excluded from that write.
 - Menghitung summary dari unconfirmed schedule preview atau unsaved Task draft.
 
 ---
@@ -140,13 +142,12 @@ Project Summary untuk Project yang memiliki tree di atas menggunakan Task 1, Tas
 - Group tetap tidak boleh memiliki executable attributes.
 - Project Summary tidak menjadi writable Project setting dan tidak menggunakan Project form draft sebagai aggregate source.
 - Summary dihitung dari current confirmed descendant Task projection.
-- Group summary selalu read-only and is never part of the Group rename payload.
-- On an Open Project, the combined Group dialog may expose Save for Group Name
-  only; summary values are excluded from validation and mutation.
-- On a Locked Project, the Group dialog has no rename Save action and remains
+- Group summary selalu read-only and is never part of the Group update payload.
+- On an Open Project, the combined Group dialog exposes one ordinary Save for editable Group fields. Per US-4.4, Group Name and scheduling settings share that atomic Save; summary values remain excluded from validation and mutation.
+- On a Locked Project, the Group dialog has no ordinary Save action and remains
   read-only.
 - Project Summary berada di dalam Edit Project dialog tetapi tetap read-only dan bukan bagian dari Project update payload.
-- Membuka atau menutup Group dialog atau Edit Project tidak melakukan summary mutation request. Saving an Open Group may send only the established rename mutation.
+- Membuka atau menutup Group dialog atau Edit Project tidak melakukan summary mutation request. Per US-4.4, Saving an Open Group may atomically persist Group Name plus scheduling settings, but never summary values.
 - Tidak ada summary field baru pada WBS atau Project domain entity, persistence model, atau API DTO.
 - Tidak ada separate Group atau Project Summary aggregate.
 - Frontend menggunakan satu pure deterministic helper pada WBS feature domain/presentation boundary untuk menghasilkan view model dari confirmed tree; Group dan Project presentation tidak boleh menduplikasi calculation logic.
@@ -361,9 +362,8 @@ Rules:
 
 - Home Group dialog is available for Open and Locked Projects because those
   statuses are eligible for Home.
-- Open Project allows Group Name rename while the summary remains read-only.
-- Locked Project exposes the same Group summary read-only and forbids Group
-  rename.
+- Open Project allows ordinary Group edits per US-4.4 while the summary remains read-only.
+- Locked Project exposes the same Group summary read-only and forbids ordinary Group edits.
 - Closed Project remains excluded from Home; this story does not add historical
   Closed-Project Gantt or a new Group entry point.
 - Project Summary remains available when Edit Project is opened for Open,
@@ -381,7 +381,7 @@ The shared Group dialog is opened by activating Group Name on Home.
 
 For an Open Project it contains:
 
-- editable Group Name using the existing US-4.1 validation and rename command;
+- editable Group Name using existing US-4.1 validation, saved atomically with the current Group scheduling draft per US-4.4;
 - `Group` as supporting type label;
 - the three read-only summary sections;
 - Save and Cancel/Close actions following the shared form contract.
@@ -414,7 +414,7 @@ This group contains <n> direct item items. Task details are managed on tasks ins
 
 #### Shared Summary Sections
 
-Home Group dialog and Project Summary display the same three semantic information groups and the same calculation/copy rules:
+Home Group dialog and Project Summary display the same three semantic information groups, the same calculation/copy rules, and the same horizontal three-card layout on large viewports:
 
 1. **Execution Timeline**
    - Aggregate date range or `Not scheduled`.
@@ -676,7 +676,7 @@ It does not derive the two timeline summaries from Project `startDate`/`endDate`
 **Given** the owning Project is Open or Locked
 **When** the Home Group dialog is available
 **Then** the same summary calculations are read-only and no Project lifecycle or scheduler action is triggered
-**And** only Open permits Group Name rename.
+**And** only Open permits ordinary Group edits per US-4.4.
 
 ### Group Rename, UX, Accessibility, and Defensive Behaviour
 
@@ -689,9 +689,10 @@ It does not derive the two timeline summaries from Project `startDate`/`endDate`
 **AC-25**
 **Given** Group Name is changed validly
 **When** Save succeeds
-**Then** only the established Group rename mutation is submitted
+**Then** one Group update mutation is submitted for the editable Group draft
+**And** per US-4.4 the request may carry Group Name plus current scheduling settings atomically
 **And** summary fields are excluded from the payload
-**And** Home refreshes without scheduler invocation or route change.
+**And** when only Group Name changed, Home refreshes without scheduler invocation or route change.
 
 **AC-26**
 **Given** a Group belongs to a Locked Project
@@ -813,7 +814,7 @@ It does not derive the two timeline summaries from Project `startDate`/`endDate`
 - Singular Task Without Effort copy.
 - Plural Task Without Effort copy.
 - Zero-known-effort unavailable state.
-- Opening/closing Home Group dialog sends no write request; Save sends only Group rename.
+- Opening/closing Home Group dialog sends no write request; per US-4.4 the single Save may atomically persist Group Name and scheduling settings, never summary values.
 - Summary is read-only for Open and Locked Home Group dialogs; Open alone permits rename.
 - Unconfirmed Task preview does not alter Group or Project Summary.
 - Confirmed Actual Date updates summary.
@@ -832,7 +833,7 @@ It does not derive the two timeline summaries from Project `startDate`/`endDate`
 ### 8.3 Acceptance-Level Tests
 
 At least one Home workflow must activate Group Name and prove the combined
-summary/rename dialog against a realistic tree containing:
+summary/edit dialog against a realistic tree containing:
 
 - a direct Task;
 - a nested Group with deeper Tasks;
@@ -843,8 +844,8 @@ summary/rename dialog against a realistic tree containing:
 - one unfinished Task without Effort.
 
 The workflow must observe the exact aggregate ranges, both coverage values,
-completed/total known effort, percentage, and missing-effort disclosure; rename
-the Group; verify only the rename payload is submitted; return to refreshed Home;
+completed/total known effort, percentage, and missing-effort disclosure; edit
+the Group; verify one atomic Group update is submitted with no summary fields; return to refreshed Home;
 and prove no Project Structure route/background is used.
 
 A second Home workflow must prove the same dialog is read-only for Locked

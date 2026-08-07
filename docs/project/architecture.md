@@ -209,20 +209,38 @@ scheduler, or change schedule version and protected snapshots.
 Project Settings persist `automatic_scheduling` (default `true`), nullable
 `scheduling_start_date` as SQL `DATE`, and integer `project_buffer` (default
 `20`, constrained to `0..100`). The API represents the anchor as `YYYY-MM-DD`.
-Only Open Projects may
-change settings; Locked and Closed settings are read-only. Re-enabling
-Automatic Scheduling invokes the project-scoped `RecalculateProjectSchedule`
-application port inside the settings transaction only when Scheduling Start
-Date exists, so dependency failure rolls back the settings update. Without the
-anchor, the setting is retained but scheduling is not invoked. Disabling
-preserves existing timeline data.
+Only Open Projects may change settings; Locked and Closed settings are read-only.
+A scheduling-relevant Project settings change always enters the concrete
+portfolio scheduler inside the same settings transaction. The scheduler then
+resolves each Task's effective Group/Project configuration, so an inherited
+subtree follows the changed Project value while a custom Group override can
+remain automatic even when the raw Project setting is OFF. Scheduler failure
+rolls back the settings update and all derived projections atomically.
 
-Scheduling Start Date is the only Project scheduling anchor. Automatic
-Scheduling may be configured without it, but the scheduler never invents Task
-dates; it clears generated dates and stores an explicit unscheduled reason.
+Group scheduling is persisted on grouping `wbs_nodes` as a local source
+(`inherit` or `override`), optional Automatic Scheduling override, optional
+Scheduling Start Date override, local lifecycle, monotonic scheduling version,
+and frozen effective scheduling values while locally Locked. A shared
+`groupscheduling` resolver walks the nearest Group ancestors and then the
+Project. `override` always owns Automatic Scheduling; a null Group start-date
+override continues to inherit the nearest parent Group date and finally the
+Project date. Project lifecycle and locked ancestors are hard ceilings over a
+Group's local lifecycle. Lock freezes the resolved values, including an
+explicit no-anchor result, while Reopen re-resolves inheritance. Group
+scheduling/lifecycle writes use optimistic `expectedVersion` checks in addition
+to the schedule-impact token used by confirmation workflows. The Home Group dialog
+uses one ordinary atomic write for Group Name plus scheduling source/overrides;
+summary fields are never persisted, and lifecycle Lock/Reopen remains a separate
+state transition. A legacy Group rename also advances `group_scheduling_version` so
+a stale unified draft cannot overwrite a newer confirmed name.
+
+Scheduling Start Date remains the Project-level default anchor, but an Open
+Group may supply a nearer non-null override. Automatic Scheduling may be
+effective ON without any resolved anchor; in that case the scheduler never
+invents Task dates and stores the existing explicit unscheduled reason.
 Executable WBS contains no Earliest Start, Start Constraint, or Task Anchor.
-Lag belongs to the Task and is applied after the Project/dependency readiness
-anchor while zero-capacity dates are skipped.
+Lag belongs to the Task and is applied after the effective Group/Project and
+dependency readiness anchor while zero-capacity dates are skipped.
 
 The production composition creates `internal/scheduling/application.Service`
 over the GORM scheduler repository and injects that same service into Project,
@@ -248,7 +266,7 @@ removed Task has Assignee, Effort, non-zero Lag, generated projection, automatic
 unscheduled projection, or dependency endpoints; scheduling failure rolls back
 the deletion.
 
-The scheduler loads the transitive recalculation scope, validates unique Priority and WBS ordering, resolves manual and retained automatic dependency edges, and allocates Execution and Commitment independently. Recalculation propagates on schedule-relevant date, allocation, capacity, readiness, and unscheduled-state changes; warning classification is a later, narrower step. Open unfinished Tasks are mutable outputs; Locked Projects are immutable anchors; unrelated Projects are not recalculated or version-updated. Capacity arithmetic uses
+The scheduler loads the transitive recalculation scope, validates unique Priority and WBS ordering, resolves effective Group scheduling/lifecycle together with manual and retained automatic dependency edges, and allocates Execution and Commitment independently. Recalculation propagates on schedule-relevant date, allocation, capacity, readiness, effective configuration, and unscheduled-state changes; warning classification is a later, narrower step. Effectively Open unfinished automatic Tasks are mutable outputs; effective manual Tasks are fixed manual reservations; Locked Groups and Locked Projects are immutable scheduling anchors; unrelated Projects are not recalculated or version-updated. Capacity arithmetic uses
 `math/big.Rat`: weekend/Public Holiday resolves to zero, otherwise the minimum
 active Capacity Override replaces Member Daily Capacity, Member Buffer produces
 raw Execution Capacity and rounds it to the nearest `0.5` hour. Commitment
@@ -265,13 +283,14 @@ uses Project Priority for capacity precedence: higher-priority manual rows reduc
 lower-priority automatic capacity, while lower-priority manual rows may overlap
 higher-priority automatic rows without warning or later capacity debt.
 
-US-6.2 defines Actual Date, Actual Allocation, Locked Project, and generic cross-project impact coordination. Completion persists required Actual Start/Actual End together. Open completion moves each planned Start earlier only when Actual Start is earlier and always sets each End to Actual End. Actual Allocation ignores planned Task percentage and uses only eligible Dates inside Actual Start–Actual End. It competes only with other completed Actual Allocation for the same Assignee/Date, distributes Effort in `0.5`-hour balanced shares, recalculates remaining shares after constrained Dates, backfills spare BAU capacity, and then levels unavoidable total historical overcapacity with a latest-Date tie-breaker. Existing completed Actual rows remain immutable; planned automatic/manual/Locked rows are ignored for Actual head-to-head construction. Historical overcapacity never carries debt to later Dates. Locked Projects remain immutable scheduler outputs, but Actual Date may be saved and its Actual Allocation may recalculate the transitive Open recalculation scope. Cross-project warning is emitted only when another Executable Task changes Execution Start/End or Commitment Start/End; allocation, capacity, readiness, or unscheduled-reason changes without a Task date delta may still persist and version without warning. Ordinary Task/dependency/priority/capacity mutations block on a Locked Project only when counterfactual simulation would require one of those protected Task dates to change. Actual Date keeps the factual exception to that block. Project Reopen expands an atomic transitive Locked closure to avoid mutual-lock dead ends.
+US-6.2 defines Actual Date, Actual Allocation, Locked Project, and generic cross-project impact coordination; US-4.4 extends the same protection model to Group scope. Completion persists required Actual Start/Actual End together. Open completion moves each planned Start earlier only when Actual Start is earlier and always sets each End to Actual End. Actual Allocation ignores planned Task percentage and uses only eligible Dates inside Actual Start–Actual End. It competes only with other completed Actual Allocation for the same Assignee/Date, distributes Effort in `0.5`-hour balanced shares, recalculates remaining shares after constrained Dates, backfills spare BAU capacity, and then levels unavoidable total historical overcapacity with a latest-Date tie-breaker. Existing completed Actual rows remain immutable; planned automatic/manual/Locked rows are ignored for Actual head-to-head construction. Historical overcapacity never carries debt to later Dates. Locked Projects and Groups remain immutable scheduler outputs, but Actual Date keeps the factual-data exception while the Project is not Closed. Cross-scope warning is emitted only when another Executable Task changes Execution Start/End or Commitment Start/End; allocation, capacity, readiness, or unscheduled-reason changes without a Task date delta may still persist and version without warning. A Group mutation excludes only its owning subtree from warning classification, so affected sibling Groups in the same Project remain visible. Ordinary planning mutations block on a Locked Group/Project only when counterfactual simulation would require one of those protected Task dates to change. Project and Group Reopen use the same fixed-point closure rule and may atomically require a mixed set of locked Groups and Projects to avoid mutual-lock dead ends.
 
-Execution, Commitment, and Actual daily allocations are separate projections. Actual Allocation rows are canonical and support both Task-centric and assignee-centric queries; current UI exposes the Task-centric read-only verification section while assignee analytics remains deferred. Impact simulation is version-bound: preview returns only timeline-impacted Project names, while the confirmation token is bound to the full schedule-relevant recalculation signature and versions, including non-warning Projects. Confirm re-simulates under scheduling locks, so hidden allocation/readiness/capacity changes can stale an otherwise identical visible warning set and stale impact never persists.
+Execution, Commitment, and Actual daily allocations are separate projections. Actual Allocation rows are canonical and support both Task-centric and assignee-centric queries; current UI exposes the Task-centric read-only verification section while assignee analytics remains deferred. Impact simulation is version-bound: preview returns only scopes whose descendant Task timelines actually change. Project operations keep the established Project warning boundary; Group operations exclude only the owner subtree and may return qualified sibling Group paths from the same or another Project. The confirmation token is bound to the full schedule-relevant recalculation signature and Project/Group versions, including non-warning scopes. Confirm re-simulates under scheduling locks, so hidden allocation/readiness/capacity changes can stale an otherwise identical visible warning set and stale impact never persists. Group `Reopen All` additionally fingerprints current Project scheduling/lifecycle state and the complete involved WBS hierarchy plus Group configuration/lifecycle/version state, so a hierarchy or parent-configuration change between preview and confirmation invalidates the closure token before lifecycle mutation.
 
 `task_schedule_allocations` stores exact decimal allocation and remaining
 capacity by Task, timeline, assignee, and date. Its primary key prevents duplicate
-Task/date projection. `projects.schedule_version` is updated optimistically.
+Task/date projection. `projects.schedule_version` and Group
+`wbs_nodes.group_scheduling_version` provide optimistic scheduling-state versions.
 Every scheduling mutation first acquires the process-wide re-entrant
 serialization context, then opens or reuses its database transaction, then takes
 the PostgreSQL transaction-level advisory lock before row locks. Nested scheduler

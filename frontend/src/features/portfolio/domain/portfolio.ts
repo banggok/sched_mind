@@ -31,6 +31,7 @@ export interface PortfolioRow {
   incompleteSchedule: boolean;
   hasChildren: boolean;
   completed: boolean;
+  effectiveLifecycle?: "open" | "locked" | "closed";
 }
 
 export interface PortfolioDependency {

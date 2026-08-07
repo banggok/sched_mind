@@ -155,6 +155,101 @@ describe("HTTP WBS gateway tree cache", () => {
     expect(String(init.body)).not.toContain("lagDays");
   });
 
+  it("US-4.4 AC-5 AC-7 AC-37 sends the Group scheduling version and maps the next confirmed version", async () => {
+    const response = {
+      ...taskResponse(null, "group"),
+      hasChildren: true,
+      scheduling: {
+        ...taskResponse(null, "group").scheduling,
+        version: 6,
+        source: "override",
+        automaticScheduling: false,
+        schedulingStartDate: null,
+        effectiveAutomaticScheduling: false,
+      },
+      children: [taskResponse(null, "child")],
+    };
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ data: response }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const gateway = createHTTPWBSGateway("/api");
+
+    const confirmed = await gateway.updateGroupScheduling("project", "group", {
+      expectedVersion: 5,
+      name: "Platform",
+      schedulingSource: "override",
+      automaticScheduling: false,
+      schedulingStartDate: null,
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/projects/project/wbs/group/scheduling",
+      expect.objectContaining({ method: "PUT" }),
+    );
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(JSON.parse(String(init.body))).toEqual({
+      expectedVersion: 5,
+      name: "Platform",
+      schedulingSource: "override",
+      automaticScheduling: false,
+      schedulingStartDate: null,
+    });
+    expect(confirmed.scheduling?.version).toBe(6);
+    expect(confirmed.scheduling?.source).toBe("override");
+    expect(confirmed.scheduling?.automaticScheduling).toBe(false);
+    expect(confirmed.scheduling?.schedulingStartDate).toBeUndefined();
+  });
+
+  it("US-4.4 AC-35 AC-37 sends the Group lifecycle version with Lock", async () => {
+    const response = {
+      ...taskResponse(null, "group"),
+      hasChildren: true,
+      scheduling: {
+        ...taskResponse(null, "group").scheduling,
+        version: 8,
+        localStatus: "locked",
+        effectiveLifecycle: "locked",
+        lockOwner: { id: "group", name: "Platform" },
+      },
+      children: [taskResponse(null, "child")],
+    };
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ data: response }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const gateway = createHTTPWBSGateway("/api");
+
+    const confirmed = await gateway.changeGroupStatus(
+      "project",
+      "group",
+      "locked",
+      7,
+    );
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/projects/project/wbs/group/status",
+      expect.objectContaining({ method: "POST" }),
+    );
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(JSON.parse(String(init.body))).toEqual({
+      status: "locked",
+      expectedVersion: 7,
+    });
+    expect(confirmed.scheduling?.version).toBe(8);
+    expect(confirmed.scheduling?.localStatus).toBe("locked");
+    expect(confirmed.scheduling?.lockOwner).toEqual({
+      id: "group",
+      name: "Platform",
+    });
+  });
+
   it("US-6.1 AC-36 rejects an in-flight WBS projection after another gateway mutates scheduling state", async () => {
     let resolveOld: ((response: Response) => void) | undefined;
     const oldRequest = new Promise<Response>((resolve) => {
@@ -487,6 +582,23 @@ function taskResponse(
     name: "Build API",
     position: 1,
     hasChildren: false,
+    scheduling: {
+      version: 0,
+      source: "inherit",
+      automaticScheduling: null,
+      schedulingStartDate: null,
+      localStatus: "open",
+      effectiveAutomaticScheduling: true,
+      effectiveSchedulingStartDate: "2026-08-01",
+      inheritedAutomaticScheduling: true,
+      inheritedSchedulingStartDate: "2026-08-01",
+      inheritedAutomaticSource: { id: projectId, name: "Alpha" },
+      inheritedStartDateSource: { id: projectId, name: "Alpha" },
+      automaticSource: { id: projectId, name: "Alpha" },
+      startDateSource: { id: projectId, name: "Alpha" },
+      effectiveLifecycle: "open",
+      lockOwner: null,
+    },
     executable: {
       capacityAllocationPercentage: 100,
       roleId: null,
@@ -529,6 +641,23 @@ describe("HTTP WBS gateway reopen command", () => {
     expect(confirmed).toEqual({
       ...taskResponse(null, "task/with slash"),
       parentId: undefined,
+      scheduling: {
+        version: 0,
+        source: "inherit",
+        automaticScheduling: undefined,
+        schedulingStartDate: undefined,
+        localStatus: "open",
+        effectiveAutomaticScheduling: true,
+        effectiveSchedulingStartDate: "2026-08-01",
+        inheritedAutomaticScheduling: true,
+        inheritedSchedulingStartDate: "2026-08-01",
+        inheritedAutomaticSource: { id: "project", name: "Alpha" },
+        inheritedStartDateSource: { id: "project", name: "Alpha" },
+        automaticSource: { id: "project", name: "Alpha" },
+        startDateSource: { id: "project", name: "Alpha" },
+        effectiveLifecycle: "open",
+        lockOwner: undefined,
+      },
       executable: {
         roleId: undefined,
         assigneeId: undefined,

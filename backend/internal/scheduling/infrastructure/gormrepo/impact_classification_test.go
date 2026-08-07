@@ -65,7 +65,7 @@ func TestPersistenceSignatureIncludesHiddenRecalculatedProjectVersion_US62_D04_A
 
 func stringPointerForImpactTest(value string) *string { return &value }
 
-func TestSchedulingStateSignatureCoversHiddenScopedState_US62_D04_AC24(t *testing.T) {
+func TestSchedulingStateSignatureCoversHiddenScopedState_US62_D04_AC24_US44_AC37(t *testing.T) {
 	base := minimalImpactSignatureState()
 	baseSignature := schedulingStateSignature(base)
 
@@ -89,6 +89,18 @@ func TestSchedulingStateSignatureCoversHiddenScopedState_US62_D04_AC24(t *testin
 	dependencyChanged.dependencies = []dependencyModel{{BlockingTaskID: "task", BlockedTaskID: "other-task"}}
 	if schedulingStateSignature(dependencyChanged) == baseSignature {
 		t.Fatal("hidden dependency/readiness change did not change scheduling-state signature")
+	}
+
+	groupChanged := minimalImpactSignatureState()
+	task := groupChanged.tasks["task"]
+	task.GroupSchedulingVersion = 1
+	task.GroupSchedulingSource = "override"
+	automatic := false
+	task.GroupAutomaticScheduling = &automatic
+	task.EffectiveAutomaticScheduling = false
+	groupChanged.tasks["task"] = task
+	if schedulingStateSignature(groupChanged) == baseSignature {
+		t.Fatal("hidden Group scheduling state change did not change scheduling-state signature")
 	}
 }
 
@@ -114,5 +126,26 @@ func minimalImpactSignatureState() *portfolioState {
 			schedulingdomain.Commitment: {},
 			schedulingdomain.Actual:     {},
 		},
+	}
+}
+
+func TestProtectedScopeOwnerUsesStrongestEffectiveLifecycleOwner_US44_AC15_AC24_AC36(t *testing.T) {
+	project := projectModel{ID: "project", Status: "locked"}
+	task := taskModel{
+		ProjectID:             project.ID,
+		EffectiveLifecycle:    "locked",
+		EffectiveLockOwnerID:  project.ID,
+		LocalGroupLockOwnerID: "nested-group",
+	}
+	projectOwner, groupOwner := protectedScopeOwner(task, project)
+	if projectOwner != project.ID || groupOwner != "" {
+		t.Fatalf("strongest owner=%q/%q, want Project %q", projectOwner, groupOwner, project.ID)
+	}
+
+	project.Status = "open"
+	task.EffectiveLockOwnerID = "ancestor-group"
+	projectOwner, groupOwner = protectedScopeOwner(task, project)
+	if projectOwner != "" || groupOwner != "ancestor-group" {
+		t.Fatalf("strongest owner=%q/%q, want ancestor Group", projectOwner, groupOwner)
 	}
 }

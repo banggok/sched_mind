@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  type SchedulingImpact,
   SchedulingImpactCancelledError,
   schedulingImpactFetch,
   schedulingImpactTokenHeader,
@@ -153,6 +154,66 @@ describe("schedulingImpactFetch", () => {
 
     expect(response.status).toBe(409);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    unsubscribe();
+  });
+});
+
+describe("Group scheduling impact", () => {
+  it("US-4.4 AC-22/AC-23 parses qualified Group impacts and forwards reopen closure", async () => {
+    const closurePayload = {
+      code: "SCHEDULING_SCOPE_REOPEN_CLOSURE_REQUIRED",
+      message: "reopen closure required",
+      details: {
+        token: "group-token",
+        lockedProjects: [{ id: "project-b", name: "Project B" }],
+        openProjects: [],
+        lockedGroups: [
+          {
+            id: "group-b",
+            projectId: "project-b",
+            name: "Backend",
+            path: "Project B / Platform / Backend",
+          },
+        ],
+        openGroups: [
+          {
+            id: "group-c",
+            projectId: "project-c",
+            name: "Client",
+            path: "Project C / Client",
+          },
+        ],
+      },
+    };
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify(closurePayload), {
+        status: 409,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    const reviewed: string[] = [];
+    const unsubscribe = subscribeSchedulingImpact((impact, resolve) => {
+      reviewed.push(
+        `${impact.token}:${impact.lockedGroups[0]?.path}:${impact.openGroups[0]?.path}`,
+      );
+      resolve("reopen-all");
+    });
+    const reopenAll = vi.fn(async (impact: SchedulingImpact) => {
+      expect(impact.token).toBe("group-token");
+      return new Response(null, { status: 200 });
+    });
+
+    const response = await schedulingImpactFetch(
+      "/api/groups/group-a/status",
+      { method: "POST" },
+      { reopenAll },
+    );
+
+    expect(response.status).toBe(200);
+    expect(reviewed).toEqual([
+      "group-token:Project B / Platform / Backend:Project C / Client",
+    ]);
+    expect(reopenAll).toHaveBeenCalledTimes(1);
     unsubscribe();
   });
 });

@@ -1,5 +1,7 @@
 # US-3.1 — Create Project
 
+> **Product decision update — US-4.4:** Project Open no longer guarantees that every descendant WBS is planning-editable. A locally Locked Group protects its subtree while the Project remains Open. Project Locked/Closed remains a hard lifecycle ceiling, Project Reopen preserves local Group locks, and Group scheduling overrides do not change Project Priority or Project Buffer. Group-specific scheduling/lifecycle rules are owned by US-4.4.
+
 > **Product decision update — US-6.4:** Auto Dependency by Assignee is removed
 > end-to-end. `Automatic Scheduling` remains the Project configuration for
 > generated Execution/Commitment dates and capacity allocation only; it never

@@ -1,5 +1,7 @@
 # US-6.1 — Automatic Execution and Commitment Scheduling
 
+> **Product decision update — US-4.4:** Scheduler activation is resolved per Task from the nearest effective Group/Project Automatic Scheduling configuration. Scheduling Anchor uses the nearest non-null Group Scheduling Start Date override, otherwise continues through parent Groups to Project; only a fully-null chain has no anchor. One Project may therefore contain automatic and manual subtrees. Project Priority, WBS ordering, shared Assignee capacity, Project Buffer, and the concrete allocation algorithm remain unchanged; Group is not a priority or capacity-isolation boundary.
+
 > **Product decision update — US-7.1:** Home Portfolio Gantt is the canonical
 > active-Project WBS surface and a read-only consumer of confirmed
 > Execution/Commitment dates, unscheduled state, dependencies, and schedule

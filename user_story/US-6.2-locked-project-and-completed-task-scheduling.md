@@ -1,5 +1,7 @@
 # US-6.2 — Actual Date, Locked Project, and Cross-Project Scheduling Impact
 
+> **Product decision update — US-4.4:** Immutable scheduling protection, impact blocking, and Reopen closure now support both Project and Group lifecycle scopes. A Locked Group protects its descendant baseline inside an Open Project. For Group-scoped mutations, only the mutation Group subtree is excluded from warning; same-Project timeline changes outside that subtree remain warning-eligible. Required Reopen Closure may contain Groups and Projects.
+
 > **Authority and supersession:** This story is the authoritative requirement
 > for Actual Date, completed-Task timeline and capacity treatment, Locked
 > Project mutability, cross-project impact confirmation, Project Reopen,

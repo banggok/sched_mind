@@ -246,7 +246,8 @@ function readRow(value: unknown): PortfolioRow {
     typeof value.incompleteEffort !== "boolean" ||
     typeof value.incompleteSchedule !== "boolean" ||
     typeof value.hasChildren !== "boolean" ||
-    typeof value.completed !== "boolean"
+    typeof value.completed !== "boolean" ||
+    !isEffectiveLifecycle(value.effectiveLifecycle)
   )
     throw unexpectedResponse();
   return {
@@ -271,7 +272,14 @@ function readRow(value: unknown): PortfolioRow {
     incompleteSchedule: value.incompleteSchedule,
     hasChildren: value.hasChildren,
     completed: value.completed,
+    effectiveLifecycle: value.effectiveLifecycle,
   };
+}
+
+function isEffectiveLifecycle(
+  value: unknown,
+): value is "open" | "locked" | "closed" {
+  return value === "open" || value === "locked" || value === "closed";
 }
 
 function readDependency(value: unknown): PortfolioDependency {

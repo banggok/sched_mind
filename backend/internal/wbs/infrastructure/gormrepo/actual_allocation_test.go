@@ -1,6 +1,7 @@
 package gormrepo
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -160,5 +161,67 @@ func TestReplaceActualAllocationsProgressivelyRebalancesAroundExistingActualLoad
 	}
 	if existing.AllocatedMinutes != "360" {
 		t.Fatalf("existing Actual row changed=%#v", existing)
+	}
+}
+
+func TestAllocationsUseEffectiveGroupManualModeForOvercapacity_US44_AC33(t *testing.T) {
+	database := actualAllocationTestDB(t)
+	repository := New(database)
+	now := time.Date(2026, 8, 7, 9, 0, 0, 0, time.UTC)
+	allocationDate := time.Date(2026, 8, 10, 0, 0, 0, 0, time.UTC)
+	memberID, groupID, taskID := "member", "manual-group", "task"
+	assignee := memberID
+	automaticOff := false
+	project := projectModel{ID: "project", Name: "Project", Status: "open", AutomaticScheduling: true}
+	group := nodeModel{
+		ID:                       groupID,
+		ProjectID:                project.ID,
+		ParentKey:                "",
+		Name:                     "Manual Group",
+		NameKey:                  "manual group",
+		Position:                 1,
+		GroupSchedulingSource:    "override",
+		GroupAutomaticScheduling: &automaticOff,
+		GroupLocalStatus:         "open",
+		CreatedAt:                now,
+		UpdatedAt:                now,
+	}
+	task := nodeModel{
+		ID:                           taskID,
+		ProjectID:                    project.ID,
+		ParentID:                     &groupID,
+		ParentKey:                    groupID,
+		Name:                         "Task",
+		NameKey:                      "task",
+		Position:                     1,
+		AssigneeID:                   &assignee,
+		CapacityAllocationPercentage: 50,
+		GroupSchedulingSource:        "inherit",
+		GroupLocalStatus:             "open",
+		CreatedAt:                    now,
+		UpdatedAt:                    now,
+	}
+	for _, value := range []any{
+		&allocationMemberModel{ID: memberID, DailyCapacity: "8", BufferPercentage: "0"},
+		&project,
+		&group,
+		&task,
+		&actualAllocationModel{TaskID: taskID, AssigneeID: memberID, Timeline: "execution", AllocationDate: allocationDate, AllocatedMinutes: "300", RemainingCapacityMinutes: "180", Sequence: 1},
+	} {
+		if err := database.Create(value).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	groups, err := repository.Allocations(context.Background(), project.ID, taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(groups.Execution) != 1 {
+		t.Fatalf("Execution allocations=%#v, want one row", groups.Execution)
+	}
+	row := groups.Execution[0]
+	if row.TaskDailyLimitMinutes != 240 || row.OvercapacityMinutes != 60 {
+		t.Fatalf("manual Group allocation=%#v, want 240-minute limit and 60-minute overcapacity", row)
 	}
 }

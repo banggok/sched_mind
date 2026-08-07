@@ -5,21 +5,32 @@ export type SchedulingImpactProject = {
   name: string;
 };
 
+export type SchedulingImpactGroup = {
+  id: string;
+  projectId: string;
+  name: string;
+  path: string;
+};
+
 export type SchedulingImpact = {
   code:
     | "SCHEDULING_IMPACT_CONFIRMATION_REQUIRED"
     | "SCHEDULING_LOCKED_PROJECT_IMPACT"
+    | "SCHEDULING_LOCKED_SCOPE_IMPACT"
+    | "SCHEDULING_SCOPE_REOPEN_CLOSURE_REQUIRED"
     | "SCHEDULING_IMPACT_STALE";
   message: string;
   token: string;
   lockedProjects: SchedulingImpactProject[];
   openProjects: SchedulingImpactProject[];
+  lockedGroups: SchedulingImpactGroup[];
+  openGroups: SchedulingImpactGroup[];
 };
 
-type Decision = "confirm" | "cancel";
+export type SchedulingImpactDecision = "confirm" | "cancel" | "reopen-all";
 type Listener = (
   impact: SchedulingImpact,
-  resolve: (decision: Decision) => void,
+  resolve: (decision: SchedulingImpactDecision) => void,
 ) => void;
 
 let listener: Listener | undefined;
@@ -41,6 +52,7 @@ export class SchedulingImpactCancelledError extends Error {
 export async function schedulingImpactFetch(
   input: RequestInfo | URL,
   init: RequestInit = {},
+  options?: { reopenAll?: (impact: SchedulingImpact) => Promise<Response> },
 ): Promise<Response> {
   let token: string | undefined;
   for (let attempt = 0; attempt < 4; attempt += 1) {
@@ -51,8 +63,16 @@ export async function schedulingImpactFetch(
     if (!impact) return response;
 
     const decision = await requestDecision(impact);
-    if (impact.code === "SCHEDULING_LOCKED_PROJECT_IMPACT") {
+    if (
+      impact.code === "SCHEDULING_LOCKED_PROJECT_IMPACT" ||
+      impact.code === "SCHEDULING_LOCKED_SCOPE_IMPACT"
+    ) {
       return response;
+    }
+    if (impact.code === "SCHEDULING_SCOPE_REOPEN_CLOSURE_REQUIRED") {
+      if (decision !== "reopen-all") throw new SchedulingImpactCancelledError();
+      if (!options?.reopenAll) return response;
+      return options.reopenAll(impact);
     }
     if (decision !== "confirm") throw new SchedulingImpactCancelledError();
     token = impact.token;
@@ -82,10 +102,14 @@ async function readSchedulingImpact(
     token: details.token,
     lockedProjects: readProjects(details.lockedProjects),
     openProjects: readProjects(details.openProjects),
+    lockedGroups: readGroups(details.lockedGroups),
+    openGroups: readGroups(details.openGroups),
   };
 }
 
-function requestDecision(impact: SchedulingImpact): Promise<Decision> {
+function requestDecision(
+  impact: SchedulingImpact,
+): Promise<SchedulingImpactDecision> {
   if (!listener) {
     throw new Error("Scheduling impact dialog is unavailable.");
   }
@@ -103,10 +127,32 @@ function readProjects(value: unknown): SchedulingImpactProject[] {
   );
 }
 
+function readGroups(value: unknown): SchedulingImpactGroup[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) =>
+    isRecord(item) &&
+    typeof item.id === "string" &&
+    typeof item.projectId === "string" &&
+    typeof item.name === "string" &&
+    typeof item.path === "string"
+      ? [
+          {
+            id: item.id,
+            projectId: item.projectId,
+            name: item.name,
+            path: item.path,
+          },
+        ]
+      : [],
+  );
+}
+
 function isImpactCode(value: unknown): value is SchedulingImpact["code"] {
   return (
     value === "SCHEDULING_IMPACT_CONFIRMATION_REQUIRED" ||
     value === "SCHEDULING_LOCKED_PROJECT_IMPACT" ||
+    value === "SCHEDULING_LOCKED_SCOPE_IMPACT" ||
+    value === "SCHEDULING_SCOPE_REOPEN_CLOSURE_REQUIRED" ||
     value === "SCHEDULING_IMPACT_STALE"
   );
 }

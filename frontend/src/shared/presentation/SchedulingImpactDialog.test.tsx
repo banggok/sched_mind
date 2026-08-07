@@ -36,6 +36,33 @@ function PublicHolidaySaveFixture() {
   );
 }
 
+function GroupReopenFixture() {
+  const [status, setStatus] = useState("idle");
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => {
+          setStatus("reopening");
+          void schedulingImpactFetch(
+            "/api/projects/project-a/wbs/group-a/status",
+            { method: "POST" },
+            {
+              reopenAll: () =>
+                fetch("/api/projects/project-a/wbs/group-a/reopen-all", {
+                  method: "POST",
+                }),
+            },
+          ).then(() => setStatus("reopened"));
+        }}
+      >
+        Reopen Group
+      </button>
+      <SchedulingImpactDialog />
+      <output aria-label="group reopen status">{status}</output>
+    </>
+  );
+}
 describe("SchedulingImpactDialog", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -109,5 +136,62 @@ describe("SchedulingImpactDialog", () => {
     expect(
       new Headers(confirmedRequest?.headers).get("X-Scheduling-Impact-Token"),
     ).toBe("impact-token");
+  });
+
+  it("US-4.4 AC-22/AC-25 shows qualified Group closure and keeps Reopen all keyboard focus", async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            code: "SCHEDULING_SCOPE_REOPEN_CLOSURE_REQUIRED",
+            message: "reopen closure required",
+            details: {
+              token: "group-token",
+              lockedProjects: [{ id: "project-b", name: "Project B" }],
+              openProjects: [],
+              lockedGroups: [
+                {
+                  id: "group-b",
+                  projectId: "project-b",
+                  name: "Backend",
+                  path: "Project B / Platform / Backend",
+                },
+              ],
+              openGroups: [],
+            },
+          }),
+          {
+            status: 409,
+            headers: { "Content-Type": "application/json" },
+          },
+        ),
+      )
+      .mockResolvedValueOnce(new Response(null, { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const user = userEvent.setup();
+    render(<GroupReopenFixture />);
+    await user.click(screen.getByRole("button", { name: "Reopen Group" }));
+
+    const dialog = await screen.findByRole("alertdialog", {
+      name: "Reopen required scheduling scopes",
+    });
+    expect(within(dialog).getByText("Project B")).toBeTruthy();
+    expect(
+      within(dialog).getByText("Project B / Platform / Backend"),
+    ).toBeTruthy();
+    const reopenAll = within(dialog).getByRole("button", {
+      name: "Reopen all",
+    });
+    expect(document.activeElement).toBe(reopenAll);
+
+    await user.click(reopenAll);
+    await waitFor(() =>
+      expect(screen.getByLabelText("group reopen status").textContent).toBe(
+        "reopened",
+      ),
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });

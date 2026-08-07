@@ -10,6 +10,7 @@ import (
 
 	"github.com/banggok/sched_mind/backend/internal/scheduling/application"
 	schedulingdomain "github.com/banggok/sched_mind/backend/internal/scheduling/domain"
+	groupscheduling "github.com/banggok/sched_mind/backend/internal/shared/groupscheduling"
 	"github.com/banggok/sched_mind/backend/internal/shared/identity"
 	"github.com/banggok/sched_mind/backend/internal/shared/persistence"
 	"gorm.io/gorm"
@@ -19,7 +20,7 @@ import (
 const maximumScheduleDays = 3660
 
 const (
-	reasonMissingAnchor   = "Automatic Scheduling requires a Project Scheduling Start Date."
+	reasonMissingAnchor   = "Automatic Scheduling requires an effective Scheduling Start Date."
 	reasonMissingAssignee = "Task requires an Assignee before it can be scheduled."
 	reasonMissingEffort   = "Task requires valid Effort before it can be scheduled."
 	reasonBlocked         = "Task is blocked by an unscheduled predecessor."
@@ -150,6 +151,13 @@ func (repository *Repository) loadState(database *gorm.DB) (*portfolioState, err
 	for _, task := range tasks {
 		taskByID[task.ID] = task
 	}
+	if err := resolveEffectiveTaskSettings(projectByID, tasks, taskByID); err != nil {
+		return nil, err
+	}
+	tasks = tasks[:0]
+	for _, task := range taskByID {
+		tasks = append(tasks, task)
+	}
 	leafOrder, err := depthFirstLeafOrder(tasks)
 	if err != nil {
 		return nil, err
@@ -231,6 +239,65 @@ func (repository *Repository) loadState(database *gorm.DB) (*portfolioState, err
 	return state, nil
 }
 
+func resolveEffectiveTaskSettings(projects map[string]projectModel, tasks []taskModel, taskByID map[string]taskModel) error {
+	byProject := make(map[string][]taskModel)
+	for _, task := range tasks {
+		byProject[task.ProjectID] = append(byProject[task.ProjectID], task)
+	}
+	for projectID, projectTasks := range byProject {
+		project, exists := projects[projectID]
+		if !exists {
+			return fmt.Errorf("%w: task project %s missing", schedulingdomain.ErrDataIntegrity, projectID)
+		}
+		nodes := make([]groupscheduling.Node, 0, len(projectTasks))
+		for _, task := range projectTasks {
+			source := groupscheduling.Source(task.GroupSchedulingSource)
+			if source == "" {
+				source = groupscheduling.SourceInherit
+			}
+			status := groupscheduling.LocalStatus(task.GroupLocalStatus)
+			if status == "" {
+				status = groupscheduling.StatusOpen
+			}
+			nodes = append(nodes, groupscheduling.Node{ID: task.ID, ParentID: task.ParentID, Name: task.Name, Source: source, AutomaticSchedulingOverride: task.GroupAutomaticScheduling, SchedulingStartDateOverride: task.GroupSchedulingStartDate, LocalStatus: status, LockedAutomaticScheduling: task.GroupLockedAutomaticScheduling, LockedSchedulingStartDate: task.GroupLockedSchedulingStartDate})
+		}
+		resolver, err := groupscheduling.New(groupscheduling.Project{ID: project.ID, Name: project.Name, Status: project.Status, AutomaticScheduling: project.AutomaticScheduling, SchedulingStartDate: project.SchedulingStartDate}, nodes)
+		if err != nil {
+			return fmt.Errorf("resolve effective Group scheduling for project %s: %w", projectID, err)
+		}
+		for _, task := range projectTasks {
+			effective, err := resolver.EffectiveFor(task.ID)
+			if err != nil {
+				return fmt.Errorf("resolve effective Group scheduling for WBS %s: %w", task.ID, err)
+			}
+			current := taskByID[task.ID]
+			current.EffectiveAutomaticScheduling = effective.AutomaticScheduling
+			current.EffectiveSchedulingStartDate = effective.SchedulingStartDate
+			current.EffectiveLifecycle = string(effective.Lifecycle)
+			current.EffectiveLockOwnerID = effective.LockOwnerID
+			localLockID, _, lockErr := resolver.LocalLockOwnerFor(task.ID)
+			if lockErr != nil {
+				return lockErr
+			}
+			current.LocalGroupLockOwnerID = localLockID
+			taskByID[task.ID] = current
+		}
+	}
+	return nil
+}
+
+func projectHasEffectiveAutomatic(state *portfolioState, projectID string) bool {
+	for taskID, task := range state.tasks {
+		if task.ProjectID != projectID || !task.EffectiveAutomaticScheduling || task.EffectiveLifecycle != "open" {
+			continue
+		}
+		if _, leaf := state.leafOrder[taskID]; leaf {
+			return true
+		}
+	}
+	return false
+}
+
 func taskIDs(tasks []taskModel) []string {
 	values := make([]string, 0, len(tasks))
 	for _, task := range tasks {
@@ -259,8 +326,7 @@ func (state *portfolioState) classifyDependencies() {
 
 func (state *portfolioState) classifyFixedTasks() {
 	for _, task := range state.tasks {
-		project := state.projects[task.ProjectID]
-		if task.ActualStart != nil && task.ActualEnd != nil || project.Status == "locked" || !project.AutomaticScheduling {
+		if task.ActualStart != nil && task.ActualEnd != nil || task.EffectiveLifecycle != "open" || !task.EffectiveAutomaticScheduling {
 			state.fixed[schedulingdomain.Execution] = append(state.fixed[schedulingdomain.Execution], task)
 			state.fixed[schedulingdomain.Commitment] = append(state.fixed[schedulingdomain.Commitment], task)
 		}

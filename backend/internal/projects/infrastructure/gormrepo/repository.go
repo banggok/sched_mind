@@ -209,13 +209,8 @@ func (r *Repository) UpdateDetails(ctx context.Context, id, name string, automat
 			return result.Error
 		}
 		settingsAffectSchedule := !datesEqual(previousAnchor, value.SchedulingStartDate) || previousBuffer != value.ProjectBuffer || wasAutomatic != value.AutomaticScheduling
-		if value.AutomaticScheduling && settingsAffectSchedule {
-			txContext := sharedpersistence.WithTransaction(ctx, tx)
-			if value.SchedulingStartDate == nil {
-				if err := markUnscheduled(txContext, id, "Automatic Scheduling requires a Project Scheduling Start Date."); err != nil {
-					return fmt.Errorf("mark project schedule unscheduled: %w", err)
-				}
-			} else if err := schedule(txContext, id); err != nil {
+		if settingsAffectSchedule {
+			if err := schedule(sharedpersistence.WithTransaction(ctx, tx), id); err != nil {
 				return fmt.Errorf("recalculate project schedule: %w", err)
 			}
 		}
@@ -452,13 +447,8 @@ func (r *Repository) UpdateSettings(ctx context.Context, id string, automaticSch
 			return err
 		}
 		settingsAffectSchedule := !datesEqual(previousAnchor, value.SchedulingStartDate) || previousBuffer != value.ProjectBuffer || wasAutomatic != value.AutomaticScheduling
-		if value.AutomaticScheduling && settingsAffectSchedule {
-			txContext := sharedpersistence.WithTransaction(ctx, tx)
-			if value.SchedulingStartDate == nil {
-				if err := markUnscheduled(txContext, id, "Automatic Scheduling requires a Project Scheduling Start Date."); err != nil {
-					return fmt.Errorf("mark project schedule unscheduled: %w", err)
-				}
-			} else if err := schedule(txContext, id); err != nil {
+		if settingsAffectSchedule {
+			if err := schedule(sharedpersistence.WithTransaction(ctx, tx), id); err != nil {
 				return fmt.Errorf("recalculate project schedule: %w", err)
 			}
 		}

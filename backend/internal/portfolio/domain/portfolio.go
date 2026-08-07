@@ -84,6 +84,7 @@ type Row struct {
 	IncompleteSchedule bool
 	HasChildren        bool
 	Completed          bool
+	EffectiveLifecycle string
 }
 
 type Dependency struct {

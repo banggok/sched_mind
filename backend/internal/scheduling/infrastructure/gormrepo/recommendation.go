@@ -52,7 +52,7 @@ func (repository *Repository) RecommendAssignees(ctx context.Context, input sche
 			return schedulingdomain.ErrAssigneeRecommendationInputInvalid
 		}
 
-		project, projectExists := state.projects[input.ProjectID]
+		_, projectExists := state.projects[input.ProjectID]
 		if !projectExists {
 			var projectStatus string
 			if err := transaction.Table("projects").Select("status").Where("id = ?", input.ProjectID).Scan(&projectStatus).Error; err != nil {
@@ -67,7 +67,7 @@ func (repository *Repository) RecommendAssignees(ctx context.Context, input sche
 		if !taskExists || task.ProjectID != input.ProjectID {
 			return schedulingdomain.ErrAssigneeRecommendationInputInvalid
 		}
-		if project.Status != "open" || task.ActualStart != nil || task.ActualEnd != nil {
+		if task.EffectiveLifecycle != "open" || task.ActualStart != nil || task.ActualEnd != nil {
 			return schedulingdomain.ErrTaskNotRecommendable
 		}
 		if _, leaf := state.leafOrder[input.TaskID]; !leaf {
@@ -76,7 +76,7 @@ func (repository *Repository) RecommendAssignees(ctx context.Context, input sche
 
 		calculatedOn := schedulingdomain.DateOnly(input.CalculatedOn)
 		mode := schedulingdomain.RecommendationAutomatic
-		if !project.AutomaticScheduling {
+		if !task.EffectiveAutomaticScheduling {
 			mode = schedulingdomain.RecommendationManualAdvisory
 		}
 		candidates, err := loadRecommendationCandidates(transaction, input.RoleID)
@@ -94,7 +94,7 @@ func (repository *Repository) RecommendAssignees(ctx context.Context, input sche
 			Items:                   []schedulingdomain.AssigneeRecommendationItem{},
 		}
 
-		if project.AutomaticScheduling && project.SchedulingStartDate == nil {
+		if task.EffectiveAutomaticScheduling && task.EffectiveSchedulingStartDate == nil {
 			for _, candidate := range candidates {
 				reason := recommendationReasonAutomaticAnchorMissing
 				result.Items = append(result.Items, noCompletionRecommendation(candidate, reason))
@@ -103,7 +103,7 @@ func (repository *Repository) RecommendAssignees(ctx context.Context, input sche
 			return errRecommendationComplete
 		}
 
-		prepared, preserveManual, err := prepareRecommendationState(state, input, project, task, calculatedOn)
+		prepared, err := prepareRecommendationState(state, input, task, calculatedOn)
 		if err != nil {
 			return err
 		}
@@ -119,7 +119,7 @@ func (repository *Repository) RecommendAssignees(ctx context.Context, input sche
 			candidateID := candidate.ID
 			candidateTask.AssigneeID = &candidateID
 			simulation.tasks[input.TaskID] = candidateTask
-			reclassifyRecommendationState(simulation, input.TaskID, input.ProjectID, preserveManual)
+			reclassifyRecommendationState(simulation)
 
 			simulated, simulationErr := simulation.scheduleTimeline(schedulingdomain.Execution)
 			if simulationErr != nil {
@@ -179,7 +179,7 @@ func loadRecommendationCandidates(transaction *gorm.DB, roleID string) ([]member
 	return values, nil
 }
 
-func prepareRecommendationState(state *portfolioState, input schedulingdomain.AssigneeRecommendationInput, project projectModel, task taskModel, calculatedOn time.Time) (*portfolioState, bool, error) {
+func prepareRecommendationState(state *portfolioState, input schedulingdomain.AssigneeRecommendationInput, task taskModel, calculatedOn time.Time) (*portfolioState, error) {
 	prepared := cloneRecommendationState(state)
 	for timeline := range prepared.existingAllocations {
 		delete(prepared.existingAllocations[timeline], input.TaskID)
@@ -200,26 +200,26 @@ func prepareRecommendationState(state *portfolioState, input schedulingdomain.As
 	task.CommitmentUnscheduledReason = nil
 	prepared.tasks[input.TaskID] = task
 
-	preserveManual := !project.AutomaticScheduling
+	preserveManual := !task.EffectiveAutomaticScheduling
 	if preserveManual {
 		anchor := calculatedOn
 		if input.ExecutionStart != nil {
 			anchor = schedulingdomain.DateOnly(*input.ExecutionStart)
-		} else if project.SchedulingStartDate != nil {
-			projectStart := schedulingdomain.DateOnly(*project.SchedulingStartDate)
-			if projectStart.After(anchor) {
-				anchor = projectStart
+		} else if task.EffectiveSchedulingStartDate != nil {
+			effectiveStart := schedulingdomain.DateOnly(*task.EffectiveSchedulingStartDate)
+			if effectiveStart.After(anchor) {
+				anchor = effectiveStart
 			}
 		}
-		project.AutomaticScheduling = true
-		project.SchedulingStartDate = &anchor
-		prepared.projects[input.ProjectID] = project
+		task.EffectiveAutomaticScheduling = true
+		task.EffectiveSchedulingStartDate = &anchor
+		prepared.tasks[input.TaskID] = task
 	}
-	reclassifyRecommendationState(prepared, input.TaskID, input.ProjectID, preserveManual)
-	return prepared, preserveManual, nil
+	reclassifyRecommendationState(prepared)
+	return prepared, nil
 }
 
-func reclassifyRecommendationState(state *portfolioState, editedTaskID, projectID string, preserveManual bool) {
+func reclassifyRecommendationState(state *portfolioState) {
 	state.manualBlockers = make(map[string][]string)
 	state.fixedBlockers = make(map[string][]string)
 	state.fixed = map[schedulingdomain.Timeline][]taskModel{
@@ -228,25 +228,6 @@ func reclassifyRecommendationState(state *portfolioState, editedTaskID, projectI
 	}
 	state.classifyDependencies()
 	state.classifyFixedTasks()
-	if !preserveManual {
-		return
-	}
-	for _, task := range state.tasks {
-		if task.ProjectID != projectID || task.ID == editedTaskID {
-			continue
-		}
-		state.fixed[schedulingdomain.Execution] = appendTaskOnce(state.fixed[schedulingdomain.Execution], task)
-		state.fixed[schedulingdomain.Commitment] = appendTaskOnce(state.fixed[schedulingdomain.Commitment], task)
-	}
-}
-
-func appendTaskOnce(values []taskModel, candidate taskModel) []taskModel {
-	for _, value := range values {
-		if value.ID == candidate.ID {
-			return values
-		}
-	}
-	return append(values, candidate)
 }
 
 func cloneRecommendationState(state *portfolioState) *portfolioState {

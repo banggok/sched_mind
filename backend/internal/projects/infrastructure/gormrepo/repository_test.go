@@ -200,12 +200,16 @@ func TestRepositorySettingsPersistenceAndSchedulerRollback(t *testing.T) {
 		t.Fatalf("defaults: %#v %v", created, err)
 	}
 	anchor := time.Date(2026, 8, 3, 0, 0, 0, 0, time.UTC)
-	updated, err := repository.UpdateSettings(ctx, "a", false, &anchor, 35, now.Add(time.Hour), func(context.Context, string) error { t.Fatal("scheduler called while disabling"); return nil }, func(context.Context, string, string) error {
-		t.Fatal("unscheduled marker called while disabling")
+	disableScheduleCalls := 0
+	updated, err := repository.UpdateSettings(ctx, "a", false, &anchor, 35, now.Add(time.Hour), func(context.Context, string) error {
+		disableScheduleCalls++
+		return nil
+	}, func(context.Context, string, string) error {
+		t.Fatal("legacy unscheduled marker must not own effective Group scheduling")
 		return nil
 	})
-	if err != nil || updated == nil || updated.AutomaticScheduling || updated.ProjectBuffer != 35 {
-		t.Fatalf("disable: %#v %v", updated, err)
+	if err != nil || updated == nil || updated.AutomaticScheduling || updated.ProjectBuffer != 35 || disableScheduleCalls != 1 {
+		t.Fatalf("disable: %#v scheduleCalls=%d err=%v", updated, disableScheduleCalls, err)
 	}
 	if updated.SchedulingStartDate == nil || !updated.SchedulingStartDate.Equal(anchor) {
 		t.Fatalf("persist anchor: %#v", updated)
@@ -228,7 +232,7 @@ func TestRepositorySettingsPersistenceAndSchedulerRollback(t *testing.T) {
 	}
 }
 
-func TestRepositoryMarksAutomaticProjectUnscheduledWithoutProjectAnchor(t *testing.T) {
+func TestRepositoryDelegatesMissingProjectAnchorToEffectiveScheduler_US44_AC11_AC17_AC18(t *testing.T) {
 	repository := testRepository(t)
 	ctx := context.Background()
 	now := time.Now().UTC()
@@ -236,20 +240,16 @@ func TestRepositoryMarksAutomaticProjectUnscheduledWithoutProjectAnchor(t *testi
 	if err != nil || created == nil {
 		t.Fatalf("create: %#v %v", created, err)
 	}
-	persistedBeforeEnable, err := repository.Find(ctx, "a")
-	if err != nil || persistedBeforeEnable == nil || persistedBeforeEnable.AutomaticScheduling {
-		t.Fatalf("automatic scheduling off was not persisted: %#v %v", persistedBeforeEnable, err)
-	}
-	marked := false
+	scheduleCalls := 0
 	updated, err := repository.UpdateSettings(ctx, "a", true, nil, 20, now.Add(time.Hour), func(context.Context, string) error {
-		t.Fatal("scheduler must not run without Scheduling Start Date")
+		scheduleCalls++
 		return nil
-	}, func(_ context.Context, projectID, reason string) error {
-		marked = projectID == "a" && reason != ""
+	}, func(context.Context, string, string) error {
+		t.Fatal("legacy Project-level unscheduled marker must not bypass effective Group resolution")
 		return nil
 	})
-	if err != nil || updated == nil || !updated.AutomaticScheduling || updated.SchedulingStartDate != nil || !marked {
-		t.Fatalf("enable without anchor: %#v %v", updated, err)
+	if err != nil || updated == nil || !updated.AutomaticScheduling || updated.SchedulingStartDate != nil || scheduleCalls != 1 {
+		t.Fatalf("enable without Project anchor: %#v scheduleCalls=%d err=%v", updated, scheduleCalls, err)
 	}
 }
 

@@ -1,5 +1,7 @@
 # US-4.2 — Reopen Completed Task
 
+> **Product decision update — US-4.4:** Reopen Task requires the Task to be effectively Open after Project and ancestor Group lifecycle resolution. A completed Task inside a Locked Group must Reopen the required Group/ancestor/Project lifecycle scope first; Task Reopen never bypasses or implicitly changes Group status.
+
 > **Product decision update — US-6.2:** Completion uses a required Actual Date
 > pair (`Actual Start` and `Actual End`). Reopen Task atomically clears both
 > fields and removes Actual Allocation. Reopen is allowed only while the owning

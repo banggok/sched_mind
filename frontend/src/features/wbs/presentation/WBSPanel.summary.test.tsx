@@ -171,6 +171,8 @@ function mutableGateway(initial: WBSNode[]): {
     create: vi.fn().mockResolvedValue(undefined),
     createSibling: vi.fn().mockResolvedValue(undefined),
     rename: vi.fn().mockResolvedValue(undefined),
+    updateGroupScheduling: vi.fn<WBSGateway["updateGroupScheduling"]>(),
+    changeGroupStatus: vi.fn<WBSGateway["changeGroupStatus"]>(),
     reorder: vi.fn().mockResolvedValue(undefined),
     place: vi.fn().mockResolvedValue(undefined),
     move: vi.fn().mockResolvedValue(undefined),
@@ -259,7 +261,7 @@ async function openGroup(name: string): Promise<HTMLElement> {
 }
 
 describe("US-4.3 direct Home Group summary workflow", () => {
-  it("AC-1..16 AC-22 AC-24..26 renders summary and saves rename through one dialog", async () => {
+  it("AC-1..16 AC-22 AC-24..26 renders horizontal summary and saves the Group draft through one dialog", async () => {
     const setup = mutableGateway(realisticTree());
     const rendered = renderPanel(
       setup.current(),
@@ -270,8 +272,9 @@ describe("US-4.3 direct Home Group summary workflow", () => {
     const dialog = await openGroup("Delivery");
 
     expect(screen.queryByText("Project Structure")).toBeNull();
+    const summaryGrid = within(dialog).getByLabelText("Group summary details");
     expect(
-      within(dialog)
+      within(summaryGrid)
         .getAllByRole("heading", { level: 4 })
         .map((heading) => heading.textContent),
     ).toEqual([
@@ -302,10 +305,8 @@ describe("US-4.3 direct Home Group summary workflow", () => {
         { selector: ".sr-only" },
       ),
     ).toHaveLength(2);
-    const summaryGrid = within(dialog).getByLabelText("Group summary details");
     expect(summaryGrid.className).toContain("min-w-0");
-    expect(summaryGrid.classList.contains("grid-cols-3")).toBe(false);
-    expect(summaryGrid.classList.contains("lg:grid-cols-3")).toBe(false);
+    expect(summaryGrid.classList.contains("lg:grid-cols-3")).toBe(true);
     const results = await axe.run(dialog, {
       rules: { "color-contrast": { enabled: false } },
     });
@@ -313,15 +314,21 @@ describe("US-4.3 direct Home Group summary workflow", () => {
 
     const name = within(dialog).getByLabelText("Name") as HTMLInputElement;
     expect(name.disabled).toBe(false);
-    expect(setup.gateway.rename).not.toHaveBeenCalled();
+    expect(setup.gateway.updateGroupScheduling).not.toHaveBeenCalled();
     await userEvent.clear(name);
     await userEvent.type(name, "Delivery Stream");
     await userEvent.click(within(dialog).getByRole("button", { name: "Save" }));
     await waitFor(() =>
-      expect(setup.gateway.rename).toHaveBeenCalledWith(
+      expect(setup.gateway.updateGroupScheduling).toHaveBeenCalledWith(
         "project",
         "delivery",
-        "Delivery Stream",
+        {
+          expectedVersion: 0,
+          name: "Delivery Stream",
+          schedulingSource: "inherit",
+          automaticScheduling: undefined,
+          schedulingStartDate: undefined,
+        },
       ),
     );
     expect(rendered.onClose).toHaveBeenCalledTimes(1);

@@ -447,3 +447,93 @@ func TestRecommendAssigneesRejectsInvalidRoleAndNonRecommendableLifecycle_D03_AC
 		t.Fatalf("closed Project error=%v", err)
 	}
 }
+
+func TestRecommendAssigneesUsesGroupOverrideOnWhenProjectIsManual_US44_AC34(t *testing.T) {
+	repository, database := prepareRecommendationRepository(t)
+	project := automaticProject("project", 1, "2026-07-01", 0)
+	project.AutomaticScheduling = false
+	seedProject(t, database, project)
+	seedRecommendationMember(t, database, "a", "Ayu", "role", "8")
+
+	groupID := "group"
+	groupAutomatic := true
+	groupAnchor := mustDate("2026-08-10")
+	seedTask(t, database, taskModel{
+		ID:                       groupID,
+		ProjectID:                "project",
+		ParentKey:                "",
+		Position:                 1,
+		Name:                     "Platform",
+		GroupSchedulingSource:    "override",
+		GroupAutomaticScheduling: &groupAutomatic,
+		GroupSchedulingStartDate: &groupAnchor,
+		GroupLocalStatus:         "open",
+	})
+	seedTask(t, database, taskModel{
+		ID:                           "task",
+		ProjectID:                    "project",
+		ParentID:                     &groupID,
+		ParentKey:                    groupID,
+		Position:                     1,
+		Name:                         "Task",
+		CapacityAllocationPercentage: 100,
+		GroupSchedulingSource:        "inherit",
+		GroupLocalStatus:             "open",
+	})
+
+	input := recommendationInput("project", "task")
+	input.CapacityAllocationPercentage = 100
+	result, err := repository.RecommendAssignees(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Mode != schedulingdomain.RecommendationAutomatic {
+		t.Fatalf("mode=%q, want automatic from Group override", result.Mode)
+	}
+	if len(result.Items) != 1 {
+		t.Fatalf("items=%#v, want one candidate", result.Items)
+	}
+	assertDate(t, "Group automatic projected finish", result.Items[0].ExecutionEnd, "2026-08-10")
+}
+
+func TestRecommendAssigneesUsesGroupOverrideOffWhenProjectIsAutomatic_US44_AC34(t *testing.T) {
+	repository, database := prepareRecommendationRepository(t)
+	seedProject(t, database, automaticProject("project", 1, "2026-08-03", 0))
+	seedRecommendationMember(t, database, "a", "Ayu", "role", "8")
+
+	groupID := "group"
+	groupAutomatic := false
+	seedTask(t, database, taskModel{
+		ID:                       groupID,
+		ProjectID:                "project",
+		ParentKey:                "",
+		Position:                 1,
+		Name:                     "Platform",
+		GroupSchedulingSource:    "override",
+		GroupAutomaticScheduling: &groupAutomatic,
+		GroupLocalStatus:         "open",
+	})
+	seedTask(t, database, taskModel{
+		ID:                           "task",
+		ProjectID:                    "project",
+		ParentID:                     &groupID,
+		ParentKey:                    groupID,
+		Position:                     1,
+		Name:                         "Task",
+		CapacityAllocationPercentage: 100,
+		GroupSchedulingSource:        "inherit",
+		GroupLocalStatus:             "open",
+	})
+
+	input := recommendationInput("project", "task")
+	input.CapacityAllocationPercentage = 100
+	draftStart := mustDate("2026-08-10")
+	input.ExecutionStart = &draftStart
+	result, err := repository.RecommendAssignees(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Mode != schedulingdomain.RecommendationManualAdvisory {
+		t.Fatalf("mode=%q, want manual advisory from Group override", result.Mode)
+	}
+}
