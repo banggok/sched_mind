@@ -15,8 +15,9 @@ Engineering Lead dapat:
 1. Melihat daftar role.
 2. Menambahkan role baru.
 3. Mengubah nama role.
-4. Menghapus role yang belum digunakan.
-5. Melihat kegagalan validasi secara jelas.
+4. Menghapus role yang tidak digunakan active Team Member atau Task.
+5. Melihat active Team Member yang menggunakan sebuah Role untuk audit.
+6. Melihat kegagalan validasi secara jelas.
 
 Role merupakan master data sederhana.
 
@@ -151,7 +152,7 @@ Contoh nama valid:
 
 ### AC-9 — Menghapus role yang belum digunakan
 
-**Given** sebuah role belum digunakan oleh team member mana pun
+**Given** sebuah role belum digunakan oleh active Team Member atau Task mana pun
 **When** Engineering Lead mengonfirmasi penghapusan role
 **Then** sistem menghapus role tersebut
 **And** role tidak lagi muncul pada daftar
@@ -179,14 +180,16 @@ Contoh nama valid:
 
 ---
 
-### AC-12 — Role yang digunakan tidak dapat dihapus
+### AC-12 — Role yang digunakan active Team Member tidak dapat dihapus
 
-**Given** sebuah role sedang digunakan oleh minimal satu team member
+**Given** sebuah role sedang digunakan oleh minimal satu active Team Member
 **When** Engineering Lead mencoba menghapus role tersebut
 **Then** sistem menolak penghapusan
 **And** sistem mengembalikan conflict response
-**And** sistem menampilkan pesan `Role is assigned to one or more team members and cannot be deleted`
+**And** sistem menampilkan pesan `Role is assigned to one or more active team members and cannot be deleted`
 **And** role dan seluruh referensinya tetap tersedia.
+
+Soft-deleted Team Member tidak termasuk active usage dan tidak boleh memblokir penghapusan Role. Jika Role dihapus ketika hanya historical soft-deleted Team Member yang masih mereferensikannya, historical Team Member tetap disimpan tetapi operational `role_id` pada record historical tersebut dilepas agar Role dapat dihapus tanpa menghapus histori Member. Restore Team Member tetap di luar scope dan wajib memilih Role yang valid kembali.
 
 ---
 
@@ -220,6 +223,35 @@ Contoh nama valid:
 **Then** pencarian dijalankan oleh backend tanpa membedakan huruf besar-kecil
 **And** pagination kembali ke halaman pertama
 **And** response hanya memuat halaman hasil yang diminta.
+
+---
+
+### AC-16 — Audit active Team Member per Role
+
+**Given** Engineering Lead melihat daftar Role
+**When** Engineering Lead memilih aksi `View members` pada sebuah Role
+**Then** sistem menampilkan dialog audit active Team Member yang menggunakan Role tersebut
+**And** setiap item minimal menampilkan nama Team Member
+**And** daftar diurutkan berdasarkan nama secara ascending tanpa membedakan huruf besar-kecil dengan ID sebagai deterministic tie-break
+**And** daftar dapat dicari berdasarkan prefix nama secara case-insensitive
+**And** daftar menggunakan backend pagination
+**And** soft-deleted Team Member tidak ditampilkan
+**And** empty state menjelaskan bahwa tidak ada active Team Member yang menggunakan Role tersebut
+**And** dialog menjelaskan bahwa audit ini hanya mencakup Team Member dan Task reference diperiksa terpisah saat delete
+**And** Role yang tidak ditemukan menghasilkan not-found response.
+
+---
+
+### AC-17 — Role yang digunakan Task tidak dapat dihapus
+
+**Given** tidak ada active Team Member yang menggunakan sebuah Role
+**And** minimal satu Task/WBS masih mereferensikan Role tersebut
+**When** Engineering Lead mencoba menghapus Role
+**Then** sistem menolak penghapusan
+**And** sistem mengembalikan `409 Conflict` dengan code `ROLE_IN_USE_BY_TASK`
+**And** sistem menampilkan pesan `Role is assigned to one or more tasks and cannot be deleted`
+**And** sistem tidak menampilkan pesan yang menyatakan Member sebagai penyebab konflik
+**And** Role serta referensi Task tetap tersedia.
 
 ---
 
@@ -258,6 +290,35 @@ Status:
 ```
 
 ---
+
+### List Active Members Using Role
+
+```http
+GET /api/roles/{roleId}/members?search=har&page=1&pageSize=10
+```
+
+#### Success Response
+
+```json
+{
+  "data": [
+    {
+      "id": "member-id",
+      "name": "Harry"
+    }
+  ],
+  "page": 1,
+  "pageSize": 10,
+  "total": 1
+}
+```
+
+Status kegagalan:
+
+| Condition | Status |
+| --- | ---: |
+| Role tidak ditemukan | 404 Not Found |
+| Pagination tidak valid | 400 Bad Request |
 
 ### Create Role
 
@@ -333,7 +394,8 @@ Status kegagalan:
 | Condition                         |        Status |
 | --------------------------------- | ------------: |
 | Role tidak ditemukan              | 404 Not Found |
-| Role sedang digunakan team member |  409 Conflict |
+| Role sedang digunakan active Team Member |  409 Conflict |
+| Role sedang digunakan Task | 409 Conflict |
 
 ---
 
@@ -356,6 +418,7 @@ Contoh error code:
 - `ROLE_NAME_ALREADY_EXISTS`
 - `ROLE_NOT_FOUND`
 - `ROLE_IN_USE`
+- `ROLE_IN_USE_BY_TASK`
 
 ---
 
@@ -638,7 +701,7 @@ Role berikut tersedia:
 
 **Precondition**
 
-Role `Android` tersedia dan belum digunakan team member.
+Role `Android` tersedia dan tidak digunakan active Team Member atau Task.
 
 **Steps**
 
@@ -672,12 +735,12 @@ Role `Android` tersedia.
 
 ---
 
-## TC-18 — Menghapus role yang digunakan team member
+## TC-18 — Menghapus role yang digunakan active Team Member
 
 **Precondition**
 
 1. Role `Backend` tersedia.
-2. Minimal satu team member menggunakan role `Backend`.
+2. Minimal satu active Team Member menggunakan role `Backend`.
 
 **Steps**
 
@@ -689,7 +752,7 @@ Role `Android` tersedia.
 1. API mengembalikan `409`.
 2. Error code adalah `ROLE_IN_USE`.
 3. Role tidak terhapus.
-4. Referensi team member tetap valid.
+4. Referensi active Team Member tetap valid.
 
 ---
 
@@ -761,6 +824,67 @@ Role `Android` tersedia.
 
 ---
 
+## TC-23 — Soft-deleted Member tidak memblokir delete Role
+
+**Precondition**
+
+1. Role `Backend` tersedia.
+2. Tidak ada active Team Member atau Task yang menggunakan Role tersebut.
+3. Historical soft-deleted Team Member pernah menggunakan Role `Backend`.
+
+**Steps**
+
+1. Hapus Role `Backend`.
+2. Konfirmasi penghapusan.
+
+**Expected Result**
+
+1. API mengembalikan `204`.
+2. Role dihapus.
+3. Historical Team Member tetap tersimpan sebagai soft-deleted record.
+4. Historical `role_id` dilepas.
+
+---
+
+## TC-24 — Audit active Member yang menggunakan Role
+
+**Precondition**
+
+1. Ayu dan Bima aktif menggunakan Role `Backend`.
+2. Dewi yang sebelumnya menggunakan Role `Backend` sudah soft-deleted.
+
+**Steps**
+
+1. Pada Role `Backend`, pilih `View members`.
+
+**Expected Result**
+
+1. Dialog menampilkan Ayu dan Bima.
+2. Dewi tidak ditampilkan.
+3. List mendukung search dan pagination.
+
+---
+
+## TC-25 — Task reference menghasilkan conflict yang akurat
+
+**Precondition**
+
+1. Tidak ada active Team Member menggunakan Role `Backend`.
+2. Minimal satu Task masih menggunakan Role `Backend`.
+
+**Steps**
+
+1. Hapus Role `Backend`.
+
+**Expected Result**
+
+1. API mengembalikan `409`.
+2. Error code `ROLE_IN_USE_BY_TASK`.
+3. Pesan menyatakan Role digunakan Task, bukan Member.
+4. Role dan Task tidak berubah.
+
+---
+
 # Required Automated Tests
 
 Codex wajib membuat automated test pada minimal tiga lapisan berikut.
@@ -783,7 +907,10 @@ Menguji:
 - Update role.
 - Delete unused role.
 - Reject duplicate role.
-- Reject deleting role in use.
+- Reject deleting role used by an active Member.
+- Allow delete when only soft-deleted Member history references the Role.
+- Reject deleting Role used by a Task with a Task-specific conflict.
+- List active Member usage for Role audit.
 - Not-found handling.
 - Concurrent duplicate protection.
 
@@ -796,7 +923,8 @@ Menguji:
 - Error response format.
 - Database persistence.
 - Unique constraint case-insensitive.
-- Referential integrity terhadap team member.
+- Referential integrity terhadap active Team Member dan Task.
+- Active Role-member audit search/pagination dan exclusion terhadap soft-deleted Member.
 - Backend search dan pagination, termasuk metadata serta default page size.
 
 ## Frontend Test
@@ -813,7 +941,8 @@ Menguji:
 - Edit role.
 - Delete confirmation.
 - Cancel deletion.
-- Error saat role sedang digunakan.
+- Error saat role sedang digunakan active Member atau Task dengan penyebab yang akurat.
+- Dialog audit active Member per Role, termasuk loading, empty, search, pagination, error, dan close.
 - Refresh daftar setelah mutation berhasil.
 - Rename role memperbarui nama role pada daftar dan form Edit Member tanpa hard refresh.
 

@@ -39,8 +39,8 @@ export function DeleteRoleDialog({
         Delete {role.name}?
       </h2>
       <p className="mt-3 leading-7 text-muted">
-        This role will be permanently removed. Roles assigned to members cannot
-        be deleted.
+        This role will be permanently removed. Active team members or tasks
+        using this role prevent deletion.
       </p>
       {error ? (
         <p className="mt-4 text-sm font-semibold text-danger" role="alert">

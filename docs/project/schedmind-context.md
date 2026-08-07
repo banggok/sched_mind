@@ -124,8 +124,11 @@ Exact behaviour belongs to US-8.1.
 
 A Role is uniquely named master data used to classify Members and future tasks.
 Uniqueness is case-insensitive after normalization. Renaming preserves identity
-and must propagate to Member projections without requiring a hard refresh. A
-referenced Role cannot be deleted. See US-1.1 for exact validation and API rules.
+and must propagate to Member projections without requiring a hard refresh. An
+active Member or Task reference prevents Role deletion. Soft-deleted Member
+history does not block deletion; its operational Role reference is detached when
+the Role is deleted. The Roles page exposes a bounded active-Member usage audit.
+See US-1.1 for exact validation and API rules.
 
 ### Member
 

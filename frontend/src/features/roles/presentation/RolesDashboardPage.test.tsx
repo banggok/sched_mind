@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { AppShell } from "../../../app/AppShell";
-import type { RolesGateway } from "../application/rolesGateway";
+import type { RoleAuditGateway } from "../application/rolesGateway";
 import type { Role } from "../domain/role";
 import { RolesDashboardPage } from "./RolesDashboardPage";
 
@@ -165,12 +165,174 @@ describe("RolesDashboardPage", () => {
 
     expect(
       await screen.findByText(
-        "Role is assigned to one or more members and cannot be deleted",
+        "Role is assigned to one or more active team members and cannot be deleted",
       ),
     ).toBeTruthy();
     expect(screen.getByRole("alertdialog")).toBeTruthy();
     expect(screen.queryByText("database detail")).toBeNull();
     expect(fixture.roles).toHaveLength(1);
+  });
+
+  it("reports Task usage separately from Member usage when deletion is blocked", async () => {
+    const user = userEvent.setup();
+    const fixture = gatewayFixture([role("backend", "Backend")]);
+    fixture.gateway.delete = vi.fn().mockRejectedValue({
+      code: "ROLE_IN_USE_BY_TASK",
+      message: "database detail",
+    });
+    render(<RolesDashboardPage gateway={fixture.gateway} />);
+
+    await user.click(
+      await screen.findByRole("button", { name: "Delete Backend" }),
+    );
+    await user.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", {
+        name: "Delete role",
+      }),
+    );
+
+    expect(
+      await screen.findByText(
+        "Role is assigned to one or more tasks and cannot be deleted",
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByText("database detail")).toBeNull();
+  });
+
+  it("lists active members using a role for audit", async () => {
+    const user = userEvent.setup();
+    const fixture = gatewayFixture([role("backend", "Backend")]);
+    const auditMembers = [
+      { id: "member-1", name: "Ayu" },
+      { id: "member-2", name: "Bima" },
+    ];
+    fixture.gateway.listMembers = vi
+      .fn()
+      .mockImplementation(async (_roleId, query) => {
+        const matching = auditMembers.filter((member) =>
+          member.name.toLowerCase().startsWith(query.search.toLowerCase()),
+        );
+        return {
+          items: matching,
+          page: query.page,
+          pageSize: query.pageSize,
+          total: matching.length,
+        };
+      });
+    render(<RolesDashboardPage gateway={fixture.gateway} />);
+
+    await user.click(
+      await screen.findByRole("button", { name: "View members using Backend" }),
+    );
+
+    const dialog = screen.getByRole("dialog", {
+      name: "Members using Backend",
+    });
+    expect(within(dialog).getByText("Ayu")).toBeTruthy();
+    expect(within(dialog).getByText("Bima")).toBeTruthy();
+    expect(within(dialog).getByText("1–2 of 2")).toBeTruthy();
+    expect(fixture.gateway.listMembers).toHaveBeenCalledWith(
+      "backend",
+      { search: "", page: 1, pageSize: 10 },
+      expect.any(AbortSignal),
+    );
+
+    await user.type(within(dialog).getByLabelText("Search members"), "bi");
+    expect(await within(dialog).findByText("Bima")).toBeTruthy();
+    expect(within(dialog).queryByText("Ayu")).toBeNull();
+    expect(fixture.gateway.listMembers).toHaveBeenLastCalledWith(
+      "backend",
+      { search: "bi", page: 1, pageSize: 10 },
+      expect.any(AbortSignal),
+    );
+
+    await user.click(within(dialog).getByRole("button", { name: "Close" }));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "Members using Backend" }),
+      ).toBeNull(),
+    );
+  });
+
+  it("shows an audit empty state when no active member uses the role", async () => {
+    const user = userEvent.setup();
+    const fixture = gatewayFixture([role("qa", "QA")]);
+    render(<RolesDashboardPage gateway={fixture.gateway} />);
+
+    await user.click(
+      await screen.findByRole("button", { name: "View members using QA" }),
+    );
+
+    expect(
+      await screen.findByText("No active members use this role"),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(
+        "No active team member uses this role. Tasks may still reference it.",
+      ),
+    ).toBeTruthy();
+  });
+
+  it("keeps audit failures local and retries without exposing backend details", async () => {
+    const user = userEvent.setup();
+    const fixture = gatewayFixture([role("backend", "Backend")]);
+    fixture.gateway.listMembers = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("postgres connection refused"))
+      .mockResolvedValueOnce({
+        items: [{ id: "member-1", name: "Ayu" }],
+        page: 1,
+        pageSize: 10,
+        total: 1,
+      });
+    render(<RolesDashboardPage gateway={fixture.gateway} />);
+
+    await user.click(
+      await screen.findByRole("button", { name: "View members using Backend" }),
+    );
+
+    const dialog = screen.getByRole("dialog", {
+      name: "Members using Backend",
+    });
+    expect(
+      await within(dialog).findByText(
+        "Unable to load members for this role. Try again.",
+      ),
+    ).toBeTruthy();
+    expect(
+      within(dialog).queryByText("postgres connection refused"),
+    ).toBeNull();
+
+    await user.click(within(dialog).getByRole("button", { name: "Try again" }));
+    expect(await within(dialog).findByText("Ayu")).toBeTruthy();
+    expect(fixture.gateway.listMembers).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows a stale-role audit error instead of an empty member list", async () => {
+    const user = userEvent.setup();
+    const fixture = gatewayFixture([role("backend", "Backend")]);
+    fixture.gateway.listMembers = vi.fn().mockRejectedValue({
+      code: "ROLE_NOT_FOUND",
+      message: "database detail",
+    });
+    render(<RolesDashboardPage gateway={fixture.gateway} />);
+
+    await user.click(
+      await screen.findByRole("button", { name: "View members using Backend" }),
+    );
+
+    const dialog = screen.getByRole("dialog", {
+      name: "Members using Backend",
+    });
+    expect(
+      await within(dialog).findByText(
+        "This role no longer exists. Close this dialog and refresh the list.",
+      ),
+    ).toBeTruthy();
+    expect(
+      within(dialog).queryByText("No active members use this role"),
+    ).toBeNull();
+    expect(within(dialog).queryByText("database detail")).toBeNull();
   });
 
   it("maps a technical load failure and retries near the affected content", async () => {
@@ -257,7 +419,7 @@ describe("RolesDashboardPage", () => {
 
 function gatewayFixture(initialRoles: Role[]) {
   const roles = [...initialRoles];
-  const gateway: RolesGateway = {
+  const gateway: RoleAuditGateway = {
     list: vi.fn().mockImplementation(async (query) => {
       const matching = roles.filter((item) =>
         item.name.toLowerCase().startsWith(query.search.toLowerCase()),
@@ -269,6 +431,12 @@ function gatewayFixture(initialRoles: Role[]) {
         total: matching.length,
       };
     }),
+    listMembers: vi.fn().mockImplementation(async (_roleId, query) => ({
+      items: [],
+      page: query.page,
+      pageSize: query.pageSize,
+      total: 0,
+    })),
     create: vi.fn().mockImplementation(async (name: string) => {
       const created = role(`role-${roles.length + 1}`, name);
       roles.push(created);

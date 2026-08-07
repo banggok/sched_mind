@@ -230,7 +230,7 @@ Sprint membership saja tidak boleh memblokir penghapusan Member. Sprint Task
 yang tetap tersimpan tidak dihapus; pada pembacaan Sprint berikutnya Task tersebut
 mengikuti warning `Needs Review` milik US-8.1. Assignment dan persisted timeline
 untuk Project yang sudah `Closed` tetap dipertahankan. Nama Team Member yang
-soft-deleted boleh digunakan kembali. Restore belum termasuk scope.
+soft-deleted boleh digunakan kembali. Restore belum termasuk scope. Soft-deleted Member tidak memblokir penghapusan Role pada US-1.1; jika Role tersebut kemudian dihapus, record historical Member tetap dipertahankan tetapi `role_id` historical dapat dilepas. Active Member selalu wajib memiliki Role yang valid.
 
 Sampai Project Management menyediakan WBS root dan status lifecycle,
 `executable_leaves` merupakan provisional active-assignment projection.

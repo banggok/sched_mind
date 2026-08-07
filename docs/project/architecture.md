@@ -83,6 +83,17 @@ Member/Date and selects minimum Capacity. The filter is applied before count,
 limit, and offset. Create/update/delete compares before/after per-Date minimum;
 only an effective-capacity change enters US-6.2 impact simulation.
 
+Role deletion is a single repository transaction. It locks the Role row, rejects
+active `team_members.role_id` references, rejects any `wbs_nodes.role_id` Task
+reference with a distinct business error, detaches only soft-deleted Member Role
+references, and then physically deletes the Role. `team_members.role_id` is
+nullable only for soft-deleted history; a database check keeps it mandatory for
+active Members. `wbs_nodes_role_id_idx` supports the Task-reference guard. The
+Role-member audit endpoint reads only active Members, filters by Role and optional
+case-insensitive name prefix, orders by `LOWER(name), id`, and paginates. The
+existing `team_members_role_id_idx` bounds that lookup by team-sized Role
+cardinality, so no additional Member audit index is required.
+
 Member deletion soft-deletes the Member and all owned Capacity Overrides in one
 transaction. Direct Capacity Override deletion remains a hard delete. Default
 GORM scopes exclude deleted records; historical readers must opt in explicitly.
@@ -322,7 +333,10 @@ page identifiers, labels, hashes, ordering, and breadcrumb/sidebar metadata.
 
 The Role, Member, and Capacity Override features separate domain/application
 models from HTTP DTOs. Capacity Overrides are presented inside the Member
-workflow rather than as standalone navigation.
+workflow rather than as standalone navigation. The Roles page uses the narrower
+`RoleAuditGateway` capability to open a searchable, paginated active-Member usage
+dialog without widening Role contracts consumed by WBS, Sprint, or Member
+selectors.
 
 The WBS domain remains the only work-item model. Its frontend presents an
 Executable WBS as **Task** and a Grouping WBS as **Group**; these labels are

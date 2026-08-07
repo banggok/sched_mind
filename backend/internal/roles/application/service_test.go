@@ -13,17 +13,19 @@ import (
 )
 
 type memoryRepository struct {
-	mu      sync.Mutex
-	roles   map[string]domain.Role
-	inUse   map[string]bool
-	findNil bool
-	barrier chan struct{}
+	mu          sync.Mutex
+	roles       map[string]domain.Role
+	inUse       map[string]bool
+	memberUsage map[string][]MemberUsage
+	findNil     bool
+	barrier     chan struct{}
 }
 
 func newMemoryRepository() *memoryRepository {
 	return &memoryRepository{
-		roles: make(map[string]domain.Role),
-		inUse: make(map[string]bool),
+		roles:       make(map[string]domain.Role),
+		inUse:       make(map[string]bool),
+		memberUsage: make(map[string][]MemberUsage),
 	}
 }
 
@@ -49,6 +51,19 @@ func (repository *memoryRepository) List(_ context.Context, query listing.Query)
 	}
 	return listing.Page[domain.Role]{
 		Items: roles[start:end], Page: query.Page, PageSize: query.PageSize, Total: int64(len(roles)),
+	}, nil
+}
+
+func (repository *memoryRepository) ListMembers(
+	_ context.Context,
+	roleID string,
+	query listing.Query,
+) (listing.Page[MemberUsage], error) {
+	repository.mu.Lock()
+	defer repository.mu.Unlock()
+	items := append([]MemberUsage(nil), repository.memberUsage[roleID]...)
+	return listing.Page[MemberUsage]{
+		Items: items, Page: query.Page, PageSize: query.PageSize, Total: int64(len(items)),
 	}, nil
 }
 
@@ -112,17 +127,14 @@ func (repository *memoryRepository) Update(_ context.Context, role domain.Role) 
 	return nil
 }
 
-func (repository *memoryRepository) IsInUse(_ context.Context, id string) (bool, error) {
-	repository.mu.Lock()
-	defer repository.mu.Unlock()
-	return repository.inUse[id], nil
-}
-
 func (repository *memoryRepository) Delete(_ context.Context, id string) error {
 	repository.mu.Lock()
 	defer repository.mu.Unlock()
 	if _, found := repository.roles[id]; !found {
 		return domain.ErrNotFound
+	}
+	if repository.inUse[id] {
+		return domain.ErrInUse
 	}
 	delete(repository.roles, id)
 	return nil
@@ -188,9 +200,6 @@ func TestServiceRejectsNilRepositoryResult(t *testing.T) {
 		t.Fatalf("Update() result = %#v, want nil", updated)
 	}
 
-	if err := service.Delete(context.Background(), "role-id"); err == nil {
-		t.Fatal("Delete() error = nil, want repository contract error")
-	}
 }
 
 func TestServiceRejectsDuplicateAndRoleInUse(t *testing.T) {
@@ -267,5 +276,45 @@ func TestConcurrentDuplicateCreation(t *testing.T) {
 
 	if succeeded != 1 || conflicted != 1 {
 		t.Fatalf("successes = %d, conflicts = %d; want 1 and 1", succeeded, conflicted)
+	}
+}
+
+func TestServiceListsMembersForExistingRole_US11_AC16(t *testing.T) {
+	t.Parallel()
+
+	repository := newMemoryRepository()
+	repository.roles["role-id"] = domain.RehydrateRole(
+		"role-id",
+		"Backend",
+		time.Now(),
+		time.Now(),
+	)
+	repository.memberUsage["role-id"] = []MemberUsage{{ID: "member-1", Name: "Ayu"}}
+	service := NewService(repository)
+
+	result, err := service.ListMembers(
+		context.Background(),
+		"role-id",
+		listing.Query{Page: 1, PageSize: 10},
+	)
+	if err != nil {
+		t.Fatalf("ListMembers() error = %v", err)
+	}
+	if result.Total != 1 || len(result.Items) != 1 || result.Items[0].Name != "Ayu" {
+		t.Fatalf("ListMembers() result = %#v, want Ayu", result)
+	}
+}
+
+func TestServiceListMembersRequiresExistingRole(t *testing.T) {
+	t.Parallel()
+
+	repository := newMemoryRepository()
+	service := NewService(repository)
+	result, err := service.ListMembers(context.Background(), "missing", listing.Query{Page: 1, PageSize: 10})
+	if !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("ListMembers() error = %v, want ErrNotFound", err)
+	}
+	if result.Total != 0 || len(result.Items) != 0 {
+		t.Fatalf("ListMembers() result = %#v, want empty result on error", result)
 	}
 }

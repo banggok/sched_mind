@@ -4,7 +4,7 @@ import "gorm.io/gorm"
 
 func MigrateTestSchema(database *gorm.DB) error {
 	return database.Transaction(func(transaction *gorm.DB) error {
-		if err := transaction.AutoMigrate(&roleModel{}, &teamMemberModel{}); err != nil {
+		if err := transaction.AutoMigrate(&roleModel{}, &teamMemberModel{}, &wbsNodeModel{}); err != nil {
 			return err
 		}
 		if err := transaction.Exec(
@@ -17,5 +17,5 @@ func MigrateTestSchema(database *gorm.DB) error {
 }
 
 func AssignRoleForTest(database *gorm.DB, teamMemberID, roleID string) error {
-	return database.Create(&teamMemberModel{ID: teamMemberID, RoleID: roleID}).Error
+	return database.Create(&teamMemberModel{ID: teamMemberID, Name: teamMemberID, RoleID: roleID}).Error
 }

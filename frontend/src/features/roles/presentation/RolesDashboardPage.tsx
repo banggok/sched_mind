@@ -10,15 +10,17 @@ import { Button } from "../../../shared/presentation/Button";
 import { EmptyState } from "../../../shared/presentation/EmptyState";
 import { ListSurface } from "../../../shared/presentation/ListSurface";
 import { Toast } from "../../../shared/presentation/Toast";
-import type { RolesGateway } from "../application/rolesGateway";
+import type { RoleAuditGateway } from "../application/rolesGateway";
 import type { Role } from "../domain/role";
 import { DeleteRoleDialog } from "./DeleteRoleDialog";
 import { RoleFormDialog } from "./RoleFormDialog";
+import { RoleMembersDialog } from "./RoleMembersDialog";
 import { useRoleManagement } from "./useRoleManagement";
 
-export function RolesDashboardPage({ gateway }: { gateway: RolesGateway }) {
+export function RolesDashboardPage({ gateway }: { gateway: RoleAuditGateway }) {
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
+  const [auditingRole, setAuditingRole] = useState<Role>();
   const debouncedSearch = useDebouncedValue(search.trim());
   const searchPending = search.trim() !== debouncedSearch;
   const query = useMemo(
@@ -103,6 +105,7 @@ export function RolesDashboardPage({ gateway }: { gateway: RolesGateway }) {
                   <RoleRow
                     key={role.id}
                     role={role}
+                    onViewMembers={() => setAuditingRole(role)}
                     onEdit={() => management.openEdit(role)}
                     onDelete={() => management.openDelete(role)}
                   />
@@ -123,6 +126,14 @@ export function RolesDashboardPage({ gateway }: { gateway: RolesGateway }) {
           </ListSurface>
         </section>
       </PageContent>
+
+      {auditingRole ? (
+        <RoleMembersDialog
+          role={auditingRole}
+          gateway={gateway}
+          onClose={() => setAuditingRole(undefined)}
+        />
+      ) : null}
 
       {management.form ? (
         <RoleFormDialog
@@ -157,10 +168,12 @@ export function RolesDashboardPage({ gateway }: { gateway: RolesGateway }) {
 
 function RoleRow({
   role,
+  onViewMembers,
   onEdit,
   onDelete,
 }: {
   role: Role;
+  onViewMembers(): void;
   onEdit(): void;
   onDelete(): void;
 }) {
@@ -177,7 +190,15 @@ function RoleRow({
           </p>
         </div>
       </div>
-      <div className="flex gap-2 self-end sm:self-auto">
+      <div className="flex flex-wrap gap-2 self-end sm:self-auto">
+        <Button
+          compact
+          variant="quiet"
+          aria-label={`View members using ${role.name}`}
+          onClick={onViewMembers}
+        >
+          View members
+        </Button>
         <Button compact aria-label={`Edit ${role.name}`} onClick={onEdit}>
           Edit
         </Button>

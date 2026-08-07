@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	roleapplication "github.com/banggok/sched_mind/backend/internal/roles/application"
 	"github.com/banggok/sched_mind/backend/internal/roles/domain"
 	"github.com/banggok/sched_mind/backend/internal/shared/httpjson"
 	"github.com/banggok/sched_mind/backend/internal/shared/listing"
@@ -14,6 +15,7 @@ import (
 
 type Service interface {
 	List(context.Context, listing.Query) (listing.Page[domain.Role], error)
+	ListMembers(context.Context, string, listing.Query) (listing.Page[roleapplication.MemberUsage], error)
 	Create(context.Context, string) (*domain.Role, error)
 	Update(context.Context, string, string) (*domain.Role, error)
 	Delete(context.Context, string) error
@@ -28,6 +30,18 @@ type roleResponse struct {
 	Name      string    `json:"name"`
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+type memberUsageResponse struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+type memberUsageListResponse struct {
+	Data     []memberUsageResponse `json:"data"`
+	Page     int                   `json:"page"`
+	PageSize int                   `json:"pageSize"`
+	Total    int64                 `json:"total"`
 }
 
 type listResponse struct {
@@ -53,6 +67,7 @@ func New(service Service) *Handler {
 
 func (handler *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/roles", handler.list)
+	mux.HandleFunc("GET /api/roles/{roleId}/members", handler.listMembers)
 	mux.HandleFunc("POST /api/roles", handler.create)
 	mux.HandleFunc("PUT /api/roles/{roleId}", handler.update)
 	mux.HandleFunc("DELETE /api/roles/{roleId}", handler.delete)
@@ -75,6 +90,26 @@ func (handler *Handler) list(response http.ResponseWriter, request *http.Request
 		data = append(data, mapRole(role))
 	}
 	httpjson.Write(response, http.StatusOK, listResponse{Data: data, Page: result.Page, PageSize: result.PageSize, Total: result.Total})
+}
+
+func (handler *Handler) listMembers(response http.ResponseWriter, request *http.Request) {
+	query, err := listing.ParseHTTPQuery(request)
+	if err != nil {
+		httpjson.Write(response, http.StatusBadRequest, errorResponse{Code: "INVALID_REQUEST", Message: err.Error()})
+		return
+	}
+	result, err := handler.service.ListMembers(request.Context(), request.PathValue("roleId"), query)
+	if err != nil {
+		writeError(response, err)
+		return
+	}
+	data := make([]memberUsageResponse, 0, len(result.Items))
+	for _, member := range result.Items {
+		data = append(data, memberUsageResponse{ID: member.ID, Name: member.Name})
+	}
+	httpjson.Write(response, http.StatusOK, memberUsageListResponse{
+		Data: data, Page: result.Page, PageSize: result.PageSize, Total: result.Total,
+	})
 }
 
 func (handler *Handler) create(response http.ResponseWriter, request *http.Request) {
@@ -176,6 +211,10 @@ func writeError(response http.ResponseWriter, err error) {
 	case errors.Is(err, domain.ErrInUse):
 		httpjson.Write(response, http.StatusConflict, errorResponse{
 			Code: "ROLE_IN_USE", Message: domain.ErrInUse.Error(),
+		})
+	case errors.Is(err, domain.ErrInUseByTask):
+		httpjson.Write(response, http.StatusConflict, errorResponse{
+			Code: "ROLE_IN_USE_BY_TASK", Message: domain.ErrInUseByTask.Error(),
 		})
 	default:
 		httpjson.Write(response, http.StatusInternalServerError, errorResponse{
