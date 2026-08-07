@@ -124,6 +124,7 @@ describe("SprintFormDialog", () => {
           id: "task-1",
           projectId: "project-1",
           projectName: "Alpha",
+          parentName: "Alpha",
           projectStatus: "open",
           projectPriority: 1,
           name: "API",

@@ -45,13 +45,16 @@ type acceptanceProject struct {
 func (acceptanceProject) TableName() string { return "projects" }
 
 type acceptanceTask struct {
-	ID                                                   string `gorm:"primaryKey"`
-	ProjectID, ParentKey, Name                           string
-	ParentID                                             *string
-	Position                                             int
-	AssigneeID                                           *string
-	ExecutionStart, ExecutionEnd, ActualStart, ActualEnd *time.Time
-	UpdatedAt                                            time.Time
+	ID                             string `gorm:"primaryKey"`
+	ProjectID, ParentKey, Name     string
+	ParentID                       *string
+	Position                       int
+	AssigneeID                     *string
+	EffortMinutes                  *int
+	ExecutionStart, ExecutionEnd   *time.Time
+	CommitmentStart, CommitmentEnd *time.Time
+	ActualStart, ActualEnd         *time.Time
+	UpdatedAt                      time.Time
 }
 
 func (acceptanceTask) TableName() string { return "wbs_nodes" }
@@ -126,7 +129,9 @@ func acceptanceServer(t *testing.T) (*gorm.DB, *http.ServeMux) {
 		t.Fatal(err)
 	}
 	memberID := "member-1"
-	if err := database.Create(&acceptanceTask{ID: "task-1", ProjectID: "project-1", Name: "API task", Position: 1, AssigneeID: &memberID, ExecutionStart: &day, ExecutionEnd: &day, UpdatedAt: day}).Error; err != nil {
+	effortMinutes := 450
+	commitmentEnd := day.AddDate(0, 0, 1)
+	if err := database.Create(&acceptanceTask{ID: "task-1", ProjectID: "project-1", Name: "API task", Position: 1, AssigneeID: &memberID, EffortMinutes: &effortMinutes, ExecutionStart: &day, ExecutionEnd: &day, CommitmentStart: &day, CommitmentEnd: &commitmentEnd, UpdatedAt: day}).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := database.Create(&acceptanceAllocation{TaskID: "task-1", AssigneeID: memberID, Timeline: "execution", AllocationDate: day, AllocatedMinutes: "120"}).Error; err != nil {
@@ -170,6 +175,7 @@ func TestHTTPMemberDeleteRetainsSprintTaskAsNeedsReview_AC57(t *testing.T) {
 	if detail.Code != http.StatusOK ||
 		!bytes.Contains(detail.Body.Bytes(), []byte(`"members":[]`)) ||
 		!bytes.Contains(detail.Body.Bytes(), []byte(`"id":"task-1"`)) ||
+		!bytes.Contains(detail.Body.Bytes(), []byte(`"parentName":"Alpha"`)) ||
 		!bytes.Contains(detail.Body.Bytes(), []byte(`"Assignee is not included in this Sprint."`)) ||
 		!bytes.Contains(detail.Body.Bytes(), []byte(`"Project is Closed."`)) ||
 		!bytes.Contains(detail.Body.Bytes(), []byte(`"selectedMemberAllocationMinutes":0`)) ||
@@ -206,7 +212,7 @@ func decodeDataID(t *testing.T, response *httptest.ResponseRecorder) string {
 	return payload.Data.ID
 }
 
-func TestHTTPCreateDetailStartAndDeletePreservesOwningEntities_AC45To47And66To72(t *testing.T) {
+func TestHTTPCreateDetailStartAndDeletePreservesOwningEntities_SPD17_AC45To47And66To72(t *testing.T) {
 	database, handler := acceptanceServer(t)
 	create := performJSON(t, handler, http.MethodPost, "/api/sprints", `{"name":" Sprint Alpha ","startDate":"2026-08-04","endDate":"2026-08-04","memberIds":["member-1"],"taskIds":["task-1"]}`)
 	if create.Code != http.StatusCreated {
@@ -221,6 +227,12 @@ func TestHTTPCreateDetailStartAndDeletePreservesOwningEntities_AC45To47And66To72
 	if detail.Code != http.StatusOK ||
 		!bytes.Contains(detail.Body.Bytes(), []byte(`"capacityMinutes":390`)) ||
 		!bytes.Contains(detail.Body.Bytes(), []byte(`"inSprintAllocationMinutes":120`)) ||
+		!bytes.Contains(detail.Body.Bytes(), []byte(`"parentName":"Alpha"`)) ||
+		!bytes.Contains(detail.Body.Bytes(), []byte(`"effortMinutes":450`)) ||
+		!bytes.Contains(detail.Body.Bytes(), []byte(`"executionStart":"2026-08-04"`)) ||
+		!bytes.Contains(detail.Body.Bytes(), []byte(`"executionEnd":"2026-08-04"`)) ||
+		!bytes.Contains(detail.Body.Bytes(), []byte(`"commitmentStart":"2026-08-04"`)) ||
+		!bytes.Contains(detail.Body.Bytes(), []byte(`"commitmentEnd":"2026-08-05"`)) ||
 		!bytes.Contains(detail.Body.Bytes(), []byte(`"remainingMinutes":270`)) ||
 		!bytes.Contains(detail.Body.Bytes(), []byte(`"wbsPath":"1"`)) ||
 		!bytes.Contains(detail.Body.Bytes(), []byte(`"dailyPlanOrderDate":"2026-08-04"`)) ||
@@ -291,12 +303,18 @@ func TestHTTPRejectsInvalidDatesOverlapAndUnscheduledTaskWithoutPartialWrite_AC8
 	}
 }
 
-func TestHTTPSuggestionAndCandidatePickerExposeCanonicalAllocationWithoutWriting_AC22To44(t *testing.T) {
+func TestHTTPSuggestionAndCandidatePickerExposeCanonicalAllocationWithoutWriting_SPD17_AC22To44(t *testing.T) {
 	database, handler := acceptanceServer(t)
 	suggestion := performJSON(t, handler, http.MethodPost, "/api/sprints/suggestion", `{"startDate":"2026-08-04","endDate":"2026-08-04","memberIds":["member-1"]}`)
 	if suggestion.Code != http.StatusOK ||
 		!bytes.Contains(suggestion.Body.Bytes(), []byte(`"reason":"mandatory"`)) ||
 		!bytes.Contains(suggestion.Body.Bytes(), []byte(`"totalAllocationMinutes":120`)) ||
+		!bytes.Contains(suggestion.Body.Bytes(), []byte(`"parentName":"Alpha"`)) ||
+		!bytes.Contains(suggestion.Body.Bytes(), []byte(`"effortMinutes":450`)) ||
+		!bytes.Contains(suggestion.Body.Bytes(), []byte(`"executionStart":"2026-08-04"`)) ||
+		!bytes.Contains(suggestion.Body.Bytes(), []byte(`"executionEnd":"2026-08-04"`)) ||
+		!bytes.Contains(suggestion.Body.Bytes(), []byte(`"commitmentStart":"2026-08-04"`)) ||
+		!bytes.Contains(suggestion.Body.Bytes(), []byte(`"commitmentEnd":"2026-08-05"`)) ||
 		!bytes.Contains(suggestion.Body.Bytes(), []byte(`"wbsPath":"1"`)) ||
 		!bytes.Contains(suggestion.Body.Bytes(), []byte(`"dailyPlanOrderDate":"2026-08-04"`)) ||
 		!bytes.Contains(suggestion.Body.Bytes(), []byte(`"dailySummaries":[{"date":"2026-08-04","capacityMinutes":390,"selectedAllocationMinutes":120,"remainingMinutes":270,"overcapacityMinutes":0}]`)) ||
@@ -314,6 +332,12 @@ func TestHTTPSuggestionAndCandidatePickerExposeCanonicalAllocationWithoutWriting
 	if draftCandidates.Code != http.StatusOK ||
 		!bytes.Contains(draftCandidates.Body.Bytes(), []byte(`"id":"task-1"`)) ||
 		!bytes.Contains(draftCandidates.Body.Bytes(), []byte(`"inSprintAllocationMinutes":120`)) ||
+		!bytes.Contains(draftCandidates.Body.Bytes(), []byte(`"parentName":"Alpha"`)) ||
+		!bytes.Contains(draftCandidates.Body.Bytes(), []byte(`"effortMinutes":450`)) ||
+		!bytes.Contains(draftCandidates.Body.Bytes(), []byte(`"executionStart":"2026-08-04"`)) ||
+		!bytes.Contains(draftCandidates.Body.Bytes(), []byte(`"executionEnd":"2026-08-04"`)) ||
+		!bytes.Contains(draftCandidates.Body.Bytes(), []byte(`"commitmentStart":"2026-08-04"`)) ||
+		!bytes.Contains(draftCandidates.Body.Bytes(), []byte(`"commitmentEnd":"2026-08-05"`)) ||
 		!bytes.Contains(draftCandidates.Body.Bytes(), []byte(`"wbsPath":"1"`)) ||
 		!bytes.Contains(draftCandidates.Body.Bytes(), []byte(`"dailyPlanOrderDate":"2026-08-04"`)) {
 		t.Fatalf("draft candidates status=%d body=%s", draftCandidates.Code, draftCandidates.Body.String())
@@ -334,6 +358,12 @@ func TestHTTPSuggestionAndCandidatePickerExposeCanonicalAllocationWithoutWriting
 	if candidates.Code != http.StatusOK ||
 		!bytes.Contains(candidates.Body.Bytes(), []byte(`"id":"task-1"`)) ||
 		!bytes.Contains(candidates.Body.Bytes(), []byte(`"inSprintAllocationMinutes":120`)) ||
+		!bytes.Contains(candidates.Body.Bytes(), []byte(`"parentName":"Alpha"`)) ||
+		!bytes.Contains(candidates.Body.Bytes(), []byte(`"effortMinutes":450`)) ||
+		!bytes.Contains(candidates.Body.Bytes(), []byte(`"executionStart":"2026-08-04"`)) ||
+		!bytes.Contains(candidates.Body.Bytes(), []byte(`"executionEnd":"2026-08-04"`)) ||
+		!bytes.Contains(candidates.Body.Bytes(), []byte(`"commitmentStart":"2026-08-04"`)) ||
+		!bytes.Contains(candidates.Body.Bytes(), []byte(`"commitmentEnd":"2026-08-05"`)) ||
 		!bytes.Contains(candidates.Body.Bytes(), []byte(`"wbsPath":"1"`)) {
 		t.Fatalf("candidates status=%d body=%s", candidates.Code, candidates.Body.String())
 	}

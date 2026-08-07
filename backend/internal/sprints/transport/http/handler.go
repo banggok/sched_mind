@@ -139,6 +139,7 @@ type taskItem struct {
 	ID                        string      `json:"id"`
 	ProjectID                 string      `json:"projectId"`
 	ProjectName               string      `json:"projectName"`
+	ParentName                string      `json:"parentName"`
 	ProjectStatus             string      `json:"projectStatus"`
 	ProjectPriority           int         `json:"projectPriority"`
 	Name                      string      `json:"name"`
@@ -147,8 +148,11 @@ type taskItem struct {
 	WBSRank                   int         `json:"wbsRank"`
 	AssigneeID                *string     `json:"assigneeId"`
 	AssigneeName              *string     `json:"assigneeName"`
+	EffortMinutes             *int        `json:"effortMinutes"`
 	ExecutionStart            *string     `json:"executionStart"`
 	ExecutionEnd              *string     `json:"executionEnd"`
+	CommitmentStart           *string     `json:"commitmentStart"`
+	CommitmentEnd             *string     `json:"commitmentEnd"`
 	DailyPlanOrderDate        *string     `json:"dailyPlanOrderDate"`
 	Completed                 bool        `json:"completed"`
 	Allocations               []dailyItem `json:"allocations"`
@@ -402,7 +406,7 @@ func mapTasks(values []application.TaskProjection) []taskItem {
 	return items
 }
 func mapTask(value application.TaskProjection) taskItem {
-	return taskItem{ID: value.ID, ProjectID: value.ProjectID, ProjectName: value.ProjectName, ProjectStatus: value.ProjectStatus, ProjectPriority: value.ProjectPriority, Name: value.Name, WBSOrder: value.WBSOrder, WBSPath: value.WBSPath, WBSRank: value.WBSRank, AssigneeID: value.AssigneeID, AssigneeName: value.AssigneeName, ExecutionStart: datePointer(value.ExecutionStart), ExecutionEnd: datePointer(value.ExecutionEnd), DailyPlanOrderDate: datePointer(value.DailyPlanOrderDate), Completed: value.Completed, Allocations: mapDaily(value.Allocations), InSprintAllocationMinutes: value.InSprintAllocationMinutes, OutsideAllocationMinutes: value.OutsideAllocationMinutes, TotalAllocationMinutes: value.TotalAllocationMinutes, Warnings: append([]string{}, value.Warnings...)}
+	return taskItem{ID: value.ID, ProjectID: value.ProjectID, ProjectName: value.ProjectName, ParentName: value.ParentName, ProjectStatus: value.ProjectStatus, ProjectPriority: value.ProjectPriority, Name: value.Name, WBSOrder: value.WBSOrder, WBSPath: value.WBSPath, WBSRank: value.WBSRank, AssigneeID: value.AssigneeID, AssigneeName: value.AssigneeName, EffortMinutes: value.EffortMinutes, ExecutionStart: datePointer(value.ExecutionStart), ExecutionEnd: datePointer(value.ExecutionEnd), CommitmentStart: datePointer(value.CommitmentStart), CommitmentEnd: datePointer(value.CommitmentEnd), DailyPlanOrderDate: datePointer(value.DailyPlanOrderDate), Completed: value.Completed, Allocations: mapDaily(value.Allocations), InSprintAllocationMinutes: value.InSprintAllocationMinutes, OutsideAllocationMinutes: value.OutsideAllocationMinutes, TotalAllocationMinutes: value.TotalAllocationMinutes, Warnings: append([]string{}, value.Warnings...)}
 }
 func mapDaily(values []application.DailyValue) []dailyItem {
 	items := make([]dailyItem, 0, len(values))

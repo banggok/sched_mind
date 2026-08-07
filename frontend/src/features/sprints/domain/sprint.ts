@@ -55,6 +55,7 @@ export interface SprintTaskProjection {
   id: string;
   projectId: string;
   projectName: string;
+  parentName: string;
   projectStatus: string;
   projectPriority: number;
   name: string;
@@ -63,8 +64,11 @@ export interface SprintTaskProjection {
   wbsRank: number;
   assigneeId?: string;
   assigneeName?: string;
+  effortMinutes?: number;
   executionStart?: string;
   executionEnd?: string;
+  commitmentStart?: string;
+  commitmentEnd?: string;
   dailyPlanOrderDate?: string;
   completed: boolean;
   allocations: DailyMinutes[];

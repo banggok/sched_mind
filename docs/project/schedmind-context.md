@@ -106,9 +106,16 @@ allocation is excluded from selected-member utilization. Sprint Planning uses th
 complete canonical Execution allocation to order rows, but the visible daily
 grid contains only the inclusive Sprint Date range. Positive allocation before
 Sprint Start or after Sprint End creates no visible Date column or allocation
-cell. The page shows Member capacity only; Task allocation remains on Task rows,
-while Sprint summaries and aggregate allocation/remaining/overcapacity rows are
-intentionally absent. Same-Member Sprint date ranges cannot overlap inclusively.
+cell. Each Member summary shows uncapped in-Sprint usage against Sprint Execution
+Capacity as `Capacity: {Usage} of {Total}`, followed by per-Date Capacity. Usage
+is recalculated from the current reviewed Task selection, excludes Needs Review
+and outside-Sprint allocation, and may exceed total capacity. Task allocation
+remains on Task rows, while Sprint summaries and aggregate
+allocation/remaining/overcapacity rows are intentionally absent. Task rows show
+immediate Parent Name plus owning Project status, live Effort, compact Execution
+range, and compact Commitment range; root WBS nodes use Project Name as their
+Parent Name. Assignee is omitted inside a Member group and shown only under Needs
+Review. Same-Member Sprint date ranges cannot overlap inclusively.
 Exact behaviour belongs to US-8.1.
 
 ## Terminology and current invariants
@@ -301,14 +308,21 @@ Sprints are accessed under the visible Project navigation group beside Projects.
 This menu grouping is navigational only. Sprint List, the two-step modal
 Details/Members form, and the main-page Sprint Planning workspace belong to US-8.1;
 Home remains the root page. Sprint Planning groups by selected Member and renders
-flat Task rows across Projects in canonical daily allocation order. Project
-Name/status remains visible on every row; WBS path/rank remains an internal
-ordering input and is not displayed. Each Member shows period and per-Date
-capacity only. A Date with `0h` Member Daily Capacity marks that Member's whole
-Date column and carries one textual `No capacity` state in the header; Remaining
-Capacity is not used for this marker. Task allocation stays visible per Task for
-Sprint Dates only, every Sprint Date shares one horizontal grid, and
-Sprint/remaining/overcapacity summaries are not rendered.
+flat Task rows across Projects in canonical daily allocation order. Immediate
+Parent Name and owning Project status remain visible on every row; root WBS nodes
+use Project Name as their Parent Name. WBS path/rank remains an internal
+ordering input and is not displayed. Each Member shows
+`Capacity: {Sprint Usage Capacity} of {Sprint Execution Capacity}` and per-Date
+capacity. Usage is an uncapped local projection of the
+reviewed in-Sprint allocation and updates after Add, Remove, regeneration, or a
+Task-edit refresh. A Date with `0h` Member Daily Capacity marks that Member's
+whole Date column and carries one textual `No capacity` state in the header;
+Remaining Capacity is not used for this marker. Task allocation stays visible
+per Task for Sprint Dates only, every Sprint Date shares one horizontal grid,
+and Sprint/remaining/overcapacity summaries are not rendered. Each Task row
+keeps immediate Parent Name/owning Project status and a compact definition list
+for live Effort, Execution, and Commitment; Needs Review additionally identifies the current Assignee or
+`Unassigned`.
 Task Name opens the same shared Edit Task controller used by Home while the
 active page remains Sprints. Closing the Task dialog leaves Sprint Planning
 unchanged; saving the Task regenerates the local suggestion and returns to the

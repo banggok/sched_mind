@@ -5,7 +5,9 @@
 > Sprint Task membership, live Execution capacity/allocation projection, daily
 > working-plan ordering, per-Date capacity/allocation/variance presentation,
 > deterministic Task suggestion, overlap protection, Planned/Started metadata,
-> drift warnings, and Sprint-specific persistence/API contracts. It does not own
+> drift warnings, Member period usage-versus-capacity presentation, live Task
+> immediate Parent/Effort/Execution/Commitment metadata presentation, and Sprint-specific
+> persistence/API contracts. It does not own
 > or change Project, WBS, scheduler, dependency, Actual Date, Actual Allocation,
 > or capacity mutation behaviour.
 >
@@ -48,14 +50,17 @@ scheduled Tasks. Capacity is informative; it is not a Save constraint.
 Sprint Planning is also an execution-facing daily working plan. Its row order must be
 driven by the complete canonical Execution allocation projection, not by Project
 or WBS grouping. The earliest Date with positive allocation determines which
-Task is shown first. Project remains visible context; WBS remains an internal
-deterministic same-Date tie-breaker. Sprint never changes either ordering source.
+Task is shown first. The immediate Parent Name remains visible hierarchy context;
+for a root WBS node, the owning Project is its displayed parent. WBS path/rank remains
+an internal deterministic same-Date tie-breaker. Sprint never changes either ordering
+source.
 
 Daily capacity calculation must remain lossless. The read model preserves
 capacity, selected allocation, remaining capacity, and overcapacity per selected
 Member and Sprint Date without cross-Member or cross-Date netting. Sprint Planning
-renders only Member capacity and individual Task allocation cells; the other
-calculated summaries are intentionally hidden.
+renders each Member's period Usage Capacity against period Execution Capacity,
+per-Date Member capacity, and individual Task allocation cells. Separate aggregate
+allocation, remaining-capacity, and overcapacity rows remain intentionally hidden.
 
 ---
 
@@ -79,15 +84,19 @@ calculated summaries are intentionally hidden.
 - Fill remaining in-Sprint capacity with later Tasks on a best-effort basis.
 - Display selected Tasks grouped by current Assignee and ordered across Projects
   by their current canonical daily Execution allocation.
-- Keep Project Name/status visible as Task-row context. WBS path/rank remains an
-  internal deterministic ordering input and is not rendered in Sprint Planning.
+- Keep the immediate Parent Name and owning Project status visible as Task-row
+  context. A root WBS node uses its owning Project Name as the Parent Name. Show
+  Task Effort plus live Execution and Commitment date ranges without duplicating the grouped
+  Member name on normal Task rows. WBS path/rank remains an internal deterministic
+  ordering input and is not rendered in Sprint Planning.
 - Display current canonical Execution allocation only for Dates inside the
   inclusive Sprint Period. Allocation before Sprint Start or after Sprint End
   does not create a Sprint Planning column and is not rendered in the grid.
-- Display Member capacity only: one period capacity value and one per-Date
-  capacity row for each selected Member. Task allocation remains visible in Task
-  rows; Sprint daily summary, aggregate allocation, remaining-capacity, and
-  overcapacity rows are not rendered.
+- Display each selected Member's period Usage Capacity against total Sprint
+  Execution Capacity using `Capacity: {Usage} of {Total}`, plus one per-Date
+  capacity row. Task allocation remains visible in Task rows; Sprint daily summary,
+  separate aggregate allocation, remaining-capacity, and overcapacity rows are not
+  rendered.
 - Render every Sprint Date in one horizontally scrollable grid without
   Previous/Next Date controls.
 - Add or remove Tasks manually in the page-level Sprint Planning after Sprint
@@ -116,8 +125,9 @@ calculated summaries are intentionally hidden.
 - Reserving Member capacity or reducing capacity available to another Sprint,
   Project, or scheduler operation.
 - Creating a second Execution allocation projection.
-- Commitment, Forecast, Actual Allocation, Remaining Effort, velocity, points,
-  burndown, burnup, sprint goal, backlog rank, story points, or ceremonies.
+- Commitment allocation, Commitment-based row ordering, Commitment-based Sprint
+  capacity/usage, Forecast, Actual Allocation, Remaining Effort, velocity,
+  points, burndown, burnup, sprint goal, backlog rank, story points, or ceremonies.
 - Completed/Closed/Cancelled Sprint statuses.
 - Reverting Started to Planned.
 - Different edit, delete, Task, capacity, or allocation behaviour by Sprint
@@ -152,6 +162,7 @@ calculated summaries are intentionally hidden.
 | Sprint Task                | Executable WBS explicitly associated with one Sprint.                                                                  |
 | Sprint Period              | Inclusive calendar range from Sprint Start through Sprint End.                                                         |
 | Sprint Execution Capacity  | Sum of one selected Member's resolved Execution Capacity for every Date in the Sprint Period.                          |
+| Sprint Usage Capacity      | Sum of Daily Selected Allocation for one selected Member across all Dates in the Sprint Period.                          |
 | In-Sprint Allocation       | Sum of current canonical Task Execution allocation whose allocation Date is inside the inclusive Sprint Period.        |
 | Total Execution Allocation | Sum of all current canonical Execution allocation rows for a selected Task, including Dates outside the Sprint Period. |
 | Outside-Sprint Allocation  | Total Execution Allocation minus In-Sprint Allocation.                                                                 |
@@ -162,6 +173,7 @@ calculated summaries are intentionally hidden.
 | Schedule Drift             | Live Task/Member/Project/allocation change after Sprint Task membership was persisted.                                 |
 | Daily Plan Order Date      | Earliest Date with positive canonical Execution Allocation across a Task's complete readable allocation projection.     |
 | Daily Selected Allocation  | Sum of current canonical Execution Allocation on one Sprint Date for selected Sprint Tasks currently grouped to one selected Member. |
+| Task Effort                | Current canonical estimated Effort stored on the executable Task, shown in hours; it is not In-Sprint Allocation or Remaining Effort. |
 | Daily Remaining Capacity   | Positive difference between one selected Member's capacity and selected allocation on one Sprint Date.                  |
 | Daily Overcapacity         | Positive difference between one selected Member's selected allocation and capacity on one Sprint Date.                  |
 | Planned                    | Initial Sprint status after successful create.                                                                         |
@@ -221,8 +233,9 @@ Relations:
 - `Sprint Task`: unique `(sprint_id, task_id)`.
 - Relation ordering must not be used as business priority.
 - Allocation rows and capacity totals are not copied into Sprint persistence.
-- Task Name, Member Name, Project Name, dates, status, and allocation are live
-  projections and are not authoritative snapshots in Sprint storage.
+- Task Name, Member Name, immediate Parent Name, Project Name/status, Effort,
+  Execution/Commitment dates, and allocation are live projections and are not
+  authoritative snapshots in Sprint storage.
 
 ### 6.1 Name Rules
 
@@ -357,11 +370,14 @@ Sprint Planning provides:
 - Member groups;
 - within each Member, flat daily working-plan Task rows ordered by Section 12.3
   across Project boundaries;
-- Project Name/status on every Task row; WBS ordering remains internal and is not
-  displayed;
-- one per-Date Capacity row and one period Capacity value for each Member;
-- Task allocation rows, with no aggregate allocation, remaining, overcapacity, or
-  Sprint-level daily summary rows;
+- immediate Parent Name, owning Project status, Effort, and labeled
+  Execution/Commitment date ranges on every Task row; Project Name is used in
+  that context only when the Task is a root WBS node, while WBS ordering remains
+  internal and is not displayed;
+- one per-Date Capacity row and one period summary for each Member formatted as
+  `Capacity: {Sprint Usage Capacity} of {Sprint Execution Capacity}`;
+- Task allocation rows, with no separate aggregate allocation, remaining,
+  overcapacity, or Sprint-level daily summary rows;
 - `Add Task`;
 - `Remove` per Task;
 - clickable Task Name that opens the same Edit Task dialog used by Home;
@@ -424,6 +440,9 @@ Project Buffer is not applied because Sprint uses Execution capacity.
 ```text
 Member Sprint Execution Capacity
 = sum of resolved Member Execution Capacity for every Sprint Date
+
+Sprint Usage Capacity
+= sum of Member Daily Selected Allocation for every Sprint Date
 ```
 
 ### 9.2 Capacity Calculation and Display
@@ -447,18 +466,31 @@ Daily Overcapacity
 The read model may retain these values for suggestion, validation, and coherent
 projection purposes. Sprint Planning deliberately renders only:
 
-- Member Sprint Execution Capacity for the period;
+- one Member period summary formatted exactly as
+  `Capacity: {Sprint Usage Capacity} of {Sprint Execution Capacity}`;
 - one Daily Capacity row per selected Member;
 - individual Task allocation cells.
 
-Sprint Planning does not render Sprint daily summaries, aggregate selected
-allocation, Remaining Capacity, or Overcapacity rows. A Date whose resolved
-Member Daily Capacity is `0h` must mark the complete Date column for that Member,
-including the Date header, Capacity cell, and every Task allocation cell. The
-column carries one visible and textual `No capacity` state in its header so a
-holiday, leave, or other zero-capacity Date is distinguishable without relying
-on color alone. This state is derived only from Member Daily Capacity and never
-from Remaining Capacity.
+Both period values use hours with the repository-standard precision and `h`
+suffix, for example `Capacity: 37.5h of 49.5h`. Usage is not capped at total
+capacity, so overcapacity may render as, for example,
+`Capacity: 52h of 49.5h`. A Member with no selected in-Sprint allocation renders
+`Capacity: 0h of {Total}`.
+
+The summary uses the current reviewed Task selection, including unsaved local
+Add, Remove, Regenerate Suggestion, and successful Task-edit regeneration results.
+It recalculates immediately when that local selection or its live allocation
+projection changes; `Save Sprint Planning` is not required to refresh the
+displayed Usage Capacity.
+
+Sprint Planning does not render Sprint daily summaries, a separate aggregate
+selected-allocation row, Remaining Capacity, or Overcapacity rows. A Date whose
+resolved Member Daily Capacity is `0h` must mark the complete Date column for
+that Member, including the Date header, Capacity cell, and every Task allocation
+cell. The column carries one visible and textual `No capacity` state in its
+header so a holiday, leave, or other zero-capacity Date is distinguishable
+without relying on color alone. This state is derived only from Member Daily
+Capacity and never from Remaining Capacity.
 
 Calculation rules remain:
 
@@ -468,8 +500,12 @@ Calculation rules remain:
   Overcapacity, even though Sprint Planning shows the Task allocation cell and the
   `No capacity` marker rather than an Overcapacity summary row.
 - Daily Selected Allocation includes only current Sprint Task membership.
+- Sprint Usage Capacity includes only Daily Selected Allocation on Dates inside
+  the Sprint Period; allocation before Sprint Start or after Sprint End is
+  excluded.
 - Needs Review allocation whose current Assignee is not a selected Member is
-  excluded from selected-member utilization.
+  excluded from selected-member utilization and from that Member's displayed Usage
+  Capacity.
 - Capacity/variance and Sprint Planning columns are required for Sprint Dates only.
   Outside-Sprint allocation remains available to canonical ordering/read-model
   logic but is ignored by the visible daily grid.
@@ -622,23 +658,68 @@ Rules:
 
 ### 12.1 Source of Truth
 
-Sprint reads canonical **Execution Allocation** only.
+Sprint reads canonical **Execution Allocation** only for daily allocation,
+usage, capacity variance, suggestion, and row ordering. It may read canonical
+Task Effort and Commitment dates as informational Task metadata only.
 
 - Do not derive daily allocation by evenly spreading Effort across dates.
 - Do not recalculate Task Capacity Allocation Percentage.
-- Do not use Commitment or Actual Allocation.
-- Do not persist copied allocation rows in the Sprint aggregate.
+- Do not use Commitment dates or Commitment Allocation for suggestion, grouping,
+  usage, capacity variance, Date columns, allocation cells, or row ordering.
+- Do not use Actual Allocation.
+- Do not persist copied Effort, date, or allocation values in the Sprint aggregate.
 
 ### 12.2 Per-Task Values
 
 For each selected Task show:
 
-- Project Name and status;
+- immediate Parent Name and owning Project status;
 - Task Name, wrapped within a maximum `50ch` text width;
-- current Assignee;
-- Execution Start and End formatted as `DD MMM YYYY`;
+- Task Effort formatted in hours with repository-standard precision and the `h`
+  suffix, for example `Effort: 8h` or `Effort: 7.5h`;
+- a labeled live Execution Start-to-End range;
+- a labeled live Commitment Start-to-End range;
 - current daily positive Execution allocations;
 - Completed/Needs Review indicators when applicable.
+
+The left Task metadata uses this scan order below immediate Parent context:
+
+```text
+Effort: [Task Effort]
+Execution: [Execution Date Range]
+Commitment: [Commitment Date Range]
+```
+
+Render these values as one compact label/value definition list rather than
+independent badges or icons. Labels align vertically and use a stronger caption
+weight; values use subdued metadata text. A long value may wrap inside its own
+row without detaching it from the label. The information is always visible and
+must not depend on hover or a tooltip.
+
+The immediate Parent is the current direct WBS parent. For a Task whose
+`parent_id` is empty, the owning Project is the direct level-0 parent and its Name is
+displayed. A parent rename or move is reflected on the next coherent read or local
+regeneration; it changes no Sprint membership and does not affect row ordering.
+
+Normal Task rows inside a selected Member group do not repeat Member/Assignee
+Name because the group heading is the ownership context. A Task under `Needs
+Review` must instead show `Assignee: [Current Assignee Name]` or
+`Assignee: Unassigned` before Effort because the generic Needs Review heading
+cannot communicate current ownership.
+
+Date ranges use a compact, unambiguous formatter:
+
+- same Date: `12 Aug 2026`;
+- same month and year: `12–13 Aug 2026`;
+- different month, same year: `30 Aug–2 Sep 2026`;
+- different year: `30 Dec 2026–2 Jan 2027`.
+
+The complete start and end Dates remain exposed to assistive technology. If
+Effort is unavailable because of live drift, render `Effort: Not set`; do not
+invent `0h`. If either Date in a range is unavailable, render that complete line
+as `Execution: Not scheduled` or `Commitment: Not scheduled`; do not show a
+partial or misleading range. Execution and Commitment metadata remain visible
+even when both ranges are identical.
 
 Do not display WBS number/path, aggregate In-Sprint/Outside/Total allocation text,
 or the internal Daily Plan Order Date. WBS and Daily Plan Order Date remain
@@ -693,13 +774,16 @@ Rules:
   an exact intra-Day start sequence.
 - Live schedule/allocation drift may reorder rows on the next coherent read
   without changing Sprint membership, Status, or Version.
-- Project context remains visible on every Task row. WBS path/rank remains an
-  internal tie-breaker and is not displayed. Project roots, Group rows, and WBS
-  hierarchy do not partition or override the daily plan order.
+- Immediate Parent context remains visible on every Task row, with owning Project
+  status retained as lifecycle context. Effort and Commitment dates are
+  informational only and never participate in row order. WBS path/rank
+  remains an internal tie-breaker and is not displayed. Project roots, Group rows,
+  and WBS hierarchy do not partition or override the daily plan order.
 
 For every Sprint Date, each Member group exposes one Capacity row only. Task
 allocation is represented by the Task rows themselves. There is no Sprint-level
-daily summary and no aggregate allocation, remaining, or overcapacity row.
+daily summary and no separate aggregate allocation, remaining, or overcapacity
+row.
 
 Additional grid rules:
 
@@ -718,14 +802,20 @@ Additional grid rules:
 
 Tasks are grouped by current Assignee when that Assignee is a selected Sprint
 Member. Tasks are not secondarily grouped by Project because that would break the
-daily working-plan order. Each group shows only:
+daily working-plan order. Each group uses this two-line identity summary:
 
-- Member Sprint Execution Capacity;
+```text
+[Member Name]
+Capacity: [Sprint Usage Capacity] of [Sprint Execution Capacity]
+```
+
+The group then shows only:
+
 - per-Date Member Capacity;
 - individual Task allocation rows.
 
-A selected Member with no Task remains as an empty group with period and per-Date
-capacity.
+A selected Member with no Task remains as an empty group with
+`Capacity: 0h of {Sprint Execution Capacity}` and per-Date capacity.
 
 ### 12.5 Read-model Totals
 
@@ -743,8 +833,10 @@ whole Sprint Period:
 Sprint-level Remaining Capacity and Overcapacity still sum per-Member, per-Date
 values and must not be recomputed only from aggregate Capacity minus aggregate
 Allocation. Needs Review allocation must not be disguised as selected-member
-utilization when its current Assignee is not a selected Member. These totals are
-not rendered in Sprint Planning.
+utilization when its current Assignee is not a selected Member. The per-Member
+period In-Sprint Allocation is rendered only as Sprint Usage Capacity in the
+`Capacity: {Usage} of {Total}` summary; the remaining totals are not rendered
+in Sprint Planning.
 
 ---
 
@@ -1013,7 +1105,8 @@ Sprint detail read returns one version-coherent composition containing:
 - selected Members and live capacity per Sprint Date;
 - per-Member and Sprint per-Date selected allocation, Remaining Capacity, and
   Overcapacity under the no-netting rules;
-- selected Tasks with Project/WBS/Assignee/status;
+- selected Tasks with immediate Parent, Project/WBS/Assignee/status, canonical
+  Effort, Execution Start/End, and Commitment Start/End;
 - complete current positive Execution allocation dates;
 - server-resolved daily working-plan row order or an explicit nullable Daily Plan
   Order Date plus stable display rank that yields the exact Section 12.3 order;
@@ -1138,10 +1231,15 @@ plan evidence required by project architecture.
 - Every input has an associated label and inline validation.
 - Stepper state and errors are keyboard accessible.
 - Member groups and `Needs Review` use semantic headings.
+- Each Member period summary exposes Member Name, Sprint Usage Capacity, and
+  Sprint Execution Capacity to assistive technology.
+- Each Task metadata block exposes immediate Parent Name, owning Project status,
+  Task Name, Effort, complete Execution Start/End, complete Commitment Start/End,
+  and—only under Needs Review—current Assignee context to assistive technology.
 - Daily Capacity cells expose Member, full formatted Date, and Capacity to
   assistive technology; `0h` capacity includes textual `No capacity` state.
-- Daily Task allocation cells expose Member, Task, Project context, full formatted
-  Sprint Date, and allocation to assistive technology.
+- Daily Task allocation cells expose Member, Task, immediate Parent context, full
+  formatted Sprint Date, and allocation to assistive technology.
 - Zero-capacity state is not communicated by color alone.
 - Warning badges include text and accessible description.
 - Horizontal scrolling does not trap keyboard focus.
@@ -1198,7 +1296,9 @@ plan evidence required by project architecture.
 18. Project Buffer is not applied.
 19. Member and Sprint views distinguish per-Date and period capacity,
     In-Sprint Allocation, Remaining Capacity, and Overcapacity; summaries sum
-    per-Member, per-Date variance without cross-Member or cross-Date netting.
+    per-Member, per-Date variance without cross-Member or cross-Date netting. Each
+    Member group renders period In-Sprint Allocation as Usage Capacity in
+    `Capacity: {Usage} of {Total}`.
 20. Zero capacity and overcapacity never block Save or require confirmation.
 21. Live capacity changes update read results without changing Sprint membership,
     Status, or Version.
@@ -1227,19 +1327,30 @@ plan evidence required by project architecture.
 
 34. Sprint Planning groups normal Tasks by current selected Assignee and orders
     Task rows across Projects by earliest positive canonical Execution allocation
-    Date, then Project Priority, WBS order, and Task ID. Project context remains
-    visible; WBS context is not displayed and hierarchy never overrides order.
-35. Selected Members with no Tasks remain visible with period and per-Date
-    Capacity.
-36. Every Task displays Project, Name, Assignee, formatted Execution dates, and
-    daily Execution allocation. Task names wrap within `50ch`; WBS,
-    In-Sprint/Outside/Total allocation text, and Daily Plan Order Date are hidden.
+    Date, then Project Priority, WBS order, and Task ID. Immediate Parent Name remains
+    visible; WBS path/rank is not displayed and hierarchy never overrides order. A
+    root WBS node uses its owning Project Name as its displayed Parent Name.
+35. Selected Members with no Tasks remain visible with
+    `Capacity: 0h of {Sprint Execution Capacity}` and per-Date Capacity.
+36. Every Task displays immediate Parent Name, owning Project status, Task Name,
+    Effort, compact labeled Execution and Commitment date ranges, and daily Execution
+    allocation. Project Name is not repeated for a non-root Task; a root WBS node uses
+    Project Name because the Project is its direct level-0 parent. A normal Member-group
+    Task does not repeat Assignee Name; a Needs Review Task displays its current
+    Assignee or `Unassigned`. Missing Effort renders `Not set`, an incomplete date
+    pair renders `Not scheduled`, and identical Execution/Commitment ranges remain
+    visible. Task names wrap within `50ch`; WBS, In-Sprint/Outside/Total allocation
+    text, and Daily Plan Order Date are hidden. Effort and Commitment metadata do
+    not affect grouping, suggestion, usage, allocation, Date columns, or row order.
 37. Sprint Planning renders exactly the inclusive Sprint Date range. Positive
     allocation outside the Sprint Period does not create a Date column or visible
     allocation cell.
-38. Sprint Planning shows only Member Capacity summaries; allocation is represented
-    by Task cells, while aggregate allocation, Remaining, and Overcapacity are
-    not displayed.
+38. Sprint Planning shows each Member summary as
+    `Capacity: {Sprint Usage Capacity} of {Sprint Execution Capacity}`.
+    Usage sums only selected Task allocation inside the Sprint Period, may exceed
+    total capacity, and is not duplicated as an aggregate row. It refreshes from
+    the current local reviewed selection without requiring Save. Remaining and
+    Overcapacity are not displayed.
 39. Sprint Planning has no Previous/Next Date controls; all Sprint Dates are
     available through horizontal scrolling.
 40. Add Task lists scheduled eligible Tasks for selected Members, including Tasks
@@ -1255,8 +1366,8 @@ plan evidence required by project architecture.
 45. Create atomically persists Sprint, selected Members, selected Tasks, Planned
     Status, Version, and timestamps.
 46. Edit atomically replaces submitted relation sets under Version control.
-47. Sprint stores membership but reads capacity, Task, Project, dates, and
-    allocation live.
+47. Sprint stores membership but reads capacity, Task, immediate Parent, Project,
+    dates, and allocation live.
 48. Opening/editing a saved Sprint does not regenerate membership automatically.
 49. Reassignment to another selected Member regroups the Task and recalculates
     totals without removing membership.
@@ -1307,7 +1418,7 @@ plan evidence required by project architecture.
     partial write.
 73. Relation uniqueness prevents duplicate Sprint Member or Sprint Task rows.
 74. Rapid list/detail/suggestion changes cannot restore stale capacity,
-    allocation, Member, Task projection, or daily working-plan order.
+    allocation, Member, immediate Parent, Task projection, or daily working-plan order.
 75. Backend read paths are set-based and avoid per-entity/per-Date N+1 queries.
 76. All inputs, actions, Daily Task allocation values, Member Capacity values,
     whole-column zero-Daily-Capacity markers, and warnings are keyboard and
@@ -1339,6 +1450,9 @@ plan evidence required by project architecture.
 - Inclusive overlap truth table, including shared/no-shared Member and self-edit.
 - Capacity per Date for weekday, weekend, Public Holiday, multiple overrides,
   buffer, zero capacity, and `0.5h` rounding.
+- Sprint Usage Capacity sums only selected-member Daily Selected Allocation
+  inside the inclusive Sprint Period, excludes outside-Sprint and non-selected-
+  Member Needs Review allocation, and is not capped by total capacity.
 - Daily Remaining/Overcapacity with no cross-Date or cross-Member netting,
   including positive allocation on a zero-capacity Date.
 - Daily working-plan comparator for overdue, in-Sprint, after-Sprint,
@@ -1372,13 +1486,20 @@ plan evidence required by project architecture.
 - Member selection, zero-capacity/no-Task group.
 - Initial suggestion, explicit regenerate, consolidation confirmation.
 - Mandatory overcapacity visual and no Save block.
-- Member period/per-Date Capacity only, with textual zero-capacity state.
-- Absence of Sprint summary, Previous/Next Date controls, aggregate allocation,
-  Remaining, and Overcapacity rows.
+- Member period summary formatted `Capacity: {Usage} of {Total}` plus per-Date
+  Capacity, including zero usage, decimal-hour formatting, usage above total,
+  immediate recalculation after local Add/Remove/Regenerate/Task-edit regeneration,
+  and textual zero-capacity state.
+- Absence of Sprint summary, Previous/Next Date controls, separate aggregate
+  allocation, Remaining, and Overcapacity rows.
 - Daily working-plan order across Projects/WBS paths while WBS remains hidden.
 - Daily allocation for Sprint Dates only in one horizontally scrollable grid;
   outside-Sprint allocation creates no column.
-- `DD MMM YYYY` date formatting and `50ch` Task-name wrapping.
+- Compact Task metadata date-range formatting for same-day, same-month,
+  cross-month, and cross-year ranges; full dates remain accessible.
+- Task Effort formatting for whole/decimal hours, missing Effort, incomplete
+  Execution/Commitment pairs, identical ranges, selected-Member Assignee omission,
+  Needs Review Assignee retention, and `50ch` Task-name wrapping.
 - Add picker and Remove semantics.
 - Task Name opens the shared Home Edit Task dialog without page navigation;
   Close preserves local Sprint Planning, while Save regenerates suggestion and
@@ -1422,13 +1543,18 @@ At minimum:
 18. The backend detail projection preserves Member A overcapacity and Member B
     remaining capacity independently without exposing those summaries in Sprint
     Planning.
-19. Sprint Planning renders Member groups directly, with Capacity only and without a
-    Sprint daily summary or Date-window navigation controls.
-20. A Sprint Date whose Member Daily Capacity is `0h` marks that Member's whole
+19. Sprint Planning renders Member groups directly with
+    `Capacity: {Usage} of {Total}`, per-Date Capacity, and Task allocation cells,
+    without a Sprint daily summary or Date-window navigation controls.
+20. A normal Member-group Task renders Project, Effort, Execution range, and
+    Commitment range without repeating Assignee; the same Task under Needs Review
+    restores current Assignee context. These metadata values are live and do not
+    change Sprint allocation or order.
+21. A Sprint Date whose Member Daily Capacity is `0h` marks that Member's whole
     Date column and shows `No capacity` in the column header; any positive
     canonical Task allocation remains visible in its marked Task cell and Save
     is still allowed. Remaining Capacity does not control the marker.
-21. Click a Sprint Planning Task Name, edit it through the shared Home Task
+22. Click a Sprint Planning Task Name, edit it through the shared Home Task
     dialog, and verify Close returns unchanged while Save stays on Sprints,
     regenerates the local suggestion, and does not persist Sprint membership
     before `Save Sprint Planning`.

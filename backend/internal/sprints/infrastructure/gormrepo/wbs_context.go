@@ -11,11 +11,13 @@ type wbsContextRow struct {
 	ProjectID string
 	ParentID  *string
 	Position  int
+	Name      string
 }
 
 type wbsContextValue struct {
-	Path string
-	Rank int
+	Path       string
+	Rank       int
+	ParentName string
 }
 
 func (repository *Repository) loadWBSContext(ctx context.Context, taskRows []taskProjectionRow) (map[string]wbsContextValue, []wbsContextRow, error) {
@@ -34,13 +36,17 @@ func (repository *Repository) loadWBSContext(ctx context.Context, taskRows []tas
 
 	var rows []wbsContextRow
 	if err := repository.database.WithContext(ctx).Table("wbs_nodes").
-		Select("id, project_id, parent_id, position").
+		Select("id, project_id, parent_id, position, name").
 		Where("project_id IN ?", projectIDs).
 		Order("project_id ASC").Order("parent_key ASC").Order("position ASC").Order("id ASC").
 		Scan(&rows).Error; err != nil {
 		return nil, nil, fmt.Errorf("query sprint WBS context: %w", err)
 	}
 
+	projectNames := make(map[string]string, len(projectIDs))
+	for _, task := range taskRows {
+		projectNames[task.ProjectID] = task.ProjectName
+	}
 	byProject := make(map[string][]wbsContextRow)
 	for _, row := range rows {
 		byProject[row.ProjectID] = append(byProject[row.ProjectID], row)
@@ -63,6 +69,10 @@ func (repository *Repository) loadWBSContext(ctx context.Context, taskRows []tas
 				return children[parentID][left].ID < children[parentID][right].ID
 			})
 		}
+		rowsByID := make(map[string]wbsContextRow, len(byProject[projectID]))
+		for _, row := range byProject[projectID] {
+			rowsByID[row.ID] = row
+		}
 		rank := 0
 		visited := make(map[string]struct{}, len(byProject[projectID]))
 		var visit func(wbsContextRow, string)
@@ -71,7 +81,15 @@ func (repository *Repository) loadWBSContext(ctx context.Context, taskRows []tas
 				return
 			}
 			visited[row.ID] = struct{}{}
-			result[row.ID] = wbsContextValue{Path: path, Rank: rank}
+			parentName := projectNames[row.ProjectID]
+			if row.ParentID != nil {
+				if parent, exists := rowsByID[*row.ParentID]; exists {
+					parentName = parent.Name
+				} else {
+					parentName = ""
+				}
+			}
+			result[row.ID] = wbsContextValue{Path: path, Rank: rank, ParentName: parentName}
 			rank++
 			for index, child := range children[row.ID] {
 				visit(child, fmt.Sprintf("%s.%d", path, index+1))

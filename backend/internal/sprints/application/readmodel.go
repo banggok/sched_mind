@@ -32,6 +32,7 @@ type TaskProjection struct {
 	ID                        string
 	ProjectID                 string
 	ProjectName               string
+	ParentName                string
 	ProjectStatus             string
 	ProjectPriority           int
 	Name                      string
@@ -40,8 +41,11 @@ type TaskProjection struct {
 	WBSRank                   int
 	AssigneeID                *string
 	AssigneeName              *string
+	EffortMinutes             *int
 	ExecutionStart            *time.Time
 	ExecutionEnd              *time.Time
+	CommitmentStart           *time.Time
+	CommitmentEnd             *time.Time
 	DailyPlanOrderDate        *time.Time
 	Completed                 bool
 	Allocations               []DailyValue

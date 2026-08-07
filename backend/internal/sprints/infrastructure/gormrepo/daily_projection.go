@@ -21,6 +21,7 @@ func composeTaskProjection(
 		ID:              row.ID,
 		ProjectID:       row.ProjectID,
 		ProjectName:     row.ProjectName,
+		ParentName:      wbs.ParentName,
 		ProjectStatus:   row.ProjectStatus,
 		ProjectPriority: row.ProjectPriority,
 		Name:            row.Name,
@@ -29,8 +30,11 @@ func composeTaskProjection(
 		WBSRank:         wbs.Rank,
 		AssigneeID:      row.AssigneeID,
 		AssigneeName:    row.AssigneeName,
+		EffortMinutes:   row.EffortMinutes,
 		ExecutionStart:  row.ExecutionStart,
 		ExecutionEnd:    row.ExecutionEnd,
+		CommitmentStart: row.CommitmentStart,
+		CommitmentEnd:   row.CommitmentEnd,
 		Completed:       row.ActualStart != nil && row.ActualEnd != nil,
 	}
 	if readable {
