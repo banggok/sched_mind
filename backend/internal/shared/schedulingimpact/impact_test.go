@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestGuardRequiresVersionBoundConfirmationForOtherOpenProjects(t *testing.T) {
+func TestGuardRejectsConfirmedTokenWhenHiddenRecalculationSignatureChanges_US62_D04_AC24(t *testing.T) {
 	ctx := requestContext(t, "")
 	ctx = WithOperation(ctx, "owner", ModeOrdinary)
 	projects := []Project{
@@ -69,6 +69,23 @@ func TestGuardSkipsBulkReopenAndOwnerOnlyImpact(t *testing.T) {
 	}
 	if err := Guard(WithOperation(context.Background(), "owner", ModeOrdinary), "signature", nil, owner); err != nil {
 		t.Fatalf("owner-only guard = %v", err)
+	}
+}
+
+func TestGuardAllowsLatestNoTimelineImpactWithoutObsoleteConfirmation_US62_D04_AC24(t *testing.T) {
+	ctx := WithOperation(requestContext(t, "obsolete-token"), "owner", ModeOrdinary)
+	if err := Guard(ctx, "latest-hidden-state", nil, nil); err != nil {
+		t.Fatalf("latest simulation without timeline impact must not require obsolete confirmation: %v", err)
+	}
+}
+
+func TestWithPreviewOperationIgnoresSuppliedConfirmationToken_US62_D07_AC25(t *testing.T) {
+	confirmed := WithOperation(requestContext(t, "client-token"), "owner", ModeBulkReopen)
+	preview := WithPreviewOperation(confirmed, "owner", ModeOrdinary)
+
+	enabled, owner, mode, token := Operation(preview)
+	if !enabled || owner != "owner" || mode != ModeOrdinary || token != "" {
+		t.Fatalf("preview operation = enabled=%v owner=%q mode=%q token=%q", enabled, owner, mode, token)
 	}
 }
 

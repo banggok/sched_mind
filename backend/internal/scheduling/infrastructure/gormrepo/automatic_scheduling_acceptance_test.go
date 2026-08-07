@@ -235,7 +235,7 @@ func TestManualAndAutomaticCrossProjectPriorityAcceptance_US63_AC19(t *testing.T
 	}
 }
 
-func TestAutomaticSchedulingLifecycleAndPriorityAcceptance_AC29_AC30_AC31_AC32_AC35(t *testing.T) {
+func TestAutomaticSchedulingLifecycleAndPriorityAcceptance_AC29_AC30_AC31_AC32_AC35_US62_AC21(t *testing.T) {
 	database := acceptanceDatabase(t)
 	now := time.Date(2026, 8, 1, 8, 0, 0, 0, time.UTC)
 	anchor := mustDate("2026-08-03")
@@ -286,6 +286,18 @@ func TestAutomaticSchedulingLifecycleAndPriorityAcceptance_AC29_AC30_AC31_AC32_A
 		t.Fatalf("lock: %#v %v", locked, err)
 	}
 	lockedStart := loadAcceptanceTask(t, database, "second-task").ExecutionStart
+	_, err = projectService.MovePriority(context.Background(), "first", projectdomain.PriorityUp)
+	var lockedImpact schedulingimpact.Error
+	if !errors.As(err, &lockedImpact) || lockedImpact.Kind != schedulingimpact.LockedProjectImpact {
+		t.Fatalf("timeline-changing priority move should be blocked by locked Project: impact=%#v err=%v", lockedImpact, err)
+	}
+	if len(lockedImpact.LockedProjects) != 1 || lockedImpact.LockedProjects[0].ID != "second" {
+		t.Fatalf("locked timeline impact projects = %#v, want second", lockedImpact.LockedProjects)
+	}
+	if current := loadAcceptanceTask(t, database, "second-task").ExecutionStart; !acceptanceDatesEqual(lockedStart, current) {
+		t.Fatalf("blocked priority move changed locked timeline: before=%v after=%v", lockedStart, current)
+	}
+
 	if err := database.Model(&acceptanceMemberRecord{}).Where("id = ?", memberID).Update("daily_capacity", "4").Error; err != nil {
 		t.Fatal(err)
 	}
@@ -977,5 +989,501 @@ func TestImpactProjectsPreservesRequestedLifecycleClassification_US62_AC15_AC20_
 	open := impactProjects(state, []string{"locked", "open"}, "open")
 	if len(open) != 1 || open[0].ID != "open" || open[0].Version != 3 {
 		t.Fatalf("open impact projects = %#v", open)
+	}
+}
+
+func TestPriorityMovePersistsAllocationOnlyCrossProjectRecalculationWithoutWarning_US62_D01_D03_AC20_AC23(t *testing.T) {
+	database := acceptanceDatabase(t)
+	scheduler, projectService := seedAllocationOnlyImpactFixture(t, database)
+	if err := scheduler.RecalculateActiveProjects(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	beforeTask := loadAcceptanceTask(t, database, "first-task")
+	beforeRows := loadAcceptanceAllocations(t, database, "first-task", string(schedulingdomain.Execution))
+	beforeProject := loadAcceptanceProject(t, database, "first")
+
+	moved, err := projectService.MovePriority(context.Background(), "second", projectdomain.PriorityUp)
+	if err != nil {
+		t.Fatalf("allocation-only priority move returned scheduling warning/block: %v", err)
+	}
+	if moved == nil || moved.ID != "second" || moved.Priority != 1 {
+		t.Fatalf("moved project = %#v", moved)
+	}
+
+	afterTask := loadAcceptanceTask(t, database, "first-task")
+	afterRows := loadAcceptanceAllocations(t, database, "first-task", string(schedulingdomain.Execution))
+	afterProject := loadAcceptanceProject(t, database, "first")
+	requireAcceptanceTaskTimelineUnchanged(t, beforeTask, afterTask)
+	requireAcceptanceAllocationMetadataChanged(t, beforeRows, afterRows)
+	if afterProject.ScheduleVersion != beforeProject.ScheduleVersion+1 {
+		t.Fatalf("allocation-only recalculation schedule version = %d, want %d", afterProject.ScheduleVersion, beforeProject.ScheduleVersion+1)
+	}
+	if afterProject.StartDate == nil || beforeProject.StartDate == nil || !afterProject.StartDate.Equal(*beforeProject.StartDate) ||
+		afterProject.EndDate == nil || beforeProject.EndDate == nil || !afterProject.EndDate.Equal(*beforeProject.EndDate) {
+		t.Fatalf("allocation-only recalculation changed project timeline: before=%#v after=%#v", beforeProject, afterProject)
+	}
+}
+
+func TestPriorityMoveDoesNotBlockLockedProjectForAllocationOnlyCounterfactual_US62_D02_AC22(t *testing.T) {
+	database := acceptanceDatabase(t)
+	scheduler, projectService := seedAllocationOnlyImpactFixture(t, database)
+	if err := scheduler.RecalculateActiveProjects(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	locked, err := projectService.ChangeStatus(context.Background(), "first", projectdomain.StatusLocked)
+	if err != nil {
+		t.Fatalf("lock first project: %v", err)
+	}
+	if locked == nil || locked.Status != projectdomain.StatusLocked {
+		t.Fatalf("locked project = %#v", locked)
+	}
+
+	beforeTask := loadAcceptanceTask(t, database, "first-task")
+	beforeExecution := loadAcceptanceAllocations(t, database, "first-task", string(schedulingdomain.Execution))
+	beforeCommitment := loadAcceptanceAllocations(t, database, "first-task", string(schedulingdomain.Commitment))
+
+	moved, err := projectService.MovePriority(context.Background(), "second", projectdomain.PriorityUp)
+	if err != nil {
+		t.Fatalf("allocation-only counterfactual incorrectly blocked by locked Project: %v", err)
+	}
+	if moved == nil || moved.Priority != 1 {
+		t.Fatalf("moved project = %#v", moved)
+	}
+
+	afterTask := loadAcceptanceTask(t, database, "first-task")
+	afterExecution := loadAcceptanceAllocations(t, database, "first-task", string(schedulingdomain.Execution))
+	afterCommitment := loadAcceptanceAllocations(t, database, "first-task", string(schedulingdomain.Commitment))
+	requireAcceptanceTaskTimelineUnchanged(t, beforeTask, afterTask)
+	requireAcceptanceAllocationsUnchanged(t, "locked execution", beforeExecution, afterExecution)
+	requireAcceptanceAllocationsUnchanged(t, "locked commitment", beforeCommitment, afterCommitment)
+}
+
+func TestNonProjectCapacityMutationPersistsAllocationOnlyRecalculationWithoutWarning_US62_D05_AC24A(t *testing.T) {
+	database := acceptanceDatabase(t)
+	scheduler, _ := seedAllocationOnlyImpactFixture(t, database)
+	if err := scheduler.RecalculateActiveProjects(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	beforeFirst := loadAcceptanceTask(t, database, "first-task")
+	beforeSecond := loadAcceptanceTask(t, database, "second-task")
+	beforeRows := loadAcceptanceAllocations(t, database, "first-task", string(schedulingdomain.Execution))
+	beforeFirstProject := loadAcceptanceProject(t, database, "first")
+	beforeSecondProject := loadAcceptanceProject(t, database, "second")
+	if err := database.Model(&acceptanceMemberRecord{}).Where("id = ?", "member").Update("daily_capacity", "10").Error; err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := schedulingimpact.WithOperation(context.Background(), "", schedulingimpact.ModeOrdinary)
+	if err := scheduler.RecalculateActiveProjects(ctx); err != nil {
+		t.Fatalf("allocation-only capacity mutation returned scheduling warning/block: %v", err)
+	}
+
+	afterFirst := loadAcceptanceTask(t, database, "first-task")
+	afterSecond := loadAcceptanceTask(t, database, "second-task")
+	afterRows := loadAcceptanceAllocations(t, database, "first-task", string(schedulingdomain.Execution))
+	afterFirstProject := loadAcceptanceProject(t, database, "first")
+	afterSecondProject := loadAcceptanceProject(t, database, "second")
+	requireAcceptanceTaskTimelineUnchanged(t, beforeFirst, afterFirst)
+	requireAcceptanceTaskTimelineUnchanged(t, beforeSecond, afterSecond)
+	requireAcceptanceAllocationMetadataChanged(t, beforeRows, afterRows)
+	if afterFirstProject.ScheduleVersion != beforeFirstProject.ScheduleVersion+1 || afterSecondProject.ScheduleVersion != beforeSecondProject.ScheduleVersion+1 {
+		t.Fatalf("capacity-only schedule versions: first %d->%d second %d->%d", beforeFirstProject.ScheduleVersion, afterFirstProject.ScheduleVersion, beforeSecondProject.ScheduleVersion, afterSecondProject.ScheduleVersion)
+	}
+}
+
+func TestPriorityMoveRejectsStaleConfirmationWhenHiddenOwnerVersionChanges_US62_D04_AC24(t *testing.T) {
+	database := acceptanceDatabase(t)
+	scheduler, projectService := seedAllocationOnlyImpactFixture(t, database)
+	if err := database.Model(&acceptanceTaskRecord{}).
+		Where("id IN ?", []string{"first-task", "second-task"}).
+		Updates(map[string]any{"effort_minutes": 480, "capacity_allocation_percentage": 100}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := scheduler.RecalculateActiveProjects(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := projectService.MovePriority(context.Background(), "second", projectdomain.PriorityUp)
+	impact := requireOpenProjectImpact(t, err, "first")
+	if err := database.Model(&acceptanceProjectRecord{}).
+		Where("id = ?", "second").
+		Update("schedule_version", gorm.Expr("schedule_version + 1")).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = projectService.MovePriority(acceptanceImpactContext(t, impact.Token), "second", projectdomain.PriorityUp)
+	var stale schedulingimpact.Error
+	if !errors.As(err, &stale) || stale.Kind != schedulingimpact.StaleImpact {
+		t.Fatalf("stale hidden-version confirmation = %#v, %v", stale, err)
+	}
+	if len(stale.LockedProjects) != 0 || len(stale.OpenProjects) != 1 || stale.OpenProjects[0].ID != "first" {
+		t.Fatalf("stale warning names changed unexpectedly: locked=%#v open=%#v", stale.LockedProjects, stale.OpenProjects)
+	}
+	first := loadAcceptanceProject(t, database, "first")
+	second := loadAcceptanceProject(t, database, "second")
+	if first.Priority != 1 || second.Priority != 2 {
+		t.Fatalf("stale confirmation persisted priority mutation: first=%d second=%d", first.Priority, second.Priority)
+	}
+}
+
+func TestActualDateConfirmationBypassesOtherLockedTimelineImpactAndPreservesBaseline_US62_D02_D06_AC15_AC22(t *testing.T) {
+	database := acceptanceDatabase(t)
+	scheduler, projectService := seedAllocationOnlyImpactFixture(t, database)
+	if err := database.Model(&acceptanceTaskRecord{}).
+		Where("id IN ?", []string{"first-task", "second-task"}).
+		Updates(map[string]any{"effort_minutes": 480, "capacity_allocation_percentage": 100}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := scheduler.RecalculateActiveProjects(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	locked, err := projectService.ChangeStatus(context.Background(), "first", projectdomain.StatusLocked)
+	if err != nil {
+		t.Fatalf("lock impacted Project: %v", err)
+	}
+	if locked == nil || locked.Status != projectdomain.StatusLocked {
+		t.Fatalf("locked impacted Project = %#v", locked)
+	}
+
+	beforeLockedTask := loadAcceptanceTask(t, database, "first-task")
+	beforeLockedExecution := loadAcceptanceAllocations(t, database, "first-task", string(schedulingdomain.Execution))
+	beforeLockedCommitment := loadAcceptanceAllocations(t, database, "first-task", string(schedulingdomain.Commitment))
+	wbsService := wbsapplication.NewServiceWithDependencies(
+		wbsgormrepo.New(database),
+		scheduler,
+		func() time.Time { return time.Date(2026, 8, 3, 18, 0, 0, 0, time.UTC) },
+		func() (string, error) { return "unused", nil },
+	)
+	actualDate := mustDate("2026-08-03")
+	_, err = wbsService.Complete(context.Background(), "second", "second-task", actualDate, actualDate)
+	var impact schedulingimpact.Error
+	if !errors.As(err, &impact) || impact.Kind != schedulingimpact.ConfirmationRequired {
+		t.Fatalf("Actual-Date Locked impact preview = %#v, %v", impact, err)
+	}
+	if len(impact.LockedProjects) != 1 || impact.LockedProjects[0].ID != "first" || len(impact.OpenProjects) != 0 {
+		t.Fatalf("Actual-Date impact projects = locked %#v open %#v", impact.LockedProjects, impact.OpenProjects)
+	}
+	previewOwner := loadAcceptanceTask(t, database, "second-task")
+	if previewOwner.ActualStart != nil || previewOwner.ActualEnd != nil {
+		t.Fatalf("unconfirmed Actual Date leaked through rollback: start=%v end=%v", previewOwner.ActualStart, previewOwner.ActualEnd)
+	}
+
+	if _, err := wbsService.Complete(acceptanceImpactContext(t, impact.Token), "second", "second-task", actualDate, actualDate); err != nil {
+		t.Fatalf("confirmed factual Actual Date was blocked by Locked impact: %v", err)
+	}
+	afterLockedTask := loadAcceptanceTask(t, database, "first-task")
+	afterLockedExecution := loadAcceptanceAllocations(t, database, "first-task", string(schedulingdomain.Execution))
+	afterLockedCommitment := loadAcceptanceAllocations(t, database, "first-task", string(schedulingdomain.Commitment))
+	completedOwner := loadAcceptanceTask(t, database, "second-task")
+	requireAcceptanceTaskTimelineUnchanged(t, beforeLockedTask, afterLockedTask)
+	requireAcceptanceAllocationsUnchanged(t, "other Locked execution baseline", beforeLockedExecution, afterLockedExecution)
+	requireAcceptanceAllocationsUnchanged(t, "other Locked commitment baseline", beforeLockedCommitment, afterLockedCommitment)
+	if completedOwner.ActualStart == nil || completedOwner.ActualEnd == nil ||
+		!completedOwner.ActualStart.Equal(actualDate) || !completedOwner.ActualEnd.Equal(actualDate) {
+		t.Fatalf("confirmed factual Actual Date was not persisted: start=%v end=%v", completedOwner.ActualStart, completedOwner.ActualEnd)
+	}
+}
+
+func TestLockedActualDatePersistsAllocationOnlyOpenRecalculationWithoutWarning_US62_D03_D06_AC14_AC20_AC23(t *testing.T) {
+	database := acceptanceDatabase(t)
+	scheduler, projectService := seedAllocationOnlyImpactFixture(t, database)
+	if err := scheduler.RecalculateActiveProjects(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	locked, err := projectService.ChangeStatus(context.Background(), "second", projectdomain.StatusLocked)
+	if err != nil {
+		t.Fatalf("lock Actual-Date owner: %v", err)
+	}
+	if locked == nil || locked.Status != projectdomain.StatusLocked {
+		t.Fatalf("locked Actual-Date owner = %#v", locked)
+	}
+
+	beforeFirst := loadAcceptanceTask(t, database, "first-task")
+	beforeRows := loadAcceptanceAllocations(t, database, "first-task", string(schedulingdomain.Execution))
+	beforeFirstProject := loadAcceptanceProject(t, database, "first")
+	beforeSecond := loadAcceptanceTask(t, database, "second-task")
+	beforeSecondExecution := loadAcceptanceAllocations(t, database, "second-task", string(schedulingdomain.Execution))
+	beforeSecondCommitment := loadAcceptanceAllocations(t, database, "second-task", string(schedulingdomain.Commitment))
+
+	wbsService := wbsapplication.NewServiceWithDependencies(
+		wbsgormrepo.New(database),
+		scheduler,
+		func() time.Time { return time.Date(2026, 8, 3, 18, 0, 0, 0, time.UTC) },
+		func() (string, error) { return "unused", nil },
+	)
+	actualDate := mustDate("2026-08-03")
+	if _, err := wbsService.Complete(context.Background(), "second", "second-task", actualDate, actualDate); err != nil {
+		t.Fatalf("allocation-only Actual Date returned scheduling warning/block: %v", err)
+	}
+
+	afterFirst := loadAcceptanceTask(t, database, "first-task")
+	afterRows := loadAcceptanceAllocations(t, database, "first-task", string(schedulingdomain.Execution))
+	afterFirstProject := loadAcceptanceProject(t, database, "first")
+	completedSecond := loadAcceptanceTask(t, database, "second-task")
+	afterSecondExecution := loadAcceptanceAllocations(t, database, "second-task", string(schedulingdomain.Execution))
+	afterSecondCommitment := loadAcceptanceAllocations(t, database, "second-task", string(schedulingdomain.Commitment))
+	requireAcceptanceTaskTimelineUnchanged(t, beforeFirst, afterFirst)
+	requireAcceptanceAllocationMetadataChanged(t, beforeRows, afterRows)
+	requireAcceptanceTaskTimelineUnchanged(t, beforeSecond, completedSecond)
+	requireAcceptanceAllocationsUnchanged(t, "locked Actual-Date execution baseline", beforeSecondExecution, afterSecondExecution)
+	requireAcceptanceAllocationsUnchanged(t, "locked Actual-Date commitment baseline", beforeSecondCommitment, afterSecondCommitment)
+	if afterFirstProject.ScheduleVersion != beforeFirstProject.ScheduleVersion+1 {
+		t.Fatalf("Actual-Date allocation-only version = %d, want %d", afterFirstProject.ScheduleVersion, beforeFirstProject.ScheduleVersion+1)
+	}
+	if completedSecond.ActualStart == nil || completedSecond.ActualEnd == nil ||
+		!completedSecond.ActualStart.Equal(actualDate) || !completedSecond.ActualEnd.Equal(actualDate) {
+		t.Fatalf("Actual Date was not persisted: start=%v end=%v", completedSecond.ActualStart, completedSecond.ActualEnd)
+	}
+}
+
+func seedAllocationOnlyImpactFixture(t *testing.T, database *gorm.DB) (*schedulingapplication.Service, *projectapplication.Service) {
+	t.Helper()
+	now := time.Date(2026, 8, 1, 8, 0, 0, 0, time.UTC)
+	anchor := mustDate("2026-08-03")
+	roleID, memberID := "role", "member"
+	if err := database.Create(&acceptanceRoleRecord{ID: roleID, Name: "Engineer"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Create(&acceptanceMemberRecord{
+		ID: memberID, Name: "Rani", RoleID: roleID,
+		DailyCapacity: "8", BufferPercentage: "0", CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	projects := []acceptanceProjectRecord{
+		{ID: "first", Name: "First", NameKey: "first", Status: "open", Priority: 1, AutomaticScheduling: true, AutoCalculateDate: true, SchedulingStartDate: &anchor, ProjectBuffer: 0, CreatedAt: now, UpdatedAt: now},
+		{ID: "second", Name: "Second", NameKey: "second", Status: "open", Priority: 2, AutomaticScheduling: true, AutoCalculateDate: true, SchedulingStartDate: &anchor, ProjectBuffer: 0, CreatedAt: now, UpdatedAt: now},
+	}
+	if err := database.Create(&projects).Error; err != nil {
+		t.Fatal(err)
+	}
+	effort := 240
+	tasks := []acceptanceTaskRecord{
+		{ID: "first-task", ProjectID: "first", ParentKey: "", Name: "First Task", NameKey: "first task", Position: 1, RoleID: &roleID, AssigneeID: &memberID, EffortMinutes: &effort, CapacityAllocationPercentage: 50, CreatedAt: now, UpdatedAt: now},
+		{ID: "second-task", ProjectID: "second", ParentKey: "", Name: "Second Task", NameKey: "second task", Position: 1, RoleID: &roleID, AssigneeID: &memberID, EffortMinutes: &effort, CapacityAllocationPercentage: 50, CreatedAt: now, UpdatedAt: now},
+	}
+	if err := database.Create(&tasks).Error; err != nil {
+		t.Fatal(err)
+	}
+	automaticID := 0
+	scheduler := schedulingapplication.NewService(NewWithDependencies(database, func() time.Time { return now }, func() (string, error) {
+		automaticID++
+		return fmt.Sprintf("allocation-only-%d", automaticID), nil
+	}))
+	projectService := projectapplication.NewServiceWithDependencies(projectrepo.New(database), scheduler, func() time.Time { return now.Add(time.Hour) }, func() (string, error) { return "unused", nil })
+	return scheduler, projectService
+}
+
+func loadAcceptanceProject(t *testing.T, database *gorm.DB, id string) acceptanceProjectRecord {
+	t.Helper()
+	var value acceptanceProjectRecord
+	if err := database.First(&value, "id = ?", id).Error; err != nil {
+		t.Fatal(err)
+	}
+	return value
+}
+
+func requireAcceptanceTaskTimelineUnchanged(t *testing.T, before, after acceptanceTaskRecord) {
+	t.Helper()
+	for _, comparison := range []struct {
+		name          string
+		before, after *time.Time
+	}{
+		{name: "execution start", before: before.ExecutionStart, after: after.ExecutionStart},
+		{name: "execution end", before: before.ExecutionEnd, after: after.ExecutionEnd},
+		{name: "commitment start", before: before.CommitmentStart, after: after.CommitmentStart},
+		{name: "commitment end", before: before.CommitmentEnd, after: after.CommitmentEnd},
+	} {
+		if !acceptanceDatesEqual(comparison.before, comparison.after) {
+			t.Fatalf("%s changed: before=%v after=%v", comparison.name, comparison.before, comparison.after)
+		}
+	}
+}
+
+func acceptanceDatesEqual(left, right *time.Time) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return left.Equal(*right)
+}
+
+func requireAcceptanceAllocationMetadataChanged(t *testing.T, before, after []acceptanceAllocationRecord) {
+	t.Helper()
+	if len(before) != 1 || len(after) != 1 {
+		t.Fatalf("allocation rows before=%#v after=%#v, want one row each", before, after)
+	}
+	if before[0].AllocationDate != after[0].AllocationDate || before[0].AllocatedMinutes != after[0].AllocatedMinutes {
+		t.Fatalf("allocation-only scenario changed allocation date/amount: before=%#v after=%#v", before, after)
+	}
+	if before[0].RemainingCapacityMinutes == after[0].RemainingCapacityMinutes && before[0].Sequence == after[0].Sequence {
+		t.Fatalf("allocation metadata did not change: before=%#v after=%#v", before, after)
+	}
+}
+
+func requireAcceptanceAllocationsUnchanged(t *testing.T, label string, before, after []acceptanceAllocationRecord) {
+	t.Helper()
+	if len(before) != len(after) {
+		t.Fatalf("%s allocation count changed: before=%#v after=%#v", label, before, after)
+	}
+	for index := range before {
+		if before[index] != after[index] {
+			t.Fatalf("%s allocation[%d] changed: before=%#v after=%#v", label, index, before[index], after[index])
+		}
+	}
+}
+
+func TestTaskEffortChangeWarnsOnlyDownstreamTimelineProjectWhilePersistingNonWarningIntermediate_US62_D01_D03_AC20_AC21_AC23(t *testing.T) {
+	database := acceptanceDatabase(t)
+	now := time.Date(2026, 8, 1, 8, 0, 0, 0, time.UTC)
+	anchor := mustDate("2026-08-03")
+	roleID, memberID, independentMemberID := "role", "member", "independent-member"
+	if err := database.Create(&acceptanceRoleRecord{ID: roleID, Name: "Engineer"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Create(&[]acceptanceMemberRecord{
+		{ID: memberID, Name: "Rani", RoleID: roleID, DailyCapacity: "8", BufferPercentage: "0", CreatedAt: now, UpdatedAt: now},
+		{ID: independentMemberID, Name: "Dina", RoleID: roleID, DailyCapacity: "8", BufferPercentage: "0", CreatedAt: now, UpdatedAt: now},
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	projects := []acceptanceProjectRecord{
+		{ID: "owner", Name: "Owner", NameKey: "owner", Status: "open", Priority: 1, AutomaticScheduling: true, AutoCalculateDate: true, SchedulingStartDate: &anchor, ProjectBuffer: 0, CreatedAt: now, UpdatedAt: now},
+		{ID: "intermediate", Name: "Intermediate", NameKey: "intermediate", Status: "open", Priority: 2, AutomaticScheduling: true, AutoCalculateDate: true, SchedulingStartDate: &anchor, ProjectBuffer: 0, CreatedAt: now, UpdatedAt: now},
+		{ID: "downstream", Name: "Downstream", NameKey: "downstream", Status: "open", Priority: 3, AutomaticScheduling: true, AutoCalculateDate: true, SchedulingStartDate: &anchor, ProjectBuffer: 0, CreatedAt: now, UpdatedAt: now},
+		{ID: "independent", Name: "Independent", NameKey: "independent", Status: "open", Priority: 4, AutomaticScheduling: true, AutoCalculateDate: true, SchedulingStartDate: &anchor, ProjectBuffer: 0, CreatedAt: now, UpdatedAt: now},
+	}
+	if err := database.Create(&projects).Error; err != nil {
+		t.Fatal(err)
+	}
+	ownerEffort, intermediateEffort, downstreamEffort, independentEffort := 120, 240, 180, 60
+	ownerPercentage, intermediatePercentage := 25, 50
+	if err := database.Create(&[]acceptanceTaskRecord{
+		{ID: "owner-task", ProjectID: "owner", ParentKey: "", Name: "Owner Task", NameKey: "owner task", Position: 1, RoleID: &roleID, AssigneeID: &memberID, EffortMinutes: &ownerEffort, CapacityAllocationPercentage: ownerPercentage, CreatedAt: now, UpdatedAt: now},
+		{ID: "intermediate-task", ProjectID: "intermediate", ParentKey: "", Name: "Intermediate Task", NameKey: "intermediate task", Position: 1, RoleID: &roleID, AssigneeID: &memberID, EffortMinutes: &intermediateEffort, CapacityAllocationPercentage: intermediatePercentage, CreatedAt: now, UpdatedAt: now},
+		{ID: "downstream-task", ProjectID: "downstream", ParentKey: "", Name: "Downstream Task", NameKey: "downstream task", Position: 1, RoleID: &roleID, AssigneeID: &memberID, EffortMinutes: &downstreamEffort, CreatedAt: now, UpdatedAt: now},
+		{ID: "independent-task", ProjectID: "independent", ParentKey: "", Name: "Independent Task", NameKey: "independent task", Position: 1, RoleID: &roleID, AssigneeID: &independentMemberID, EffortMinutes: &independentEffort, CreatedAt: now, UpdatedAt: now},
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	scheduler := schedulingapplication.NewService(NewWithDependencies(database, func() time.Time { return now }, func() (string, error) { return "transitive", nil }))
+	if err := scheduler.RecalculateActiveProjects(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	beforeIntermediate := loadAcceptanceTask(t, database, "intermediate-task")
+	beforeIntermediateRows := loadAcceptanceAllocations(t, database, "intermediate-task", string(schedulingdomain.Execution))
+	beforeIntermediateProject := loadAcceptanceProject(t, database, "intermediate")
+	beforeDownstream := loadAcceptanceTask(t, database, "downstream-task")
+	beforeIndependent := loadAcceptanceProject(t, database, "independent")
+	assertDate(t, "downstream before effort change end", beforeDownstream.ExecutionEnd, "2026-08-04")
+
+	wbsService := wbsapplication.NewServiceWithDependencies(
+		wbsgormrepo.New(database),
+		scheduler,
+		func() time.Time { return now.Add(time.Hour) },
+		func() (string, error) { return "unused", nil },
+	)
+	newOwnerEffort := 60
+	_, err := wbsService.UpdateExecutable(context.Background(), "owner", "owner-task", wbsapplication.WriteExecutableInput{
+		RoleID: &roleID, AssigneeID: &memberID, EffortMinutes: &newOwnerEffort, LagDays: 0, CapacityAllocationPercentage: &ownerPercentage,
+	})
+	impact := requireOpenProjectImpact(t, err, "downstream")
+	if _, err := wbsService.UpdateExecutable(acceptanceImpactContext(t, impact.Token), "owner", "owner-task", wbsapplication.WriteExecutableInput{
+		RoleID: &roleID, AssigneeID: &memberID, EffortMinutes: &newOwnerEffort, LagDays: 0, CapacityAllocationPercentage: &ownerPercentage,
+	}); err != nil {
+		t.Fatalf("confirm effort timeline impact: %v", err)
+	}
+
+	afterIntermediate := loadAcceptanceTask(t, database, "intermediate-task")
+	afterIntermediateRows := loadAcceptanceAllocations(t, database, "intermediate-task", string(schedulingdomain.Execution))
+	afterIntermediateProject := loadAcceptanceProject(t, database, "intermediate")
+	afterDownstream := loadAcceptanceTask(t, database, "downstream-task")
+	afterIndependent := loadAcceptanceProject(t, database, "independent")
+	requireAcceptanceTaskTimelineUnchanged(t, beforeIntermediate, afterIntermediate)
+	requireAcceptanceAllocationMetadataChanged(t, beforeIntermediateRows, afterIntermediateRows)
+	if afterIntermediateProject.ScheduleVersion != beforeIntermediateProject.ScheduleVersion+1 {
+		t.Fatalf("non-warning intermediate version = %d, want %d", afterIntermediateProject.ScheduleVersion, beforeIntermediateProject.ScheduleVersion+1)
+	}
+	assertDate(t, "downstream after effort change end", afterDownstream.ExecutionEnd, "2026-08-03")
+	if afterIndependent.ScheduleVersion != beforeIndependent.ScheduleVersion {
+		t.Fatalf("independent project version changed: %d -> %d", beforeIndependent.ScheduleVersion, afterIndependent.ScheduleVersion)
+	}
+}
+
+func TestReopenSimulationIgnoresHigherPriorityLockedProjectAndUnscheduledOpenProject_US62_D07_D08_AC25(t *testing.T) {
+	database := acceptanceDatabase(t)
+	now := time.Date(2026, 8, 1, 8, 0, 0, 0, time.UTC)
+	anchor := mustDate("2026-08-03")
+	roleID, memberID := "role", "member"
+	if err := database.Create(&acceptanceRoleRecord{ID: roleID, Name: "Engineer"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Create(&acceptanceMemberRecord{
+		ID: memberID, Name: "Rani", RoleID: roleID,
+		DailyCapacity: "8", BufferPercentage: "0", CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	projects := []acceptanceProjectRecord{
+		{ID: "a", Name: "Project A", NameKey: "project a", Status: "open", Priority: 1, AutomaticScheduling: true, AutoCalculateDate: true, SchedulingStartDate: &anchor, ProjectBuffer: 0, CreatedAt: now, UpdatedAt: now},
+		{ID: "b", Name: "Project B", NameKey: "project b", Status: "open", Priority: 2, AutomaticScheduling: true, AutoCalculateDate: true, SchedulingStartDate: &anchor, ProjectBuffer: 0, CreatedAt: now, UpdatedAt: now},
+		{ID: "c", Name: "Project C", NameKey: "project c", Status: "open", Priority: 3, AutomaticScheduling: true, AutoCalculateDate: true, SchedulingStartDate: nil, ProjectBuffer: 0, CreatedAt: now, UpdatedAt: now},
+	}
+	if err := database.Create(&projects).Error; err != nil {
+		t.Fatal(err)
+	}
+	effort := 480
+	tasks := []acceptanceTaskRecord{
+		{ID: "a-task", ProjectID: "a", ParentKey: "", Name: "A Task", NameKey: "a task", Position: 1, RoleID: &roleID, AssigneeID: &memberID, EffortMinutes: &effort, CreatedAt: now, UpdatedAt: now},
+		{ID: "b-task", ProjectID: "b", ParentKey: "", Name: "B Task", NameKey: "b task", Position: 1, RoleID: &roleID, AssigneeID: &memberID, EffortMinutes: &effort, CreatedAt: now, UpdatedAt: now},
+		{ID: "c-task", ProjectID: "c", ParentKey: "", Name: "C Task", NameKey: "c task", Position: 1, RoleID: &roleID, AssigneeID: &memberID, EffortMinutes: &effort, CreatedAt: now, UpdatedAt: now},
+	}
+	if err := database.Create(&tasks).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	scheduler := schedulingapplication.NewService(NewWithDependencies(database, func() time.Time { return now }, func() (string, error) { return "reopen-simulation", nil }))
+	if err := scheduler.RecalculateActiveProjects(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	assertDate(t, "higher-priority A baseline", loadAcceptanceTask(t, database, "a-task").ExecutionStart, "2026-08-03")
+	assertDate(t, "lower-priority B baseline", loadAcceptanceTask(t, database, "b-task").ExecutionStart, "2026-08-04")
+	beforeC := loadAcceptanceTask(t, database, "c-task")
+	if beforeC.ExecutionStart != nil || beforeC.CommitmentStart != nil || beforeC.ExecutionUnscheduledReason == nil || *beforeC.ExecutionUnscheduledReason != reasonMissingAnchor {
+		t.Fatalf("Project C baseline = %#v, want unscheduled missing-anchor state", beforeC)
+	}
+
+	projectService := projectapplication.NewServiceWithDependencies(projectrepo.New(database), scheduler, func() time.Time { return now.Add(time.Hour) }, func() (string, error) { return "unused", nil })
+	if _, err := projectService.ChangeStatus(context.Background(), "a", projectdomain.StatusLocked); err != nil {
+		t.Fatalf("lock A: %v", err)
+	}
+	if _, err := projectService.ChangeStatus(context.Background(), "b", projectdomain.StatusLocked); err != nil {
+		t.Fatalf("lock B: %v", err)
+	}
+	lockedABaseline := loadAcceptanceTask(t, database, "a-task")
+
+	reopened, err := projectService.ChangeStatus(context.Background(), "b", projectdomain.StatusOpen)
+	if err != nil {
+		var bulk projectdomain.BulkReopenRequiredError
+		if errors.As(err, &bulk) {
+			t.Fatalf("reopening lower-priority B incorrectly requires related Projects: locked=%#v open=%#v", bulk.Locked, bulk.Open)
+		}
+		t.Fatalf("reopen B: %v", err)
+	}
+	if reopened == nil || reopened.Status != projectdomain.StatusOpen {
+		t.Fatalf("reopened B = %#v", reopened)
+	}
+
+	aProject := loadAcceptanceProject(t, database, "a")
+	if aProject.Status != "locked" {
+		t.Fatalf("higher-priority A status = %q, want locked", aProject.Status)
+	}
+	aAfter := loadAcceptanceTask(t, database, "a-task")
+	requireAcceptanceTaskTimelineUnchanged(t, lockedABaseline, aAfter)
+	cAfter := loadAcceptanceTask(t, database, "c-task")
+	if cAfter.ExecutionStart != nil || cAfter.ExecutionEnd != nil || cAfter.CommitmentStart != nil || cAfter.CommitmentEnd != nil {
+		t.Fatalf("unscheduled Project C gained timeline during B reopen: %#v", cAfter)
 	}
 }

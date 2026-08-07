@@ -195,7 +195,7 @@ memenuhi story ini.
   Actual Date pair.
 - Reopen confirmation membedakan `Locked → Open` dan `Closed → Open`; keduanya
   menjelaskan bahwa Project kembali editable dan eligible untuk scheduling.
-  Locked Reopen juga menjelaskan bahwa unfinished work dalam transitive impacted
+  Locked Reopen juga menjelaskan bahwa unfinished work dalam transitive recalculation
   scope akan dihitung ulang.
 - Locked Project tidak berubah menjadi Open secara implicit. User harus memilih
   Reopen Project sebelum planning mutation selain Project Name rename.
@@ -255,7 +255,7 @@ granularity snapshot ditentukan saat contract timeline/WBS tersedia.
 | From | To | Allowed | Conditions and effects |
 | --- | --- | ---: | --- |
 | Open | Locked | Ya | At least one Executable Task; every unfinished Task fully scheduled; protect current Execution/Commitment timeline and allocation; no scheduler run |
-| Locked | Open | Ya | Explicit Reopen; calculate Required Locked Reopen Closure, offer atomic Reopen All when needed, then recalculate transitive impacted Open scope |
+| Locked | Open | Ya | Explicit Reopen; calculate Required Locked Reopen Closure, offer atomic Reopen All when needed, then recalculate transitive recalculation Open scope |
 | Open | Closed | Ya | Every descendant Executable Task has complete Actual Date |
 | Locked | Closed | Ya | Full close validation; locked baselines remain unchanged |
 | Closed | Open | Ya | Reactivate Project and return it to editable/scheduling eligibility |
@@ -276,7 +276,7 @@ granularity snapshot ditentukan saat contract timeline/WBS tersedia.
 
 - Execution and Commitment may be updated by approved scheduling triggers.
 - Entering Actual Date actualizes completed Task timelines and creates Actual Allocation according to US-6.2.
-- Recalculation is limited to the transitive impacted scheduling scope, not unrelated active Projects.
+- Recalculation is limited to the transitive recalculation scope, not unrelated active Projects; warning scope is the timeline-delta subset defined by US-6.2.
 - Project ikut scheduling dan Gantt.
 
 ### Locked
@@ -311,17 +311,18 @@ granularity snapshot ditentukan saat contract timeline/WBS tersedia.
 - Project Name is editable and remains subject to the same trim, length, and
   case-insensitive uniqueness validation.
 - Project Name rename is persisted without scheduler invocation or generic
-  scheduling-impact preview because it cannot change timeline, allocation,
-  dependency validity, Priority, or capacity.
+  scheduling-impact preview because it cannot change protected Task timeline
+  dates or any scheduling input, Priority, or capacity.
 - Project Settings, WBS structure/order, Task planning fields,
   Execution/Commitment dates, and dependency ownership/endpoints are read-only.
 - Complete Actual Date is the only Task mutation allowed. It does not change the
   locked baseline, but its Actual Allocation may trigger recalculation of
-  impacted Open Projects.
+  the transitive recalculation-affected Open scope; only Task timeline deltas warn.
 - Reopen completed Task is rejected until the Project is explicitly reopened to
   Open.
-- Priority may change only when internal simulation proves no Locked Project
-  timeline, allocation, or dependency-validity impact.
+- Priority may change only when internal simulation proves no protected Locked
+  Executable Task Execution/Commitment Start or End would change; allocation-only
+  pressure does not block.
 - No planning mutation implicitly changes status to Open.
 
 ### Closed Project
@@ -375,8 +376,8 @@ granularity snapshot ditentukan saat contract timeline/WBS tersedia.
   Scheduling Engine tidak mengarang tie-breaker dari Start Date, End Date, status,
   Name, Created At, atau Project ID.
 - Filter/search/pagination menjadi request-cache identity.
-- Priority Move Up/Down uses an internal scheduling simulation. When Locked Projects exist, Save succeeds only if no Locked timeline, allocation, or cross-project dependency validity changes.
-- Priority scheduling/recalculation is limited to the transitive impacted scope; unrelated Projects are not recalculated or version-updated.
+- Priority Move Up/Down uses an internal scheduling simulation. When Locked Projects exist, Save is blocked only if counterfactual simulation would change a protected Executable Task Execution/Commitment Start or End; allocation-only pressure does not make the Locked Project impacted.
+- Priority scheduling/recalculation is limited to the transitive recalculation scope; unrelated Projects are not recalculated or version-updated, and warning scope remains the Task timeline-delta subset.
 - Confirmed mutation memperbarui affected list/detail serta scheduling/Gantt projection tanpa hard refresh.
 - Versioned invalidation mencegah older in-flight response mengembalikan stale
   data.
@@ -484,8 +485,8 @@ Execution, Commitment, dan Forecast Timeline boleh diperbarui.
 **Then** Task menjadi completed
 **And** protected Execution/Commitment baseline remains unchanged
 **And** Actual Allocation is persisted
-**And** grouped impact warning/confirmation applies when other Projects are impacted
-**And** impacted Open Projects may be recalculated while every Locked Project remains unchanged.
+**And** grouped impact warning/confirmation applies only to other Projects with Executable Task Execution/Commitment date changes
+**And** the complete recalculation-affected Open scope may persist while every Locked Project remains unchanged.
 
 ### AC-11 — Locked planning is read-only with Name exception
 
@@ -506,19 +507,22 @@ mutation selain Project Name diminta
 **Given** Project Locked
 **When** Engineering Lead requests Reopen Project
 **Then** server calculates the Required Locked Reopen Closure
-**And** UI lists every Locked Project that must be reopened together plus impacted Open Projects
+**And** closure membership is based on counterfactual protected timeline changes, not shared-Assignee/dependency connectivity alone
+**And** higher-priority Locked Projects whose protected dates remain unchanged are not pulled into the closure by reopening a lower-priority Project
+**And** UI lists every Locked Project that must be reopened together plus Open Projects whose existing Execution/Commitment Task dates will change
+**And** an Automatic Scheduling Project with no Scheduling Start Date and no existing timeline is not listed merely because it remains unscheduled
 **And** Reopen All changes the complete closure to Open atomically
-**And** all unfinished Tasks in the transitive impacted scheduling scope are recalculated
+**And** all unfinished Tasks in the transitive recalculation scope are recalculated
 **And** valid unscheduled results do not fail Reopen.
 
 ### AC-13 — Priority change respects Locked Projects
 
 **When** Priority Project dipindahkan Up atau Down
 **Then** proposed priority is simulated atomically
-**And** only the transitive impacted scope may be recalculated
-**And** Save succeeds only when every Locked Project timeline, allocation, and dependency validity remains unchanged.
+**And** only the transitive recalculation scope may be recalculated
+**And** Save is blocked only when a Locked Project protected Executable Task Execution/Commitment Start or End would counterfactually change; allocation-only pressure is allowed and the Locked baseline remains unchanged.
 
-**Given** proposed priority impacts a Locked Project
+**Given** proposed priority would counterfactually change a protected Executable Task Execution/Commitment Start or End in a Locked Project
 **Then** grouped Locked/Open Project names are returned
 **And** the entire operation is rejected with `SCHEDULING_LOCKED_PROJECT_IMPACT`
 **And** priorities and schedules remain unchanged.
@@ -743,7 +747,7 @@ Content-Type: application/json
 - Open to Locked validates that every unfinished Task is scheduled, captures/protects baselines, and does not run scheduler.
 - Open to Locked rejects zero-leaf Project with `409 PROJECT_CANNOT_LOCK_WITHOUT_TASKS`.
 - Open to Locked rejects any unscheduled unfinished Task with `409 PROJECT_CANNOT_LOCK_WITH_UNSCHEDULED_TASKS`.
-- Locked to Open is explicit Reopen. Required mutually/transitively related Locked Projects are offered as one atomic Reopen All closure, then the transitive impacted Open scope is recalculated.
+- Locked to Open is explicit Reopen. Required Locked Projects are discovered by scheduler simulation to fixed point; connectivity defines candidate scope only, and Projects with unchanged protected dates stay Locked. The Reopen warning shows only Open Projects with actual Task timeline-date changes, while the broader transitive recalculation scope may include silent non-warning Projects. Required closure Projects are offered as one atomic Reopen All operation, then the transitive recalculation Open scope is recalculated.
 - Open/Locked to Closed runs descendant completion validation.
 - Closed to Open reactivates the Project.
 - Closed to Locked returns `409 PROJECT_STATUS_TRANSITION_NOT_ALLOWED`.
@@ -767,9 +771,9 @@ Content-Type: application/json
   mengembalikan confirmed Project.
 - Move yang tidak mempunyai active neighbour pada arah tersebut ditolak dengan
   `409 PROJECT_PRIORITY_MOVE_NOT_ALLOWED`.
-- Successful move simulates only the transitive impacted scheduling scope and requires grouped Project-name confirmation when other Open Projects are affected.
-- Locked Projects are immutable anchors and receive no timeline/allocation/dependency mutation.
-- If proposed priority would impact any Locked Project, grouped Locked/Open names are returned and the command returns `409 SCHEDULING_LOCKED_PROJECT_IMPACT`.
+- Successful move simulates only the transitive recalculation scope and requires grouped Project-name confirmation only for other Open Projects whose Executable Task Execution/Commitment Start or End changes.
+- Locked Projects are immutable anchors and receive no timeline/allocation/dependency mutation. Allocation-only counterfactual pressure does not classify the Locked Project as impacted.
+- If proposed priority would require a protected Executable Task date change in any Locked Project, grouped timeline-impacted names are returned and the command returns `409 SCHEDULING_LOCKED_PROJECT_IMPACT`.
 - Priority swap and affected Open scheduling must be atomic; failure leaves all priorities and schedules unchanged.
 
 ### Pagination Validation
@@ -812,8 +816,8 @@ DELETE /api/projects/{projectId}
 | `PROJECT_CANNOT_LOCK_WITHOUT_TASKS`      |  409 | `status`    | Lock diminta untuk Project tanpa Executable Leaf                         |
 | `PROJECT_CANNOT_LOCK_WITH_UNSCHEDULED_TASKS` | 409 | `status` | Sedikitnya satu unfinished Task belum fully scheduled                    |
 | `PROJECT_LOCKED_READ_ONLY`               |  409 | —           | Mutation selain Project Name, allowed Actual Date, atau eligible Priority command pada Locked Project |
-| `SCHEDULING_LOCKED_PROJECT_IMPACT`         |  409 | `direction` | Proposed priority would affect a Locked Project timeline, allocation, or dependency validity |
-| `SCHEDULING_IMPACT_CONFIRMATION_REQUIRED` | 409 | — | Priority affects other Open Projects and requires confirmation |
+| `SCHEDULING_LOCKED_PROJECT_IMPACT`         |  409 | `direction` | Proposed priority would counterfactually change a protected Locked Executable Task Execution/Commitment Start or End |
+| `SCHEDULING_IMPACT_CONFIRMATION_REQUIRED` | 409 | — | Priority changes another Open Project Executable Task Execution/Commitment Start or End and requires confirmation |
 | `SCHEDULING_IMPACT_STALE` | 409 | — | Impact set/version changed after preview |
 | `PROJECT_BULK_REOPEN_REQUIRED` | 409 | `status` | Project Reopen requires multiple Locked Projects to reopen together |
 | `PROJECT_CANNOT_CLOSE_WITH_ACTIVE_TASKS` |  409 | `status`    | Sedikitnya satu descendant Executable Leaf tidak mempunyai complete Actual Date |
@@ -859,7 +863,7 @@ mengekspos stack trace, SQL, database, atau infrastructure detail.
 | TC-20A | Rename Locked Project Name                       | Success; no scheduler/impact; baseline and settings unchanged                                  |
 | TC-20B | Update Locked Project Settings with Name payload | Entire request rejected; no partial Name or Settings change                                    |
 | TC-21 | Reopen completed Task while Locked              | `409 PROJECT_LOCKED_READ_ONLY`; Project Reopen required                                        |
-| TC-22 | Locked to Open                                  | Status Open; transitive impacted scope recalculated                                             |
+| TC-22 | Locked to Open                                  | Status Open; transitive recalculation scope recalculated                                             |
 | TC-23 | Locked Reopen produces unscheduled Task         | Reopen succeeds; Project Open; later Lock rejected until scheduled                              |
 | TC-24 | Locked Reopen technical failure                | Entire operation rollback; Project remains Locked                                               |
 | TC-25 | Priority change with no Locked impact           | Atomic swap; affected Open scope recalculated; Locked state unchanged                           |
@@ -947,7 +951,7 @@ mengekspos stack trace, SQL, database, atau infrastructure detail.
   unfinished leaves.
 - Delete childless Project and reject delete when any child exists.
 - Preserve Locked baselines on Actual Date entry, persist Actual Allocation, recalculate impacted Open Projects, and reject Task Reopen while Locked.
-- Atomic Priority Move Up/Down with transitive impacted-scope recalculation and Locked-impact rejection.
+- Atomic Priority Move Up/Down with transitive recalculation-scope persistence and Locked-impact rejection.
 - Dependency failure rollback and concurrent transition behaviour.
 - Scheduling/Gantt visibility and downstream invalidation contracts.
 
@@ -1114,9 +1118,9 @@ This requirement is synchronized with US-3.3, US-4.1, US-4.2, US-4.3, and projec
 - Reopen completed Task requires the Project to be Open.
 - Project may Lock only when it has at least one Executable Task and every unfinished Task is fully scheduled. Lock validates current state and does not run scheduler.
 - Allowed transitions: Open→Locked, Locked→Open, Open→Closed, Locked→Closed, and Closed→Open. Closed→Locked is forbidden.
-- Locked→Open calculates an atomic Required Locked Reopen Closure, then recalculates all unfinished Tasks in the transitive impacted scheduling scope.
+- Locked→Open calculates an atomic Required Locked Reopen Closure by counterfactual scheduler simulation to fixed point, preserving Priority; connectivity alone does not require another Locked Project to reopen. Open warning names are the timeline-impacted subset, so a missing-anchor/no-baseline Project may be recalculated without being listed. The complete transitive recalculation scope is still recalculated after Reopen.
 - Unscheduled result does not fail Locked Reopen; technical/integrity/concurrency failure rolls the entire transition back.
-- Priority may change while Locked Projects exist only when simulation proves no Locked impact; Open-only impact requires grouped warning/confirmation and server revalidation.
+- Priority may change while Locked Projects exist when simulation proves no protected Locked Task Execution/Commitment date would change; allocation-only pressure is allowed. Another Open Project requires grouped warning/confirmation only for Executable Task Execution/Commitment date changes, with server revalidation over the full recalculation state.
 - Priority recalculation is transitively bounded; unrelated Projects are not recalculated or version-updated.
 - Closed is historical, read-only, excluded from scheduling and Gantt, and ordered after active Projects.
 - Close is permitted only when every descendant Executable Task has complete Actual Date.

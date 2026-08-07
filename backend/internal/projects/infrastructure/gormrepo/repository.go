@@ -16,6 +16,7 @@ import (
 	"github.com/banggok/sched_mind/backend/internal/projects/domain"
 	"github.com/banggok/sched_mind/backend/internal/shared/listing"
 	sharedpersistence "github.com/banggok/sched_mind/backend/internal/shared/persistence"
+	"github.com/banggok/sched_mind/backend/internal/shared/schedulingimpact"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -243,7 +244,7 @@ func (r *Repository) ChangeStatus(ctx context.Context, id string, target domain.
 			return errors.New("change status: find returned nil")
 		}
 		if value.Status == domain.StatusLocked && target == domain.StatusOpen {
-			plan, err := requiredReopenPlan(tx, id)
+			plan, err := requiredReopenPlan(ctx, tx, id, schedule)
 			if err != nil {
 				return err
 			}
@@ -529,11 +530,7 @@ type reopenPlan struct {
 	Token  string
 }
 
-type reopenTaskRow struct {
-	ID         string
-	ProjectID  string
-	AssigneeID *string
-}
+var errRollbackReopenPreview = errors.New("rollback project reopen preview")
 
 func (r *Repository) BulkReopen(ctx context.Context, rootProjectID, token string, now time.Time, schedule func(context.Context) error) ([]domain.Project, error) {
 	ctx, release := sharedpersistence.SerializeScheduleMutation(ctx)
@@ -543,7 +540,7 @@ func (r *Repository) BulkReopen(ctx context.Context, rootProjectID, token string
 		if err := sharedpersistence.LockScheduleMutation(tx); err != nil {
 			return fmt.Errorf("lock bulk reopen mutation: %w", err)
 		}
-		plan, err := requiredReopenPlan(tx, rootProjectID)
+		plan, err := requiredReopenPlan(ctx, tx, rootProjectID, schedule)
 		if err != nil {
 			return err
 		}
@@ -596,7 +593,7 @@ func (r *Repository) BulkReopen(ctx context.Context, rootProjectID, token string
 	return changed, nil
 }
 
-func requiredReopenPlan(tx *gorm.DB, rootProjectID string) (reopenPlan, error) {
+func requiredReopenPlan(ctx context.Context, tx *gorm.DB, rootProjectID string, schedule func(context.Context) error) (reopenPlan, error) {
 	var projects []projectModel
 	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("status IN ?", activeStatuses()).Order("priority ASC").Order("id ASC").Find(&projects).Error; err != nil {
 		return reopenPlan{}, fmt.Errorf("load active projects for reopen plan: %w", err)
@@ -613,78 +610,46 @@ func requiredReopenPlan(tx *gorm.DB, rootProjectID string) (reopenPlan, error) {
 		return reopenPlan{}, domain.ErrStatusTransitionNotAllowed
 	}
 
-	var tasks []reopenTaskRow
-	if err := tx.Table("wbs_nodes").Select("id, project_id, assignee_id").Where("project_id IN ?", projectIDs(projects)).Scan(&tasks).Error; err != nil {
-		return reopenPlan{}, fmt.Errorf("load tasks for reopen plan: %w", err)
-	}
-	projectByTask := make(map[string]string, len(tasks))
-	projectsByAssignee := make(map[string][]string)
-	for _, task := range tasks {
-		projectByTask[task.ID] = task.ProjectID
-		if task.AssigneeID != nil {
-			projectsByAssignee[*task.AssigneeID] = append(projectsByAssignee[*task.AssigneeID], task.ProjectID)
+	reopenSet := map[string]struct{}{rootProjectID: {}}
+	openImpactSet := make(map[string]struct{})
+	for {
+		impact, err := simulateReopenImpact(ctx, tx, rootProjectID, reopenSet, schedule)
+		if err != nil {
+			return reopenPlan{}, err
 		}
-	}
-	adjacency := make(map[string]map[string]struct{}, len(projects))
-	connect := func(left, right string) {
-		if left == right || projectByID[left].ID == "" || projectByID[right].ID == "" {
-			return
-		}
-		if adjacency[left] == nil {
-			adjacency[left] = make(map[string]struct{})
-		}
-		if adjacency[right] == nil {
-			adjacency[right] = make(map[string]struct{})
-		}
-		adjacency[left][right] = struct{}{}
-		adjacency[right][left] = struct{}{}
-	}
-	for _, ids := range projectsByAssignee {
-		unique := uniqueStrings(ids)
-		for left := 0; left < len(unique); left++ {
-			for right := left + 1; right < len(unique); right++ {
-				connect(unique[left], unique[right])
-			}
-		}
-	}
-	var dependencyPairs []struct {
-		BlockingTaskID string
-		BlockedTaskID  string
-	}
-	if err := tx.Table("task_dependencies").Select("blocking_task_id, blocked_task_id").Scan(&dependencyPairs).Error; err != nil {
-		return reopenPlan{}, fmt.Errorf("load dependencies for reopen plan: %w", err)
-	}
-	for _, dependency := range dependencyPairs {
-		connect(projectByTask[dependency.BlockingTaskID], projectByTask[dependency.BlockedTaskID])
-	}
-
-	visited := map[string]struct{}{rootProjectID: {}}
-	queue := []string{rootProjectID}
-	for len(queue) > 0 {
-		current := queue[0]
-		queue = queue[1:]
-		neighbors := make([]string, 0, len(adjacency[current]))
-		for neighbor := range adjacency[current] {
-			neighbors = append(neighbors, neighbor)
-		}
-		sort.Strings(neighbors)
-		for _, neighbor := range neighbors {
-			if _, seen := visited[neighbor]; seen {
+		added := false
+		for _, candidate := range impact.LockedProjects {
+			project, exists := projectByID[candidate.ID]
+			if !exists || project.Status != string(domain.StatusLocked) {
 				continue
 			}
-			visited[neighbor] = struct{}{}
-			queue = append(queue, neighbor)
+			if _, already := reopenSet[candidate.ID]; already {
+				continue
+			}
+			reopenSet[candidate.ID] = struct{}{}
+			added = true
 		}
-	}
-	plan := reopenPlan{}
-	for _, project := range projects {
-		if _, included := visited[project.ID]; !included {
+		if added {
 			continue
 		}
+		if len(impact.LockedProjects) > 0 {
+			return reopenPlan{}, fmt.Errorf("project reopen simulation did not converge")
+		}
+		for _, candidate := range impact.OpenProjects {
+			if _, reopening := reopenSet[candidate.ID]; reopening {
+				continue
+			}
+			openImpactSet[candidate.ID] = struct{}{}
+		}
+		break
+	}
+
+	plan := reopenPlan{}
+	for _, project := range projects {
 		ref := domain.ReopenProject{ID: project.ID, Name: project.Name, Version: project.ScheduleVersion}
-		if project.Status == string(domain.StatusLocked) {
+		if _, included := reopenSet[project.ID]; included {
 			plan.Locked = append(plan.Locked, ref)
-		} else {
+		} else if _, impacted := openImpactSet[project.ID]; impacted {
 			plan.Open = append(plan.Open, ref)
 		}
 	}
@@ -692,26 +657,35 @@ func requiredReopenPlan(tx *gorm.DB, rootProjectID string) (reopenPlan, error) {
 	return plan, nil
 }
 
-func projectIDs(projects []projectModel) []string {
-	ids := make([]string, 0, len(projects))
-	for _, project := range projects {
-		ids = append(ids, project.ID)
-	}
-	return ids
-}
-
-func uniqueStrings(values []string) []string {
-	seen := make(map[string]struct{}, len(values))
-	out := make([]string, 0, len(values))
-	for _, value := range values {
-		if _, exists := seen[value]; exists {
-			continue
+func simulateReopenImpact(ctx context.Context, tx *gorm.DB, rootProjectID string, reopenSet map[string]struct{}, schedule func(context.Context) error) (schedulingimpact.Error, error) {
+	var scheduleErr error
+	transactionErr := tx.Transaction(func(simulation *gorm.DB) error {
+		ids := make([]string, 0, len(reopenSet))
+		for projectID := range reopenSet {
+			ids = append(ids, projectID)
 		}
-		seen[value] = struct{}{}
-		out = append(out, value)
+		sort.Strings(ids)
+		if err := simulation.Model(&projectModel{}).
+			Where("id IN ? AND status = ?", ids, string(domain.StatusLocked)).
+			Update("status", string(domain.StatusOpen)).Error; err != nil {
+			return fmt.Errorf("stage project reopen simulation: %w", err)
+		}
+		simulationContext := sharedpersistence.WithTransaction(ctx, simulation)
+		simulationContext = schedulingimpact.WithPreviewOperation(simulationContext, rootProjectID, schedulingimpact.ModeOrdinary)
+		scheduleErr = schedule(simulationContext)
+		return errRollbackReopenPreview
+	})
+	if transactionErr != nil && !errors.Is(transactionErr, errRollbackReopenPreview) {
+		return schedulingimpact.Error{}, transactionErr
 	}
-	sort.Strings(out)
-	return out
+	if scheduleErr == nil {
+		return schedulingimpact.Error{}, nil
+	}
+	var impact schedulingimpact.Error
+	if errors.As(scheduleErr, &impact) {
+		return impact, nil
+	}
+	return schedulingimpact.Error{}, fmt.Errorf("simulate project reopen schedule: %w", scheduleErr)
 }
 
 func reopenToken(root string, locked, open []domain.ReopenProject) string {

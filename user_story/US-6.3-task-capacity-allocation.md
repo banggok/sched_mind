@@ -673,7 +673,7 @@ change:
 - capacity available to later Tasks/Projects;
 - automatic dependency ownership;
 - Project summary/Gantt range;
-- transitive impacted scope.
+- transitive recalculation scope.
 
 With Automatic Scheduling ON:
 

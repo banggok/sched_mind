@@ -294,7 +294,7 @@ WBS commands.
 20. Grouping WBS cannot own or edit executable fields; View Group may display
     the read-only recursive descendant summary defined by US-4.3.
 21. Manual timeline is editable only when Automatic Scheduling is OFF.
-22. Complete Actual Date is only available for Executable WBS. On an Open Project it actualizes timelines and creates Actual Allocation through US-6.2; on a Locked Project it preserves baseline while Actual Allocation may recalculate impacted Open Projects.
+22. Complete Actual Date is only available for Executable WBS. On an Open Project it actualizes timelines and creates Actual Allocation through US-6.2; on a Locked Project it preserves baseline while Actual Allocation may recalculate the transitive Open scope; only resulting Executable Task Execution/Commitment date changes warn.
 23. Locked Project rejects every WBS/Task planning or structural mutation, including create, rename, edit, delete, move, reorder, conversion, and Task Reopen. Complete Actual Date entry is the only Task mutation exception.
 24. With Automatic Scheduling ON, a root or child Task created only with Name and without structural conversion persists with empty generated dates and does not invoke concrete portfolio recalculation. Create that converts an existing Executable WBS and moves executable data or dependency endpoints, sibling reorder, Assignee change, Effort change, Lag change, and other established structural conversions still invoke concrete portfolio recalculation.
 25. Rename and Role-only changes do not invoke scheduling when Assignee is unchanged.

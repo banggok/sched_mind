@@ -5,9 +5,11 @@
 > owning Project Buffer derives Commitment Capacity.
 
 > **Product decision update — US-6.2:** Public Holiday create/update/delete is a
-> scheduling-impacting mutation. Confirmed save requires transitive impact
-> simulation. Open-only Project impact requires confirmation and server-side
-> revalidation; any impacted Locked Project blocks the mutation atomically.
+> scheduling-relevant mutation. Confirmed save uses transitive recalculation
+> simulation. Another Open Project requires confirmation only for Executable Task
+> Execution/Commitment Start or End changes; a Locked Project blocks only when a
+> protected Task timeline date would counterfactually change. Allocation/capacity/
+> readiness-only deltas remain recalculation state but do not warn by themselves.
 
 ## 1. User Story
 
@@ -195,10 +197,13 @@ Konsekuensi:
 - Public Holiday hanya memengaruhi capacity resolution pada Date terkait.
 - Public Holiday tidak mengubah atau menghapus Daily Capacity, Buffer, maupun
   Capacity Override.
-- Create, update, dan delete mengikuti US-6.2 transitive impact simulation.
-- Open-only impact requires confirmation; any impacted Locked Project blocks save.
-- Confirmed allowed mutation and impacted Open-Project recalculation persist
-  atomically using the latest Public Holiday data.
+- Create, update, dan delete mengikuti US-6.2 transitive recalculation simulation.
+- Another Open Project requires confirmation only for Executable Task Execution/
+  Commitment Start or End changes; Locked blocking requires a counterfactual
+  protected Task date change.
+- Confirmed allowed mutation and the complete recalculation-affected Open scope
+  persist atomically using the latest Public Holiday data, including non-warning
+  allocation/readiness-only changes.
 
 ---
 

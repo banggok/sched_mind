@@ -3,8 +3,8 @@
 > **Product decision update — US-6.2:** Completion uses a required Actual Date
 > pair (`Actual Start` and `Actual End`). Reopen Task atomically clears both
 > fields and removes Actual Allocation. Reopen is allowed only while the owning
-> Project is Open and follows the generic cross-project impact
-> preview/confirmation contract.
+> Project is Open and follows the US-6.2 transitive recalculation plus timeline-only
+> cross-project impact preview/confirmation contract.
 
 > **Product decision update — US-7.1:** Completed Task Name on Home opens the
 > shared Edit Task dialog directly over Home. The action remains **Edit Task**,
@@ -66,9 +66,9 @@ Date dan Actual Allocation atomically.
 - Change derived completion state to unfinished.
 - Allow Reopen only when owning Project is Open.
 - Reject Locked and Closed Project.
-- Run generic cross-project impact preview before save.
-- Require confirmation when only other Open Projects are impacted.
-- Block when another Locked Project is impacted.
+- Run US-6.2 transitive recalculation simulation before save.
+- Require confirmation only when another Open Project has an Executable Task Execution/Commitment Start or End change.
+- Block only when another Locked Project would counterfactually require a protected Task timeline date change.
 - Server-side impact revalidation, atomic recalculation, rollback, concurrency,
   stale-response protection, accessibility, and Three-Level Confidence.
 
@@ -137,10 +137,10 @@ according to repository conventions.
 Reopen removes historical capacity consumption and returns the Task to
 unfinished scheduling. Therefore it is a scheduling-impacting mutation:
 
-1. Server simulates the proposed Reopen and transitive impacted scope.
+1. Server simulates the proposed Reopen and transitive recalculation scope.
 2. Current Project is excluded from the warning list.
-3. Open-only impact requires Project-name confirmation.
-4. Any impacted Locked Project blocks Reopen.
+3. Another Open Project requires Project-name confirmation only when an Executable Task Execution/Commitment Start or End changes.
+4. A Locked Project blocks Reopen only when counterfactual simulation requires a protected Task timeline date change; allocation/readiness-only pressure does not block.
 5. Confirm performs server-side revalidation.
 6. Reopen, Actual Allocation removal, dependency reconciliation, unfinished
    scheduling, and persistence commit or rollback together.
@@ -224,15 +224,16 @@ Generic Task update may not clear either Actual field as a bypass.
 **Then** prior Actual Allocation no longer consumes capacity
 **And** unfinished scheduling recalculates according to US-6.2/US-6.1.
 
-### AC-8 — Open-only impact requires confirmation
+### AC-8 — Open timeline impact requires confirmation
 
-**Given** Reopen affects other Open Projects only
-**Then** grouped warning lists Project names
-**And** confirmed operation recalculates atomically.
+**Given** Reopen causes another Open Project Executable Task Execution/Commitment Start or End to change
+**Then** grouped warning lists that timeline-impacted Project name
+**And** allocation/readiness-only recalculation Projects are not listed
+**And** confirmed operation persists the complete recalculation scope atomically.
 
-### AC-9 — Locked impact blocks Reopen
+### AC-9 — Locked timeline impact blocks Reopen
 
-**Given** Reopen would require mutation to another Locked Project
+**Given** Reopen would counterfactually require another Locked Project protected Executable Task Execution/Commitment Start or End to change
 **Then** operation is blocked
 **And** Actual Date and allocation remain confirmed.
 
@@ -325,8 +326,8 @@ Acceptance-Level evidence.
 - Reopen clears Actual Start and Actual End together.
 - Reopen is available only on Open Project.
 - Reopen is scheduling-impacting because Actual Allocation is removed.
-- Open-only cross-project impact requires confirmation.
-- Any impacted Locked Project blocks Reopen.
+- Open cross-project confirmation is limited to Executable Task Execution/Commitment date changes.
+- Locked Project blocking is limited to counterfactual protected Task timeline date changes; allocation/readiness-only pressure does not block Reopen.
 - Confirmation is server-revalidated and atomic.
 - Task identity, planning data, and dependency are preserved.
 - Original Effort is used when Task returns to unfinished scheduling.

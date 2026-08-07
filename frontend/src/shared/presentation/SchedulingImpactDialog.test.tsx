@@ -41,7 +41,7 @@ describe("SchedulingImpactDialog", () => {
     vi.unstubAllGlobals();
   });
 
-  it("US-2.2 AC-31 keeps a Public Holiday save recoverable by portalling impact confirmation above the form", async () => {
+  it("US-6.2 D01/D05 AC-20/AC-24A shows only backend-classified timeline impacts while keeping Public Holiday confirmation recoverable", async () => {
     const fetchMock = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(
@@ -52,7 +52,9 @@ describe("SchedulingImpactDialog", () => {
             details: {
               token: "impact-token",
               lockedProjects: [],
-              openProjects: [{ id: "project-1", name: "Project 1" }],
+              openProjects: [
+                { id: "timeline-project", name: "Timeline Project" },
+              ],
             },
           }),
           {
@@ -87,7 +89,13 @@ describe("SchedulingImpactDialog", () => {
     );
     expect(screen.getByLabelText("save status").textContent).toBe("saving");
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(within(confirmation).getByText("Project 1")).toBeTruthy();
+    expect(within(confirmation).getByText("Timeline Project")).toBeTruthy();
+    expect(
+      within(confirmation).queryByText("Allocation-only Project"),
+    ).toBeNull();
+    expect(
+      within(confirmation).getByText(/timeline-impacted projects/i),
+    ).toBeTruthy();
 
     await user.click(
       within(confirmation).getByRole("button", { name: "Confirm and save" }),

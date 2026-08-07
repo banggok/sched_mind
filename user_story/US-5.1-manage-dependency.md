@@ -15,7 +15,7 @@
 > and continue through the shared Edit Task form opened directly from Task Name
 > on Home.
 
-> **Product decision update — US-6.2:** Dependency planning is immutable while either endpoint belongs to a Locked Project. Existing relations remain readable scheduling anchors, but create/delete/ownership change/retarget requires affected Projects to be Open and follows the generic cross-project impact warning/confirmation contract. Completion uses complete Actual Date. Successor completion requires every predecessor already completed, but historical Actual Date ranges may overlap. Actual End remains the readiness anchor.
+> **Product decision update — US-6.2:** Dependency planning is immutable while either endpoint belongs to a Locked Project. Existing relations remain readable scheduling anchors, but create/delete/ownership change/retarget requires affected Projects to be Open and follows the US-6.2 transitive recalculation plus timeline-only cross-project impact warning/confirmation contract. Completion uses complete Actual Date. Successor completion requires every predecessor already completed, but historical Actual Date ranges may overlap. Actual End remains the readiness anchor.
 
 > **Product decision update — US-6.1:** US-5.1 continues to own manual
 > dependency management and graph invariants. US-6.1 adds scheduler-owned Auto
@@ -613,9 +613,10 @@ Rules:
 ### AC-17B — Locked cross-project dependency remains valid during priority change
 
 **Given** Open Task menjadi predecessor Locked Task
-**When** proposed Project Priority makes predecessor readiness later than Locked successor requirement
+**When** proposed Project Priority makes predecessor readiness later and counterfactual simulation would require the Locked successor's protected Execution/Commitment Start or End to change
 **Then** Priority change is rejected according to US-6.2
-**And** dependency and all schedules remain unchanged.
+**And** dependency and all schedules remain unchanged
+**But** readiness/allocation-only pressure does not reject the change when all protected Locked dates remain valid.
 
 ### AC-18 — Selector seluruh Open Project
 
@@ -999,7 +1000,7 @@ Tidak boleh mengekspos SQL, stack trace, atau infrastructure details.
 
 ### TC-16C — Priority impact through Open predecessor and Locked successor
 
-**Expected:** Priority change rejected when Locked readiness becomes invalid.
+**Expected:** Priority change rejected only when the readiness change would require a protected Locked Task Execution/Commitment Start or End to change; readiness/allocation-only pressure with unchanged protected dates does not block.
 
 ### TC-17 — Completed Open Project candidate
 
@@ -1283,7 +1284,7 @@ README dan environment documentation hanya diubah bila setup berubah.
 - Summary Task tidak boleh menjadi endpoint.
 - Dependency boleh cross-project.
 - Dependency mutation requires both endpoint Projects to be Open; any relation involving a Locked Project is immutable until Project Reopen.
-- Scheduler uses transitive impacted scope rather than unrelated whole-portfolio recalculation.
+- Scheduler uses transitive recalculation scope rather than unrelated whole-portfolio recalculation; warning scope is the timeline-delta subset defined by US-6.2.
 - UI menggunakan `Blocks` dan `Blocked by`.
 - Keduanya editable dan merepresentasikan satu relation.
 - Finish-to-Start adalah satu-satunya type MVP.

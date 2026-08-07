@@ -155,15 +155,18 @@ leave, or overtime/support. One Member may have multiple overlapping overrides;
 the minimum active Capacity is resolved independently for each Date. Exact
 duplicates with the same Member, Start Date, End Date, and Capacity are rejected
 even when Description differs. Effective-date filtering is inclusive. Mutation
-uses cross-project impact coordination only when the resolved per-Date minimum
-changes. Exact creation, editing, deletion, concurrency, filtering, and capacity
+invokes cross-project recalculation only when the resolved per-Date minimum
+changes; warning/blocking classification then follows the timeline-only US-6.2 rule. Exact creation, editing, deletion, concurrency, filtering, and capacity
 resolution rules belong to US-2.1.
 
 Public Holiday has precedence over a Capacity Override and resolves daily
 capacity to zero. Daily Capacity, Member Buffer, Capacity Override, Public
-Holiday, and Project Buffer mutations use US-6.2 cross-project impact preview.
-Open-only impact requires confirmation; Locked impact blocks; confirmed allowed
-changes and impacted Open schedules persist atomically.
+Holiday, and Project Buffer mutations use US-6.2 cross-project recalculation.
+Another Open Project requires confirmation only when an Executable Task
+Execution/Commitment Start or End changes. A Locked Project blocks only when its
+protected Task timeline would counterfactually need a date change; allocation-
+only pressure does not warn or block. Confirmed allowed changes and the complete
+recalculated Open scope persist atomically.
 
 ### Project
 
@@ -175,9 +178,14 @@ rename path does not change settings, priority, snapshots, schedule version, or
 invoke scheduling. Planning, WBS structure, Task planning fields, Settings, and
 dependency changes otherwise require explicit `Locked → Open` Reopen. Complete
 Actual Date remains the only Task mutation allowed while Locked. It changes no
-protected baseline, but Actual Allocation may recalculate impacted Open
-Projects. Mutual/transitive Locked impact is resolved through atomic Reopen All
-closure. Forecast behavior while Locked is deferred. Closed Projects are
+protected baseline, but Actual Allocation may recalculate the affected Open
+scope; only resulting Task timeline changes are shown as impact warnings.
+Mutual/transitive Locked impact is resolved through atomic Reopen All closure.
+That closure is scheduler-simulated: connectivity creates candidate scope but
+does not itself require another Locked Project to reopen. Priority remains
+authoritative, and Open Projects appear in the Reopen warning only when an
+existing Execution/Commitment Task date actually changes; a missing-anchor
+Project with no existing timeline stays out of the warning. Forecast behavior while Locked is deferred. Closed Projects are
 historical, read-only, and excluded from scheduling and Gantt. Exact
 transitions, ordering, deletion, and downstream contracts belong to US-3.1 and
 US-6.2.
@@ -205,9 +213,11 @@ manual-owned, automatic-owned, or both. Removing manual ownership never removes
 scheduler-required automatic ownership.
 
 The concrete scheduler supports shared capacity and cross-project dependency,
-but each mutation recalculates only its transitive impacted scheduling scope.
-Open unfinished Tasks may change; Locked Projects are immutable outputs and
-unrelated Projects are not recalculated or version-updated. Dependency readiness
+but each mutation recalculates only its transitive recalculation scope. The scope
+propagates through schedule-relevant date, allocation, capacity, readiness, and
+unscheduled-state changes even when an intermediate Project has no warning-worthy
+Task date delta. Open unfinished Tasks may change; Locked Projects are immutable
+outputs and unrelated Projects are not recalculated or version-updated. Dependency readiness
 is applied before Project Priority and depth-first WBS order. A Task's percentage
 is applied only after final Execution/Commitment capacity is independently
 resolved and rounded; later ordered Tasks may use remaining capacity on the same

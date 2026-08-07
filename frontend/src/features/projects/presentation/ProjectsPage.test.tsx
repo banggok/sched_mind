@@ -67,6 +67,47 @@ describe("Projects page", () => {
     );
   });
 
+  it("labels Bulk Reopen open projects as timeline impacts only_US62_D08_AC25", async () => {
+    const locked = { ...alpha, status: "locked" as const };
+    const api = gateway([locked]);
+    api.changeStatus = vi.fn().mockRejectedValue(
+      new ProjectOperationError(
+        "PROJECT_BULK_REOPEN_REQUIRED",
+        "project reopen requires related locked projects",
+        undefined,
+        {
+          rootProjectId: "p1",
+          lockedProjects: [
+            { id: "p1", name: "Alpha", version: 3 },
+            { id: "p2", name: "Beta", version: 5 },
+          ],
+          openProjects: [{ id: "p4", name: "Delta", version: 7 }],
+          token: "reopen-token",
+        },
+      ),
+    );
+    const user = userEvent.setup();
+    render(<ProjectsPage gateway={api} />);
+
+    await screen.findByText("Alpha");
+    await user.click(screen.getByRole("button", { name: "Reopen" }));
+    await user.click(screen.getByRole("button", { name: "Reopen project" }));
+
+    const dialog = await screen.findByRole("alertdialog", {
+      name: "Reopen related locked projects?",
+    });
+    expect(
+      within(dialog).getByRole("heading", {
+        name: "Open Projects whose timeline will change",
+      }),
+    ).toBeTruthy();
+    expect(dialog.textContent).toContain(
+      "Open projects are listed only when their existing timeline will change.",
+    );
+    expect(within(dialog).getByText("Delta")).toBeTruthy();
+    expect(within(dialog).queryByText("Project C")).toBeNull();
+  });
+
   it("creates a project and prevents fields outside the approved contract", async () => {
     const api = gateway([]);
     const user = userEvent.setup();

@@ -10,6 +10,7 @@ import (
 	"github.com/banggok/sched_mind/backend/internal/projects/domain"
 	"github.com/banggok/sched_mind/backend/internal/shared/listing"
 	sharedpersistence "github.com/banggok/sched_mind/backend/internal/shared/persistence"
+	"github.com/banggok/sched_mind/backend/internal/shared/schedulingimpact"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -296,5 +297,79 @@ func TestRepositoryRenameLockedProjectUpdatesOnlyIdentityFields_US31_AC11_US62_A
 		after.LockedCommitmentSnapshot == nil || before.LockedCommitmentSnapshot == nil ||
 		*after.LockedCommitmentSnapshot != *before.LockedCommitmentSnapshot || !after.CreatedAt.Equal(before.CreatedAt) {
 		t.Fatalf("protected fields changed: before=%#v after=%#v", before, after)
+	}
+}
+
+func TestRequiredReopenPlanUsesSimulationFixedPointInsteadOfConnectivity_US62_D07_D08_AC25_AC26(t *testing.T) {
+	repository := testRepository(t)
+	now := time.Date(2026, 8, 1, 8, 0, 0, 0, time.UTC)
+	projects := []projectModel{
+		{ID: "a", Name: "Project A", NameKey: "project a", Status: "locked", Priority: 1, AutomaticScheduling: true, AutoCalculateDate: true, ScheduleVersion: 7, CreatedAt: now, UpdatedAt: now},
+		{ID: "b", Name: "Project B", NameKey: "project b", Status: "locked", Priority: 2, AutomaticScheduling: true, AutoCalculateDate: true, ScheduleVersion: 11, CreatedAt: now, UpdatedAt: now},
+		{ID: "c", Name: "Project C", NameKey: "project c", Status: "open", Priority: 3, AutomaticScheduling: true, AutoCalculateDate: true, ScheduleVersion: 13, CreatedAt: now, UpdatedAt: now},
+		{ID: "d", Name: "Project D", NameKey: "project d", Status: "open", Priority: 4, AutomaticScheduling: true, AutoCalculateDate: true, ScheduleVersion: 17, CreatedAt: now, UpdatedAt: now},
+	}
+	if err := repository.database.Create(&projects).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	calls := 0
+	schedule := func(ctx context.Context) error {
+		calls++
+		database := sharedpersistence.Transaction(ctx, repository.database)
+		var statuses []projectModel
+		if err := database.Order("priority ASC").Find(&statuses).Error; err != nil {
+			return err
+		}
+		byID := make(map[string]string, len(statuses))
+		for _, project := range statuses {
+			byID[project.ID] = project.Status
+		}
+		if byID["b"] != "open" {
+			return errors.New("root B was not staged open during preview")
+		}
+		if calls == 1 {
+			if byID["a"] != "locked" {
+				return errors.New("A must remain locked during first preview")
+			}
+			return schedulingimpact.Error{
+				Kind:           schedulingimpact.LockedProjectImpact,
+				LockedProjects: []schedulingimpact.Project{{ID: "a", Name: "Project A", Status: "locked", Version: 7}},
+				OpenProjects:   []schedulingimpact.Project{{ID: "c", Name: "Project C", Status: "open", Version: 13}},
+			}
+		}
+		if byID["a"] != "open" {
+			return errors.New("A must be staged open after joining the fixed-point closure")
+		}
+		return schedulingimpact.Error{
+			Kind:         schedulingimpact.ConfirmationRequired,
+			OpenProjects: []schedulingimpact.Project{{ID: "d", Name: "Project D", Status: "open", Version: 17}},
+		}
+	}
+
+	plan, err := requiredReopenPlan(context.Background(), repository.database, "b", schedule)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 {
+		t.Fatalf("preview calls = %d, want 2 fixed-point iterations", calls)
+	}
+	if len(plan.Locked) != 2 || plan.Locked[0].ID != "a" || plan.Locked[1].ID != "b" {
+		t.Fatalf("locked closure = %#v, want A/B", plan.Locked)
+	}
+	if len(plan.Open) != 1 || plan.Open[0].ID != "d" {
+		t.Fatalf("open timeline impacts = %#v, want only final-impact D", plan.Open)
+	}
+	if plan.Token == "" {
+		t.Fatal("reopen plan token is empty")
+	}
+	for _, project := range projects {
+		var persisted projectModel
+		if err := repository.database.First(&persisted, "id = ?", project.ID).Error; err != nil {
+			t.Fatal(err)
+		}
+		if persisted.Status != project.Status {
+			t.Fatalf("preview leaked status for %s: %q -> %q", project.ID, project.Status, persisted.Status)
+		}
 	}
 }

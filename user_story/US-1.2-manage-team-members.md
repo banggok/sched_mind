@@ -6,10 +6,12 @@
 > Base Execution Capacity preserves the existing `0.5`-hour rounding rule after Member Buffer is applied.
 
 > **Product decision update — US-6.2:** Daily Capacity and Member Buffer are
-> scheduling-impacting mutations. Before confirmed save, the server simulates
-> transitive cross-project impact. Open-only impact requires grouped Project-name
-> confirmation and server revalidation. Any impacted Locked Project blocks the
-> change atomically. Independent Projects are not recalculated. Member Buffer does not alter Actual BAU Capacity; it remains an Execution/Commitment planning input.
+> scheduling-relevant mutations. Before confirmed save, the server simulates
+> the transitive recalculation scope. Grouped warning/confirmation is required
+> only when another Open Project has an Executable Task Execution/Commitment
+> Start or End date change. A Locked Project blocks only when its protected Task
+> timeline would counterfactually need a date change; allocation-only pressure
+> does not warn or block. Independent Projects are not recalculated. Member Buffer does not alter Actual BAU Capacity; it remains an Execution/Commitment planning input.
 
 ## User Story
 
@@ -518,7 +520,7 @@ Buffer must be between 0 and less than 100
 **And** scheduler tidak menggunakan Daily Capacity atau Member Buffer lama yang tersimpan atau ter-cache
 **And** cross-project warning/blocking/revalidation follows US-6.2.
 
-Confirmed Daily Capacity or Member Buffer update follows US-6.2 impact preview/confirmation. After confirmation, the mutation and all allowed impacted Open-Project recalculation are persisted atomically; Locked impact blocks save.
+Confirmed Daily Capacity or Member Buffer update follows US-6.2 transitive recalculation and timeline-only impact preview/confirmation. The mutation and all recalculation-affected Open Projects persist atomically even when some have allocation/readiness-only changes and therefore no warning; Locked blocking is limited to counterfactual protected Task date changes.
 
 ---
 

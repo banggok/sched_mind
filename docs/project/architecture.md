@@ -248,7 +248,7 @@ removed Task has Assignee, Effort, non-zero Lag, generated projection, automatic
 unscheduled projection, or dependency endpoints; scheduling failure rolls back
 the deletion.
 
-The scheduler loads the transitive impacted scheduling scope, validates unique Priority and WBS ordering, resolves manual and retained automatic dependency edges, and allocates Execution and Commitment independently. Open unfinished Tasks are mutable outputs; Locked Projects are immutable anchors; unrelated Projects are not recalculated or version-updated. Capacity arithmetic uses
+The scheduler loads the transitive recalculation scope, validates unique Priority and WBS ordering, resolves manual and retained automatic dependency edges, and allocates Execution and Commitment independently. Recalculation propagates on schedule-relevant date, allocation, capacity, readiness, and unscheduled-state changes; warning classification is a later, narrower step. Open unfinished Tasks are mutable outputs; Locked Projects are immutable anchors; unrelated Projects are not recalculated or version-updated. Capacity arithmetic uses
 `math/big.Rat`: weekend/Public Holiday resolves to zero, otherwise the minimum
 active Capacity Override replaces Member Daily Capacity, Member Buffer produces
 raw Execution Capacity and rounds it to the nearest `0.5` hour. Commitment
@@ -265,9 +265,9 @@ uses Project Priority for capacity precedence: higher-priority manual rows reduc
 lower-priority automatic capacity, while lower-priority manual rows may overlap
 higher-priority automatic rows without warning or later capacity debt.
 
-US-6.2 defines Actual Date, Actual Allocation, Locked Project, and generic cross-project impact coordination. Completion persists required Actual Start/Actual End together. Open completion moves each planned Start earlier only when Actual Start is earlier and always sets each End to Actual End. Actual Allocation ignores planned Task percentage and uses only eligible Dates inside Actual Start–Actual End. It competes only with other completed Actual Allocation for the same Assignee/Date, distributes Effort in `0.5`-hour balanced shares, recalculates remaining shares after constrained Dates, backfills spare BAU capacity, and then levels unavoidable total historical overcapacity with a latest-Date tie-breaker. Existing completed Actual rows remain immutable; planned automatic/manual/Locked rows are ignored for Actual head-to-head construction. Historical overcapacity never carries debt to later Dates. Locked Projects remain immutable scheduler outputs, but Actual Date may be saved and its Actual Allocation may recalculate transitively impacted Open Projects. Ordinary Task/dependency/priority/capacity mutations use grouped impact preview, confirmation, server revalidation, and Locked-impact blocking. Project Reopen expands an atomic transitive Locked closure to avoid mutual-lock dead ends.
+US-6.2 defines Actual Date, Actual Allocation, Locked Project, and generic cross-project impact coordination. Completion persists required Actual Start/Actual End together. Open completion moves each planned Start earlier only when Actual Start is earlier and always sets each End to Actual End. Actual Allocation ignores planned Task percentage and uses only eligible Dates inside Actual Start–Actual End. It competes only with other completed Actual Allocation for the same Assignee/Date, distributes Effort in `0.5`-hour balanced shares, recalculates remaining shares after constrained Dates, backfills spare BAU capacity, and then levels unavoidable total historical overcapacity with a latest-Date tie-breaker. Existing completed Actual rows remain immutable; planned automatic/manual/Locked rows are ignored for Actual head-to-head construction. Historical overcapacity never carries debt to later Dates. Locked Projects remain immutable scheduler outputs, but Actual Date may be saved and its Actual Allocation may recalculate the transitive Open recalculation scope. Cross-project warning is emitted only when another Executable Task changes Execution Start/End or Commitment Start/End; allocation, capacity, readiness, or unscheduled-reason changes without a Task date delta may still persist and version without warning. Ordinary Task/dependency/priority/capacity mutations block on a Locked Project only when counterfactual simulation would require one of those protected Task dates to change. Actual Date keeps the factual exception to that block. Project Reopen expands an atomic transitive Locked closure to avoid mutual-lock dead ends.
 
-Execution, Commitment, and Actual daily allocations are separate projections. Actual Allocation rows are canonical and support both Task-centric and assignee-centric queries; current UI exposes the Task-centric read-only verification section while assignee analytics remains deferred. Impact simulation is version-bound: preview returns grouped Project names and a confirmation token, confirm re-simulates under scheduling locks, and stale impact never persists.
+Execution, Commitment, and Actual daily allocations are separate projections. Actual Allocation rows are canonical and support both Task-centric and assignee-centric queries; current UI exposes the Task-centric read-only verification section while assignee analytics remains deferred. Impact simulation is version-bound: preview returns only timeline-impacted Project names, while the confirmation token is bound to the full schedule-relevant recalculation signature and versions, including non-warning Projects. Confirm re-simulates under scheduling locks, so hidden allocation/readiness/capacity changes can stale an otherwise identical visible warning set and stale impact never persists.
 
 `task_schedule_allocations` stores exact decimal allocation and remaining
 capacity by Task, timeline, assignee, and date. Its primary key prevents duplicate
@@ -831,16 +831,29 @@ One canonical Actual row set supports both Task-centric and assignee-centric
 queries.
 
 Actual Date/Reopen commands run impact simulation before persistence. The
-preview is version-bound and returns affected Project names grouped by Open and
-Locked. Open-only impact requires confirmation. Ordinary mutation with Locked
-impact is rejected. Actual Date is the factual-data exception: after grouped
-confirmation it persists while Locked Projects remain immutable and impacted
-Open Projects recalculate. Reopen Task is not an exception and remains blocked
-by impacted Locked Projects.
+preview is version-bound and returns only timeline-impacted Project names grouped
+by Open and Locked. Another Open Project requires confirmation only when one of
+its Executable Tasks changes Execution Start/End or Commitment Start/End. An
+ordinary mutation is rejected only when counterfactual simulation requires a
+protected Task date in another Locked Project to change; allocation-only pressure
+does not make the Locked Project impacted. Actual Date is the factual-data
+exception: after grouped confirmation it persists while Locked Projects remain
+immutable and the complete transitive Open recalculation scope may persist.
+Reopen Task is not an exception and remains blocked by timeline impact to a
+Locked Project.
 
 Project Reopen calculates a transitive Required Locked Reopen Closure. Mutual
 A/B or transitive A/B/C lock dependencies are presented as one `Reopen All`
-operation. Closure status changes, unfinished scheduling, dependency
+operation. Closure discovery is simulation-driven rather than graph-driven:
+shared Assignee/dependency connectivity defines only candidate recalculation
+scope, while a remaining Locked Project joins the closure only when the
+counterfactual scheduler would change one of its protected Execution/Commitment
+Task dates. Project Priority remains authoritative, so reopening a lower-priority
+Locked Project does not pull a higher-priority Locked Project into the closure
+when that higher-priority baseline remains unchanged. The Open list shown in the
+Reopen warning is likewise the timeline-impacted subset, not every Project that
+was considered or recalculated; a missing-anchor Project with no existing
+timeline is therefore omitted. Closure status changes, unfinished scheduling, dependency
 reconciliation, allocation persistence, and version changes are atomic. Stale
 preview, optimistic conflict, or persistence failure leaves all statuses and
 projections unchanged.
@@ -851,8 +864,8 @@ projections unchanged.
   pair-state predicate; cardinality remains at most one Task.
 - Actual Allocation lookup requires Task/date and assignee/date access paths so
   both read models avoid full scans.
-- Impact preview/confirm uses schedule/status versions rather than trusting a
-  client-provided Project list.
+- Impact preview/confirm uses the full schedule-relevant recalculation signature plus schedule/status versions rather than trusting a
+  client-provided warning Project list.
 - Allocation writes and affected schedule rows share one transaction boundary.
 - Exact index design must follow measured PostgreSQL query shapes before
   implementation; this requirement does not authorize speculative indexes.

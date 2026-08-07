@@ -62,8 +62,14 @@ export function TeamMembersDashboardPage({
   const debouncedSearch = useDebouncedValue(search.trim());
   const searchPending = search.trim() !== debouncedSearch;
   const dailyCapacityInputRef = useRef<HTMLInputElement>(null);
+  const listRequestSequence = useRef(0);
+  const [loadedListQueryKey, setLoadedListQueryKey] = useState<string>();
+  const listQueryKey = `${page}:${debouncedSearch}`;
+  const listResultsCurrent = loadedListQueryKey === listQueryKey;
 
   const load = useCallback(async () => {
+    const requestSequence = ++listRequestSequence.current;
+    const queryKey = `${page}:${debouncedSearch}`;
     setLoading(true);
     setError("");
     try {
@@ -75,13 +81,17 @@ export function TeamMembersDashboardPage({
         }),
         roleOptionsGateway.list({ search: "", page: 1, pageSize: 100 }),
       ]);
+      if (requestSequence !== listRequestSequence.current) return;
       setMembers(memberPage.items);
       setTotal(memberPage.total);
       setRoles(rolePage.items);
+      setLoadedListQueryKey(queryKey);
     } catch {
+      if (requestSequence !== listRequestSequence.current) return;
       setError("Members could not be loaded. Please try again.");
+      setLoadedListQueryKey(queryKey);
     } finally {
-      setLoading(false);
+      if (requestSequence === listRequestSequence.current) setLoading(false);
     }
   }, [debouncedSearch, gateway, page, roleOptionsGateway]);
   useEffect(() => {
@@ -194,7 +204,7 @@ export function TeamMembersDashboardPage({
             />
           }
         >
-          {loading || searchPending ? (
+          {loading || searchPending || !listResultsCurrent ? (
             <ListSkeleton label="Loading members" />
           ) : members.length === 0 && debouncedSearch === "" ? (
             <EmptyState
@@ -271,7 +281,7 @@ export function TeamMembersDashboardPage({
               ))}
             </ul>
           )}
-          {!loading && !searchPending && total > 0 ? (
+          {!loading && !searchPending && listResultsCurrent && total > 0 ? (
             <PaginationControls
               page={page}
               pageSize={5}

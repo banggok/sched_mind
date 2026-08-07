@@ -50,6 +50,65 @@ describe("schedulingImpactFetch", () => {
     unsubscribe();
   });
 
+  it("US-6.2 D04 AC-24 replaces stale timeline-impact preview and confirms with the new token", async () => {
+    const stalePayload = {
+      code: "SCHEDULING_IMPACT_STALE",
+      message: "scheduling impact changed after preview",
+      details: {
+        token: "token-2",
+        lockedProjects: [],
+        openProjects: [{ id: "project-c", name: "Project C" }],
+      },
+    };
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(confirmationPayload), {
+          status: 409,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(stalePayload), {
+          status: 409,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    const reviewed: string[] = [];
+    const unsubscribe = subscribeSchedulingImpact((impact, resolve) => {
+      reviewed.push(
+        `${impact.code}:${impact.openProjects
+          .map((project) => project.id)
+          .join(",")}`,
+      );
+      resolve("confirm");
+    });
+
+    const response = await schedulingImpactFetch("/api/tasks", {
+      method: "POST",
+      body: "payload",
+    });
+
+    expect(response.status).toBe(204);
+    expect(reviewed).toEqual([
+      "SCHEDULING_IMPACT_CONFIRMATION_REQUIRED:project-b",
+      "SCHEDULING_IMPACT_STALE:project-c",
+    ]);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(
+      new Headers(fetchMock.mock.calls[1][1]?.headers).get(
+        schedulingImpactTokenHeader,
+      ),
+    ).toBe("token-1");
+    expect(
+      new Headers(fetchMock.mock.calls[2][1]?.headers).get(
+        schedulingImpactTokenHeader,
+      ),
+    ).toBe("token-2");
+    unsubscribe();
+  });
+
   it("does not retry a cancelled mutation", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify(confirmationPayload), {
