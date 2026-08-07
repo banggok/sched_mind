@@ -36,8 +36,11 @@ type taskProjectionRow struct {
 	Name            string
 	AssigneeID      *string
 	AssigneeName    *string
+	EffortMinutes   *int
 	ExecutionStart  *time.Time
 	ExecutionEnd    *time.Time
+	CommitmentStart *time.Time
+	CommitmentEnd   *time.Time
 	ActualStart     *time.Time
 	ActualEnd       *time.Time
 	UpdatedAt       time.Time
@@ -83,7 +86,7 @@ func (repository *Repository) Detail(ctx context.Context, id string) (*applicati
 
 	var taskRows []taskProjectionRow
 	if err := repository.database.WithContext(ctx).Table("sprint_tasks AS relation").
-		Select("task.id, task.project_id, project.name AS project_name, project.status AS project_status, project.priority AS project_priority, project.schedule_version, task.parent_key, task.position, task.name, task.assignee_id, member.name AS assignee_name, task.execution_start, task.execution_end, task.actual_start, task.actual_end, task.updated_at").
+		Select("task.id, task.project_id, project.name AS project_name, project.status AS project_status, project.priority AS project_priority, project.schedule_version, task.parent_key, task.position, task.name, task.assignee_id, member.name AS assignee_name, task.effort_minutes, task.execution_start, task.execution_end, task.commitment_start, task.commitment_end, task.actual_start, task.actual_end, task.updated_at").
 		Joins("JOIN wbs_nodes AS task ON task.id = relation.task_id").
 		Joins("JOIN projects AS project ON project.id = task.project_id").
 		Joins("LEFT JOIN team_members AS member ON member.id = task.assignee_id AND member.deleted_at IS NULL").
@@ -293,7 +296,7 @@ func projectionToken(
 	}
 	for _, row := range tasks {
 		parts = append(parts, fmt.Sprintf(
-			"task:%s:%s:%s:%s:%d:%d:%s:%d:%s:%s:%s:%s:%s:%s:%s:%d",
+			"task:%s:%s:%s:%s:%d:%d:%s:%d:%s:%s:%s:%s:%s:%s:%s:%s:%s:%s:%d",
 			row.ID,
 			row.ProjectID,
 			row.ProjectName,
@@ -305,8 +308,11 @@ func projectionToken(
 			row.Name,
 			optionalString(row.AssigneeID),
 			optionalString(row.AssigneeName),
+			optionalInt(row.EffortMinutes),
 			optionalDate(row.ExecutionStart),
 			optionalDate(row.ExecutionEnd),
+			optionalDate(row.CommitmentStart),
+			optionalDate(row.CommitmentEnd),
 			optionalDate(row.ActualStart),
 			optionalDate(row.ActualEnd),
 			row.UpdatedAt.UnixNano(),
@@ -314,11 +320,12 @@ func projectionToken(
 	}
 	for _, row := range wbsRows {
 		parts = append(parts, fmt.Sprintf(
-			"wbs:%s:%s:%s:%d",
+			"wbs:%s:%s:%s:%d:%s",
 			row.ID,
 			row.ProjectID,
 			optionalString(row.ParentID),
 			row.Position,
+			row.Name,
 		))
 	}
 	for _, row := range overrides {
@@ -353,6 +360,13 @@ func optionalString(value *string) string {
 		return ""
 	}
 	return *value
+}
+
+func optionalInt(value *int) string {
+	if value == nil {
+		return ""
+	}
+	return fmt.Sprintf("%d", *value)
 }
 
 func optionalDate(value *time.Time) string {

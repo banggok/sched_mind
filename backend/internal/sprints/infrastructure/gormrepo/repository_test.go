@@ -26,18 +26,21 @@ type projectTestModel struct {
 func (projectTestModel) TableName() string { return "projects" }
 
 type taskTestModel struct {
-	ID             string `gorm:"primaryKey"`
-	ProjectID      string
-	ParentID       *string
-	AssigneeID     *string
-	ExecutionStart *time.Time
-	ExecutionEnd   *time.Time
-	ActualStart    *time.Time
-	ActualEnd      *time.Time
-	ParentKey      string
-	Position       int
-	Name           string
-	UpdatedAt      time.Time
+	ID              string `gorm:"primaryKey"`
+	ProjectID       string
+	ParentID        *string
+	AssigneeID      *string
+	EffortMinutes   *int
+	ExecutionStart  *time.Time
+	ExecutionEnd    *time.Time
+	CommitmentStart *time.Time
+	CommitmentEnd   *time.Time
+	ActualStart     *time.Time
+	ActualEnd       *time.Time
+	ParentKey       string
+	Position        int
+	Name            string
+	UpdatedAt       time.Time
 }
 
 func (taskTestModel) TableName() string { return "wbs_nodes" }
@@ -97,7 +100,8 @@ func seedEligibleTask(t *testing.T, database *gorm.DB, memberID, taskID string) 
 	if err := database.Create(&projectTestModel{ID: projectID, Name: projectID, Status: "open", Priority: 1, ScheduleVersion: 1}).Error; err != nil {
 		t.Fatalf("create project: %v", err)
 	}
-	if err := database.Create(&taskTestModel{ID: taskID, ProjectID: projectID, AssigneeID: &memberID, ExecutionStart: &now, ExecutionEnd: &now, Name: taskID, Position: 1, UpdatedAt: now}).Error; err != nil {
+	effortMinutes := 480
+	if err := database.Create(&taskTestModel{ID: taskID, ProjectID: projectID, AssigneeID: &memberID, EffortMinutes: &effortMinutes, ExecutionStart: &now, ExecutionEnd: &now, CommitmentStart: &now, CommitmentEnd: &now, Name: taskID, Position: 1, UpdatedAt: now}).Error; err != nil {
 		t.Fatalf("create task: %v", err)
 	}
 }
@@ -302,14 +306,20 @@ func TestStartAndDeleteUseVersionAndRemoveOnlySprintRelations_AC67To72(t *testin
 	}
 }
 
-func TestDetailComposesLiveCapacityOutsideAllocationAndNeedsReview_AC17To21And36To55(t *testing.T) {
+func TestDetailComposesLiveCapacityOutsideAllocationAndNeedsReview_SPD17_AC17To21And34To55(t *testing.T) {
 	repository, database := sprintTestRepository(t)
 	seedEligibleTask(t, database, "member-1", "task-1")
 	day := time.Date(2026, 8, 3, 0, 0, 0, 0, time.UTC)
 	if err := database.Model(&memberModel{}).Where("id = ?", "member-1").Updates(map[string]any{"daily_capacity": "8.0", "buffer_percentage": "25.0"}).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := database.Model(&taskTestModel{}).Where("id = ?", "task-1").Updates(map[string]any{"execution_start": day.AddDate(0, 0, -1), "execution_end": day.AddDate(0, 0, 4)}).Error; err != nil {
+	if err := database.Model(&taskTestModel{}).Where("id = ?", "task-1").Updates(map[string]any{
+		"effort_minutes":   450,
+		"execution_start":  day.AddDate(0, 0, -1),
+		"execution_end":    day.AddDate(0, 0, 4),
+		"commitment_start": day,
+		"commitment_end":   day.AddDate(0, 0, 3),
+	}).Error; err != nil {
 		t.Fatal(err)
 	}
 	sprint := newTestSprint(t, "sprint-1", "member-1", "task-1", day, day.AddDate(0, 0, 4))
@@ -340,11 +350,40 @@ func TestDetailComposesLiveCapacityOutsideAllocationAndNeedsReview_AC17To21And36
 	if len(detail.Tasks) != 1 || detail.Tasks[0].InSprintAllocationMinutes != 420 || detail.Tasks[0].OutsideAllocationMinutes != 60 || detail.Tasks[0].TotalAllocationMinutes != 480 {
 		t.Fatalf("unexpected task allocation: %#v", detail.Tasks)
 	}
+	task := detail.Tasks[0]
+	if task.EffortMinutes == nil || *task.EffortMinutes != 450 ||
+		task.ExecutionStart == nil || !task.ExecutionStart.Equal(day.AddDate(0, 0, -1)) ||
+		task.ExecutionEnd == nil || !task.ExecutionEnd.Equal(day.AddDate(0, 0, 4)) ||
+		task.CommitmentStart == nil || !task.CommitmentStart.Equal(day) ||
+		task.CommitmentEnd == nil || !task.CommitmentEnd.Equal(day.AddDate(0, 0, 3)) ||
+		task.ParentName != "project-task-1" {
+		t.Fatalf("live Task parent and planning metadata were not projected: %#v", task)
+	}
 	if detail.Members[0].InSprintAllocationMinutes != 420 || detail.Members[0].RemainingMinutes != 900 || detail.Members[0].OvercapacityMinutes != 60 || detail.Totals.SelectedMemberAllocationMinutes != 420 || detail.Totals.RemainingMinutes != 900 || detail.Totals.OvercapacityMinutes != 60 || detail.ProjectionToken == "" {
 		t.Fatalf("unexpected selected utilization: %#v", detail)
 	}
 	if len(detail.Members[0].DailySummaries) != 5 || detail.Members[0].DailySummaries[0].OvercapacityMinutes != 60 {
 		t.Fatalf("daily variance must preserve overloaded and unused Dates: %#v", detail.Members[0].DailySummaries)
+	}
+	metadataToken := detail.ProjectionToken
+	if err := database.Model(&taskTestModel{}).Where("id = ?", "task-1").Updates(map[string]any{
+		"effort_minutes":   510,
+		"commitment_start": day.AddDate(0, 0, 1),
+		"commitment_end":   day.AddDate(0, 0, 4),
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	metadataDrift, err := repository.Detail(context.Background(), sprint.ID)
+	if err != nil {
+		t.Fatalf("detail after planning metadata drift: %v", err)
+	}
+	if metadataDrift.ProjectionToken == metadataToken ||
+		metadataDrift.Tasks[0].EffortMinutes == nil || *metadataDrift.Tasks[0].EffortMinutes != 510 ||
+		metadataDrift.Tasks[0].CommitmentStart == nil || !metadataDrift.Tasks[0].CommitmentStart.Equal(day.AddDate(0, 0, 1)) ||
+		metadataDrift.Tasks[0].CommitmentEnd == nil || !metadataDrift.Tasks[0].CommitmentEnd.Equal(day.AddDate(0, 0, 4)) ||
+		metadataDrift.Members[0].InSprintAllocationMinutes != 420 ||
+		metadataDrift.Totals.SelectedMemberAllocationMinutes != 420 {
+		t.Fatalf("planning metadata drift must refresh the token without changing allocation usage: before=%s after=%s detail=%#v", metadataToken, metadataDrift.ProjectionToken, metadataDrift)
 	}
 
 	seedEligibleTask(t, database, "member-2", "unused-task")
@@ -428,6 +467,13 @@ func TestSuggestionSelectsMandatoryZeroAllocationThenFillsWholeTasks_AC22To33(t 
 	if suggestion.Members[0].OvercapacityMinutes != 90 || suggestion.ProjectionToken == "" {
 		t.Fatalf("whole-task fill must expose overcapacity and token: %#v", suggestion)
 	}
+	for _, suggested := range suggestion.Tasks {
+		if suggested.Task.EffortMinutes == nil || *suggested.Task.EffortMinutes != 480 ||
+			suggested.Task.CommitmentStart == nil || suggested.Task.CommitmentEnd == nil ||
+			suggested.Task.ParentName != suggested.Task.ProjectName {
+			t.Fatalf("suggestion must include live Parent, Effort, and Commitment metadata: %#v", suggested.Task)
+		}
+	}
 }
 
 func TestSuggestionRejectsUnreadableCanonicalAllocationWithoutPersisting_SPD07_AC77(t *testing.T) {
@@ -490,6 +536,11 @@ func TestCandidatesReturnOnlyUnselectedEligibleTasksIncludingZeroInSprintAllocat
 	if draftPage.Total != 1 || len(draftPage.Items) != 1 || draftPage.Items[0].ID != "eligible-zero" {
 		t.Fatalf("unexpected draft candidate page: %#v", draftPage)
 	}
+	if draftPage.Items[0].EffortMinutes == nil || *draftPage.Items[0].EffortMinutes != 480 ||
+		draftPage.Items[0].CommitmentStart == nil || draftPage.Items[0].CommitmentEnd == nil ||
+		draftPage.Items[0].ParentName != draftPage.Items[0].ProjectName {
+		t.Fatalf("draft candidate omitted live Parent, Effort, or Commitment metadata: %#v", draftPage.Items[0])
+	}
 	if err := repository.Create(context.Background(), sprint); err != nil {
 		t.Fatal(err)
 	}
@@ -501,9 +552,14 @@ func TestCandidatesReturnOnlyUnselectedEligibleTasksIncludingZeroInSprintAllocat
 	if page.Total != 1 || len(page.Items) != 1 || page.Items[0].ID != "eligible-zero" || page.Items[0].InSprintAllocationMinutes != 0 {
 		t.Fatalf("unexpected candidate page: %#v", page)
 	}
+	if page.Items[0].EffortMinutes == nil || *page.Items[0].EffortMinutes != 480 ||
+		page.Items[0].CommitmentStart == nil || page.Items[0].CommitmentEnd == nil ||
+		page.Items[0].ParentName != page.Items[0].ProjectName {
+		t.Fatalf("saved Sprint candidate omitted live Parent, Effort, or Commitment metadata: %#v", page.Items[0])
+	}
 }
 
-func TestDetailOrdersFlatDailyPlanAcrossProjectsAndWBS_SPD01And02_AC34And78(t *testing.T) {
+func TestDetailOrdersFlatDailyPlanAcrossProjectsAndWBS_SPD01And02And17_AC34And36And47And74And78(t *testing.T) {
 	repository, database := sprintTestRepository(t)
 	day := time.Date(2026, 8, 4, 0, 0, 0, 0, time.UTC)
 	if err := database.Create(&roleTestModel{ID: "role", Name: "Engineer"}).Error; err != nil {
@@ -523,10 +579,14 @@ func TestDetailOrdersFlatDailyPlanAcrossProjectsAndWBS_SPD01And02_AC34And78(t *t
 	memberID := "member-1"
 	groupID := "group-high"
 	actual := day
+	largeEffort := 960
+	smallEffort := 60
+	earlyCommitment := day
+	lateCommitment := day.AddDate(0, 0, 10)
 	nodes := []taskTestModel{
 		{ID: groupID, ProjectID: "project-high", Name: "Group", Position: 1, UpdatedAt: day},
-		{ID: "high-first", ProjectID: "project-high", ParentID: &groupID, ParentKey: groupID, Name: "High first", Position: 1, AssigneeID: &memberID, ExecutionStart: &day, ExecutionEnd: &day, UpdatedAt: day},
-		{ID: "high-second", ProjectID: "project-high", ParentID: &groupID, ParentKey: groupID, Name: "High second", Position: 2, AssigneeID: &memberID, ExecutionStart: &day, ExecutionEnd: &day, UpdatedAt: day},
+		{ID: "high-first", ProjectID: "project-high", ParentID: &groupID, ParentKey: groupID, Name: "High first", Position: 1, AssigneeID: &memberID, EffortMinutes: &largeEffort, ExecutionStart: &day, ExecutionEnd: &day, CommitmentStart: &lateCommitment, CommitmentEnd: &lateCommitment, UpdatedAt: day},
+		{ID: "high-second", ProjectID: "project-high", ParentID: &groupID, ParentKey: groupID, Name: "High second", Position: 2, AssigneeID: &memberID, EffortMinutes: &smallEffort, ExecutionStart: &day, ExecutionEnd: &day, CommitmentStart: &earlyCommitment, CommitmentEnd: &earlyCommitment, UpdatedAt: day},
 		{ID: "completed", ProjectID: "project-high", Name: "Completed", Position: 2, AssigneeID: &memberID, ExecutionStart: &day, ExecutionEnd: &day, ActualStart: &actual, ActualEnd: &actual, UpdatedAt: day},
 		{ID: "unreadable", ProjectID: "project-high", Name: "Unreadable", Position: 3, AssigneeID: &memberID, ExecutionStart: &day, ExecutionEnd: &day, UpdatedAt: day},
 		{ID: "low", ProjectID: "project-low", Name: "Low", Position: 1, AssigneeID: &memberID, ExecutionStart: &day, ExecutionEnd: &day, UpdatedAt: day},
@@ -580,6 +640,15 @@ func TestDetailOrdersFlatDailyPlanAcrossProjectsAndWBS_SPD01And02_AC34And78(t *t
 	if detail.Tasks[0].WBSPath != "1.1" || detail.Tasks[1].WBSPath != "1.2" || detail.Tasks[2].WBSPath != "1" {
 		t.Fatalf("unexpected user-facing WBS paths: %#v", detail.Tasks)
 	}
+	if detail.Tasks[0].ParentName != "Group" || detail.Tasks[1].ParentName != "Group" || detail.Tasks[2].ParentName != "Low" {
+		t.Fatalf("Task rows must project the immediate Parent Name and use Project Name only for root WBS nodes: %#v", detail.Tasks[:3])
+	}
+	if detail.Tasks[0].EffortMinutes == nil || *detail.Tasks[0].EffortMinutes != largeEffort ||
+		detail.Tasks[1].EffortMinutes == nil || *detail.Tasks[1].EffortMinutes != smallEffort ||
+		detail.Tasks[0].CommitmentEnd == nil || !detail.Tasks[0].CommitmentEnd.Equal(lateCommitment) ||
+		detail.Tasks[1].CommitmentEnd == nil || !detail.Tasks[1].CommitmentEnd.Equal(earlyCommitment) {
+		t.Fatalf("live metadata must be projected without overriding canonical daily-plan order: %#v", detail.Tasks[:2])
+	}
 	if detail.Tasks[4].DailyPlanOrderDate != nil ||
 		len(detail.Tasks[4].Allocations) != 0 ||
 		len(detail.Tasks[4].Warnings) != 1 ||
@@ -587,6 +656,21 @@ func TestDetailOrdersFlatDailyPlanAcrossProjectsAndWBS_SPD01And02_AC34And78(t *t
 		t.Fatalf("unreadable Task must use deterministic Needs Review fallback without failing the detail read: %#v", detail.Tasks[4])
 	}
 	initialToken := detail.ProjectionToken
+	if err := database.Model(&taskTestModel{}).Where("id = ?", groupID).Update("name", "Renamed Group").Error; err != nil {
+		t.Fatal(err)
+	}
+	renamedParent, err := repository.Detail(context.Background(), sprint.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if renamedParent.ProjectionToken == initialToken ||
+		renamedParent.Tasks[0].ID != "high-first" || renamedParent.Tasks[1].ID != "high-second" ||
+		renamedParent.Tasks[0].ParentName != "Renamed Group" || renamedParent.Tasks[1].ParentName != "Renamed Group" ||
+		renamedParent.Members[0].InSprintAllocationMinutes != detail.Members[0].InSprintAllocationMinutes ||
+		renamedParent.Totals.SelectedMemberAllocationMinutes != detail.Totals.SelectedMemberAllocationMinutes {
+		t.Fatalf("parent rename must refresh live context and token without changing order or usage: before=%s after=%s tasks=%#v", initialToken, renamedParent.ProjectionToken, renamedParent.Tasks)
+	}
+	renamedToken := renamedParent.ProjectionToken
 	if err := database.Model(&taskTestModel{}).Where("id = ?", groupID).Update("position", 4).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -594,8 +678,8 @@ func TestDetailOrdersFlatDailyPlanAcrossProjectsAndWBS_SPD01And02_AC34And78(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reordered.ProjectionToken == initialToken || reordered.Tasks[0].WBSPath != "3.1" {
-		t.Fatalf("ancestor WBS drift must update path and projection token: before=%s after=%s tasks=%#v", initialToken, reordered.ProjectionToken, reordered.Tasks)
+	if reordered.ProjectionToken == renamedToken || reordered.Tasks[0].WBSPath != "3.1" || reordered.Tasks[0].ParentName != "Renamed Group" {
+		t.Fatalf("ancestor WBS drift must update path and projection token while preserving direct Parent Name: before=%s after=%s tasks=%#v", renamedToken, reordered.ProjectionToken, reordered.Tasks)
 	}
 }
 

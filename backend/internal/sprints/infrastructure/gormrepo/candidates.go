@@ -49,7 +49,7 @@ func (repository *Repository) candidates(ctx context.Context, startDate, endDate
 		return listing.Page[application.TaskProjection]{}, fmt.Errorf("count sprint task candidates: %w", err)
 	}
 	var rows []taskProjectionRow
-	if err := statement.Select("task.id, task.project_id, project.name AS project_name, project.status AS project_status, project.priority AS project_priority, project.schedule_version, task.parent_key, task.position, task.name, task.assignee_id, member.name AS assignee_name, task.execution_start, task.execution_end, task.actual_start, task.actual_end, task.updated_at").
+	if err := statement.Select("task.id, task.project_id, project.name AS project_name, project.status AS project_status, project.priority AS project_priority, project.schedule_version, task.parent_key, task.position, task.name, task.assignee_id, member.name AS assignee_name, task.effort_minutes, task.execution_start, task.execution_end, task.commitment_start, task.commitment_end, task.actual_start, task.actual_end, task.updated_at").
 		Order("task.execution_end ASC").Order("project.priority ASC").Order("task.parent_key ASC").Order("task.position ASC").Order("task.id ASC").
 		Limit(query.PageSize).Offset((query.Page - 1) * query.PageSize).Scan(&rows).Error; err != nil {
 		return listing.Page[application.TaskProjection]{}, fmt.Errorf("query sprint task candidates: %w", err)

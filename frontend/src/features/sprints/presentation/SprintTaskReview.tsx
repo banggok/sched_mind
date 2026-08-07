@@ -446,8 +446,12 @@ function CandidatePicker({
                   {candidate.assigneeName ?? "Unassigned"}
                 </span>
                 <span className="block text-sm text-muted">
-                  {formatOptionalDate(candidate.executionStart)} –{" "}
-                  {formatOptionalDate(candidate.executionEnd)}
+                  {
+                    formatTaskDateRange(
+                      candidate.executionStart,
+                      candidate.executionEnd,
+                    ).visible
+                  }
                 </span>
               </span>
               <Button
@@ -493,7 +497,14 @@ function MemberDailyPlan({
         {member.name}
       </h3>
       <p className="text-sm text-muted">
-        Capacity: {hours(member.capacityMinutes)}
+        <span aria-hidden="true">
+          Capacity: {hours(member.inSprintAllocationMinutes)} of{" "}
+          {hours(member.capacityMinutes)}
+        </span>
+        <span className="sr-only">
+          Sprint Usage Capacity: {hours(member.inSprintAllocationMinutes)};
+          Sprint Execution Capacity: {hours(member.capacityMinutes)}
+        </span>
       </p>
       <DailyPlanTable
         identity={`${member.name} daily working plan`}
@@ -575,6 +586,7 @@ function NeedsReviewDailyPlan({
                 onOpenTask={onOpenTask}
                 openingTaskId={openingTaskId}
                 onRemove={onRemove}
+                showAssigneeContext
               />
             ))}
           </tbody>
@@ -701,6 +713,7 @@ function TaskRow({
   openingTaskId,
   onRemove,
   zeroCapacityDates = new Set<string>(),
+  showAssigneeContext = false,
 }: {
   task: SprintTaskProjection;
   memberName: string;
@@ -709,6 +722,7 @@ function TaskRow({
   openingTaskId?: string;
   onRemove(id: string): void;
   zeroCapacityDates?: Set<string>;
+  showAssigneeContext?: boolean;
 }) {
   const allocationByDate = new Map(
     task.allocations.map((value) => [value.date, value.minutes]),
@@ -719,8 +733,8 @@ function TaskRow({
         scope="row"
         className="sticky left-0 z-10 w-[50ch] min-w-[50ch] max-w-[50ch] bg-surface px-3 py-3 text-left align-top"
       >
-        <span className="flex items-start justify-between gap-3">
-          <span className="min-w-0">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
             {onOpenTask ? (
               <button
                 type="button"
@@ -737,17 +751,13 @@ function TaskRow({
               </strong>
             )}
             <span className="block text-xs text-muted">
-              {task.projectName} ({task.projectStatus})
+              {task.parentName} ({task.projectStatus})
             </span>
-            <span className="block text-xs text-muted">
-              {task.assigneeName ?? "Unassigned"} ·{" "}
-              {formatOptionalDate(task.executionStart)} –{" "}
-              {formatOptionalDate(task.executionEnd)}
-            </span>
+            <TaskMetadata task={task} showAssignee={showAssigneeContext} />
             {task.completed ? (
               <span className="mt-1 block text-xs font-bold">Completed</span>
             ) : null}
-          </span>
+          </div>
           <Button
             compact
             aria-label={`Remove ${task.name} from Sprint`}
@@ -755,7 +765,7 @@ function TaskRow({
           >
             Remove
           </Button>
-        </span>
+        </div>
         {task.warnings.map((warning) => (
           <Alert key={warning} tone="warning" className="mt-2">
             {warning}
@@ -773,7 +783,7 @@ function TaskRow({
             className={`border-l border-border-subtle px-3 py-3 text-right align-top ${
               noCapacity ? "bg-warning-soft" : ""
             }`.trim()}
-            aria-label={`${memberName}, ${task.name}, ${task.projectName}, ${formatReviewDate(
+            aria-label={`${memberName}, ${task.name}, ${task.parentName}, ${formatReviewDate(
               date,
             )}, Sprint allocation: ${hours(minutes)}`}
           >
@@ -782,6 +792,67 @@ function TaskRow({
         );
       })}
     </tr>
+  );
+}
+
+function TaskMetadata({
+  task,
+  showAssignee,
+}: {
+  task: SprintTaskProjection;
+  showAssignee: boolean;
+}) {
+  const execution = formatTaskDateRange(task.executionStart, task.executionEnd);
+  const commitment = formatTaskDateRange(
+    task.commitmentStart,
+    task.commitmentEnd,
+  );
+  return (
+    <dl className="mt-2 grid grid-cols-[auto_minmax(0,1fr)] gap-x-2 gap-y-0.5 text-xs text-muted">
+      {showAssignee ? (
+        <MetadataRow
+          label="Assignee"
+          value={task.assigneeName ?? "Unassigned"}
+        />
+      ) : null}
+      <MetadataRow label="Effort" value={formatEffort(task.effortMinutes)} />
+      <MetadataRow
+        label="Execution"
+        value={execution.visible}
+        accessibleValue={execution.accessible}
+      />
+      <MetadataRow
+        label="Commitment"
+        value={commitment.visible}
+        accessibleValue={commitment.accessible}
+      />
+    </dl>
+  );
+}
+
+function MetadataRow({
+  label,
+  value,
+  accessibleValue,
+}: {
+  label: string;
+  value: string;
+  accessibleValue?: string;
+}) {
+  return (
+    <>
+      <dt className="font-bold text-foreground">{label}</dt>
+      <dd className="min-w-0 break-words">
+        {accessibleValue ? (
+          <>
+            <span aria-hidden="true">{value}</span>
+            <span className="sr-only">{accessibleValue}</span>
+          </>
+        ) : (
+          value
+        )}
+      </dd>
+    </>
   );
 }
 
@@ -863,12 +934,67 @@ const reviewMonthLabels = [
 ] as const;
 
 function formatReviewDate(value: string) {
-  const [year, month, day] = value.split("-");
-  const monthLabel = reviewMonthLabels[Number(month) - 1];
-  if (!year || !day || !monthLabel) return value;
-  return `${day} ${monthLabel} ${year}`;
+  const parsed = parseReviewDate(value);
+  if (!parsed) return value;
+  return `${parsed.dayPadded} ${parsed.monthLabel} ${parsed.year}`;
 }
 
-function formatOptionalDate(value: string | undefined) {
-  return value ? formatReviewDate(value) : "Unscheduled";
+function formatTaskDateRange(start?: string, end?: string) {
+  if (!start || !end) {
+    return { visible: "Not scheduled", accessible: undefined };
+  }
+  const startDate = parseReviewDate(start);
+  const endDate = parseReviewDate(end);
+  const accessible = `Start: ${formatReviewDate(start)}; End: ${formatReviewDate(
+    end,
+  )}`;
+  if (!startDate || !endDate) {
+    return {
+      visible: `${formatReviewDate(start)}–${formatReviewDate(end)}`,
+      accessible,
+    };
+  }
+  if (start === end) {
+    return {
+      visible: `${startDate.day} ${startDate.monthLabel} ${startDate.year}`,
+      accessible,
+    };
+  }
+  if (startDate.year === endDate.year && startDate.month === endDate.month) {
+    return {
+      visible: `${startDate.day}–${endDate.day} ${startDate.monthLabel} ${startDate.year}`,
+      accessible,
+    };
+  }
+  if (startDate.year === endDate.year) {
+    return {
+      visible: `${startDate.day} ${startDate.monthLabel}–${endDate.day} ${endDate.monthLabel} ${startDate.year}`,
+      accessible,
+    };
+  }
+  return {
+    visible: `${startDate.day} ${startDate.monthLabel} ${startDate.year}–${endDate.day} ${endDate.monthLabel} ${endDate.year}`,
+    accessible,
+  };
+}
+
+function parseReviewDate(value: string) {
+  const [year, monthValue, dayValue] = value.split("-");
+  const month = Number(monthValue);
+  const day = Number(dayValue);
+  const monthLabel = reviewMonthLabels[month - 1];
+  if (!year || !monthLabel || !Number.isInteger(day) || day < 1 || day > 31) {
+    return undefined;
+  }
+  return {
+    year,
+    month,
+    day,
+    dayPadded: String(day).padStart(2, "0"),
+    monthLabel,
+  };
+}
+
+function formatEffort(minutes?: number) {
+  return minutes === undefined ? "Not set" : hours(minutes);
 }

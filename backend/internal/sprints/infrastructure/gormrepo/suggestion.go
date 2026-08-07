@@ -26,7 +26,7 @@ func (repository *Repository) Suggest(ctx context.Context, input application.Sug
 
 	var taskRows []taskProjectionRow
 	if err := repository.database.WithContext(ctx).Table("wbs_nodes AS task").
-		Select("task.id, task.project_id, project.name AS project_name, project.status AS project_status, project.priority AS project_priority, project.schedule_version, task.parent_key, task.position, task.name, task.assignee_id, member.name AS assignee_name, task.execution_start, task.execution_end, task.actual_start, task.actual_end, task.updated_at").
+		Select("task.id, task.project_id, project.name AS project_name, project.status AS project_status, project.priority AS project_priority, project.schedule_version, task.parent_key, task.position, task.name, task.assignee_id, member.name AS assignee_name, task.effort_minutes, task.execution_start, task.execution_end, task.commitment_start, task.commitment_end, task.actual_start, task.actual_end, task.updated_at").
 		Joins("JOIN projects AS project ON project.id = task.project_id").
 		Joins("JOIN team_members AS member ON member.id = task.assignee_id AND member.deleted_at IS NULL").
 		Where("task.assignee_id IN ?", input.MemberIDs).

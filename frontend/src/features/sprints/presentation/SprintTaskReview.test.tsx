@@ -53,6 +53,7 @@ function task(
     id,
     projectId: "project-alpha",
     projectName: "Alpha",
+    parentName: "Backend Group",
     projectStatus: "open",
     projectPriority: 1,
     name: id,
@@ -61,8 +62,11 @@ function task(
     wbsRank: 1,
     assigneeId: "member-1",
     assigneeName: "Harry",
+    effortMinutes: 480,
     executionStart: "2026-08-04",
     executionEnd: "2026-08-04",
+    commitmentStart: "2026-08-04",
+    commitmentEnd: "2026-08-04",
     dailyPlanOrderDate: "2026-08-04",
     completed: false,
     allocations: [{ date: "2026-08-04", minutes: 60 }],
@@ -250,6 +254,7 @@ describe("SprintTaskReview", () => {
       task("Low Project", {
         projectId: "project-low",
         projectName: "Low",
+        parentName: "Low Parent",
         projectPriority: 9,
         wbsPath: "2",
         wbsRank: 2,
@@ -258,6 +263,7 @@ describe("SprintTaskReview", () => {
       task("High WBS 2", {
         projectId: "project-high",
         projectName: "High",
+        parentName: "High Group",
         projectPriority: 1,
         wbsPath: "1.2",
         wbsRank: 2,
@@ -266,6 +272,7 @@ describe("SprintTaskReview", () => {
       task("High WBS 1", {
         projectId: "project-high",
         projectName: "High",
+        parentName: "High Group",
         projectPriority: 1,
         wbsPath: "1.1",
         wbsRank: 1,
@@ -286,6 +293,7 @@ describe("SprintTaskReview", () => {
       task("Non-member", {
         projectId: "project-external",
         projectName: "External",
+        parentName: "External Parent",
         assigneeId: "member-3",
         assigneeName: "Tony",
         allocations: [{ date: "2026-08-04", minutes: 60 }],
@@ -303,6 +311,7 @@ describe("SprintTaskReview", () => {
       task("Sally Task", {
         projectId: "project-beta",
         projectName: "Beta",
+        parentName: "Beta Parent",
         assigneeId: "member-2",
         assigneeName: "Sally",
         allocations: [{ date: "2026-08-04", minutes: 360 }],
@@ -346,16 +355,37 @@ describe("SprintTaskReview", () => {
       "Remove Low Project from Sprint",
       "Remove Completed from Sprint",
     ]);
-    expect(harryRegion.textContent).toContain("High (open)");
+    expect(harryRegion.textContent).toContain("High Group (open)");
+    expect(harryRegion.textContent).not.toContain("High (open)");
     expect(harryRegion.textContent).not.toContain("WBS 1.1");
     expect(harryRegion.textContent).toContain("Completed");
-    expect(harryRegion.textContent).toContain("Capacity: 8h");
+    expect(harryRegion.textContent).toContain("Capacity: 10h of 8h");
+    expect(
+      within(harryRegion).getByText(
+        "Sprint Usage Capacity: 10h; Sprint Execution Capacity: 8h",
+      ),
+    ).toBeTruthy();
+    const normalTaskRow = harryRegion.querySelector(
+      'tr[data-task-id="High WBS 1"]',
+    );
+    if (!(normalTaskRow instanceof HTMLElement)) {
+      throw new Error("expected normal Member Task row");
+    }
+    expect(normalTaskRow.textContent).not.toContain("Assignee");
+    expect(normalTaskRow.textContent).not.toContain("Harry");
 
     const needsReviewRegion = screen.getByRole("region", {
       name: "Needs Review",
     });
     expect(needsReviewRegion.textContent).toContain("Non-member");
     expect(needsReviewRegion.textContent).toContain("Unreadable");
+    const nonMemberRow = needsReviewRegion.querySelector(
+      'tr[data-task-id="Non-member"]',
+    );
+    if (!(nonMemberRow instanceof HTMLElement)) {
+      throw new Error("expected non-member Needs Review Task row");
+    }
+    expect(nonMemberRow.textContent).toContain("AssigneeTony");
     expect(screen.queryByText("Sprint daily summary")).toBeNull();
     expect(
       screen.queryByRole("group", { name: "Sprint Task totals" }),
@@ -372,7 +402,7 @@ describe("SprintTaskReview", () => {
     expect(screen.queryByLabelText(/Harry, .* Overcapacity:/)).toBeNull();
     expect(
       screen.queryByLabelText(
-        "Harry, High WBS 1, High, 03 Aug 2026, Sprint allocation: 1h",
+        "Harry, High WBS 1, High Group, 03 Aug 2026, Sprint allocation: 1h",
       ),
     ).toBeNull();
     expect(screen.queryByText("03 Aug 2026")).toBeNull();
@@ -449,16 +479,43 @@ describe("SprintTaskReview", () => {
     ).toBeTruthy();
     expect(
       screen.queryByLabelText(
-        "Harry, Overdue outside, Alpha, 03 Aug 2026, Sprint allocation: 1h",
+        "Harry, Overdue outside, Backend Group, 03 Aug 2026, Sprint allocation: 1h",
       ),
     ).toBeNull();
     expect(
       screen.queryByLabelText(
-        "Harry, After Sprint, Alpha, 09 Aug 2026, Sprint allocation: 1h",
+        "Harry, After Sprint, Backend Group, 09 Aug 2026, Sprint allocation: 1h",
       ),
     ).toBeNull();
     expect(screen.queryByRole("button", { name: "Previous Dates" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Next Dates" })).toBeNull();
+  });
+
+  it("formats decimal Sprint usage and Execution Capacity in the Member summary_SPD12_AC35And38", () => {
+    render(
+      <SprintTaskReview
+        detail={detail(
+          [member("member-1", "Harry", [{ date: "2026-08-04", minutes: 510 }])],
+          [
+            task("Decimal usage", {
+              allocations: [{ date: "2026-08-04", minutes: 450 }],
+              inSprintAllocationMinutes: 450,
+              totalAllocationMinutes: 450,
+            }),
+          ],
+          "2026-08-04",
+          "2026-08-04",
+        )}
+        gateway={gateway()}
+        onEdit={vi.fn()}
+        onClose={vi.fn()}
+        onChanged={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("region", { name: "Harry" }).textContent).toContain(
+      "Capacity: 7.5h of 8.5h",
+    );
   });
 
   it("shows Add Task results inline and adds the Task allocation row without aggregate summaries_SPD09_AC40To43And74", async () => {
@@ -466,6 +523,7 @@ describe("SprintTaskReview", () => {
       task("API", {
         projectId: "project-1",
         projectName: "Alpha",
+        parentName: "API Parent",
         wbsPath: "1.1",
         wbsRank: 2,
         executionStart: "2026-08-04",
@@ -491,6 +549,7 @@ describe("SprintTaskReview", () => {
 
     const emptyMember = screen.getByRole("region", { name: "Harry" });
     expect(within(emptyMember).getByText("No selected Tasks.")).toBeTruthy();
+    expect(emptyMember.textContent).toContain("Capacity: 0h of 8h");
     expect(
       screen.getByLabelText("Harry, 04 Aug 2026, Daily Capacity: 8h"),
     ).toBeTruthy();
@@ -514,7 +573,7 @@ describe("SprintTaskReview", () => {
     expect(candidateRegion.textContent).toContain("Alpha");
     expect(candidateRegion.textContent).toContain("API");
     expect(candidateRegion.textContent).not.toContain("WBS");
-    expect(candidateRegion.textContent).toContain("04 Aug 2026");
+    expect(candidateRegion.textContent).toContain("4 Aug 2026");
 
     await userEvent.click(
       screen.getByRole("button", {
@@ -530,10 +589,13 @@ describe("SprintTaskReview", () => {
     expect(screen.getByRole("status").textContent).toContain(
       "API from Alpha was added",
     );
+    expect(screen.getByRole("region", { name: "Harry" }).textContent).toContain(
+      "Capacity: 10h of 8h",
+    );
     expect(document.activeElement).toBe(heading);
     expect(
       screen.getByLabelText(
-        "Harry, API, Alpha, 04 Aug 2026, Sprint allocation: 10h",
+        "Harry, API, API Parent, 04 Aug 2026, Sprint allocation: 10h",
       ),
     ).toBeTruthy();
     expect(screen.queryByText("Sprint daily summary")).toBeNull();
@@ -546,6 +608,7 @@ describe("SprintTaskReview", () => {
           [member("member-1", "Harry", [{ date: "2026-08-04", minutes: 480 }])],
           [
             task("API", {
+              parentName: "API Parent",
               allocations: [{ date: "2026-08-04", minutes: 600 }],
               inSprintAllocationMinutes: 600,
               totalAllocationMinutes: 600,
@@ -561,9 +624,12 @@ describe("SprintTaskReview", () => {
 
     expect(
       screen.getByLabelText(
-        "Harry, API, Alpha, 04 Aug 2026, Sprint allocation: 10h",
+        "Harry, API, API Parent, 04 Aug 2026, Sprint allocation: 10h",
       ),
     ).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Harry" }).textContent).toContain(
+      "Capacity: 10h of 8h",
+    );
     await userEvent.click(
       screen.getByRole("button", { name: "Remove API from Sprint" }),
     );
@@ -574,6 +640,9 @@ describe("SprintTaskReview", () => {
     expect(
       screen.getByLabelText("Harry, 04 Aug 2026, Daily Capacity: 8h"),
     ).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Harry" }).textContent).toContain(
+      "Capacity: 0h of 8h",
+    );
     expect(screen.queryByLabelText(/Harry, .* Overcapacity:/)).toBeNull();
   });
 
@@ -595,6 +664,9 @@ describe("SprintTaskReview", () => {
       />,
     );
 
+    expect(screen.getByRole("region", { name: "Harry" }).textContent).toContain(
+      "Capacity: 1h of 8h",
+    );
     await userEvent.click(
       screen.getByRole("button", { name: "Regenerate Suggestion" }),
     );
@@ -607,6 +679,9 @@ describe("SprintTaskReview", () => {
     expect(
       screen.getByRole("button", { name: "Remove Existing plan from Sprint" }),
     ).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Harry" }).textContent).toContain(
+      "Capacity: 1h of 8h",
+    );
   });
 
   it("ignores a stale suggestion response after a newer Sprint projection is reviewed_SPD07_AC74", async () => {
@@ -645,6 +720,9 @@ describe("SprintTaskReview", () => {
       />,
     );
 
+    expect(screen.getByRole("region", { name: "Harry" }).textContent).toContain(
+      "Capacity: 0h of 8h",
+    );
     await userEvent.click(
       screen.getByRole("button", { name: "Generate Suggestion" }),
     );
@@ -682,6 +760,9 @@ describe("SprintTaskReview", () => {
         name: "Remove Current plan from Sprint",
       }),
     ).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Harry" }).textContent).toContain(
+      "Capacity: 1h of 8h",
+    );
 
     await act(async () => {
       resolveFirst({
@@ -701,6 +782,9 @@ describe("SprintTaskReview", () => {
     expect(
       screen.getByRole("button", { name: "Remove Current plan from Sprint" }),
     ).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Harry" }).textContent).toContain(
+      "Capacity: 1h of 8h",
+    );
   });
 
   it("ignores a stale candidate response after Sprint detail changes_SPD07_AC74", async () => {
@@ -820,7 +904,7 @@ describe("SprintTaskReview", () => {
     expect(screen.queryByText("09 Sep 2026")).toBeNull();
     expect(
       screen.queryByLabelText(
-        "Harry, First, Alpha, 09 Sep 2026, Sprint allocation: 1h",
+        "Harry, First, Backend Group, 09 Sep 2026, Sprint allocation: 1h",
       ),
     ).toBeNull();
     expect(
@@ -874,7 +958,8 @@ describe("SprintTaskReview", () => {
     expect(taskName.className).toContain("max-w-[50ch]");
     expect(taskName.className).toContain("break-words");
     const harryRegion = screen.getByRole("region", { name: "Harry" });
-    expect(harryRegion.textContent).toContain("04 Aug 2026 – 08 Aug 2026");
+    expect(harryRegion.textContent).toContain("Execution4–8 Aug 2026");
+    expect(harryRegion.textContent).toContain("Commitment4 Aug 2026");
     expect(harryRegion.textContent).not.toContain("WBS 9.4.2");
     expect(harryRegion.textContent).not.toContain("in Sprint");
     expect(harryRegion.textContent).not.toContain("outside ·");
@@ -898,6 +983,106 @@ describe("SprintTaskReview", () => {
     ).toHaveLength(0);
   });
 
+  it("renders immediate Parent Name, compact planning metadata, and Needs Review ownership_SPD13To17_AC34And36", () => {
+    render(
+      <SprintTaskReview
+        detail={detail(
+          [member("member-1", "Harry", [{ date: "2026-08-04", minutes: 480 }])],
+          [
+            task("Same date", {
+              projectName: "Alpha",
+              parentName: "QA Parent",
+              executionStart: "2026-08-12",
+              executionEnd: "2026-08-12",
+              commitmentStart: "2026-08-12",
+              commitmentEnd: "2026-08-12",
+            }),
+            task("Same month", {
+              effortMinutes: 450,
+              executionStart: "2026-08-12",
+              executionEnd: "2026-08-13",
+              commitmentStart: "2026-08-12",
+              commitmentEnd: "2026-08-13",
+            }),
+            task("Cross month", {
+              executionStart: "2026-08-30",
+              executionEnd: "2026-09-02",
+              commitmentStart: "2026-08-30",
+              commitmentEnd: undefined,
+            }),
+            task("Cross year", {
+              effortMinutes: undefined,
+              executionStart: "2026-12-30",
+              executionEnd: "2027-01-02",
+              commitmentStart: undefined,
+              commitmentEnd: "2027-01-02",
+            }),
+            task("Unassigned drift", {
+              assigneeId: undefined,
+              assigneeName: undefined,
+              warnings: ["Assignee is not included in this Sprint."],
+            }),
+          ],
+        )}
+        gateway={gateway()}
+        onEdit={vi.fn()}
+        onClose={vi.fn()}
+        onChanged={vi.fn()}
+      />,
+    );
+
+    const harryRegion = screen.getByRole("region", { name: "Harry" });
+    const sameDate = harryRegion.querySelector('tr[data-task-id="Same date"]');
+    const sameMonth = harryRegion.querySelector(
+      'tr[data-task-id="Same month"]',
+    );
+    const crossMonth = harryRegion.querySelector(
+      'tr[data-task-id="Cross month"]',
+    );
+    const crossYear = harryRegion.querySelector(
+      'tr[data-task-id="Cross year"]',
+    );
+    if (
+      !(sameDate instanceof HTMLElement) ||
+      !(sameMonth instanceof HTMLElement) ||
+      !(crossMonth instanceof HTMLElement) ||
+      !(crossYear instanceof HTMLElement)
+    ) {
+      throw new Error("expected all Task metadata rows");
+    }
+    expect(sameDate.textContent).toContain("QA Parent (open)");
+    expect(sameDate.textContent).not.toContain("Alpha (open)");
+    expect(sameDate.textContent).toContain("Effort8h");
+    expect(sameDate.textContent).toContain("Execution12 Aug 2026");
+    expect(sameDate.textContent).toContain("Commitment12 Aug 2026");
+    expect(
+      [...sameMonth.querySelectorAll("dt")].map((label) => label.textContent),
+    ).toEqual(["Effort", "Execution", "Commitment"]);
+    expect(within(sameMonth).getByText("7.5h")).toBeTruthy();
+    expect(within(sameMonth).getAllByText("12–13 Aug 2026")).toHaveLength(2);
+    expect(crossMonth.textContent).toContain("Execution30 Aug–2 Sep 2026");
+    expect(crossMonth.textContent).toContain("CommitmentNot scheduled");
+    expect(
+      within(crossMonth).getByText("Start: 30 Aug 2026; End: 02 Sep 2026"),
+    ).toBeTruthy();
+    expect(crossYear.textContent).toContain("Execution30 Dec 2026–2 Jan 2027");
+    expect(crossYear.textContent).toContain("EffortNot set");
+    expect(crossYear.textContent).toContain("CommitmentNot scheduled");
+    expect(harryRegion.textContent).not.toContain("AssigneeHarry");
+
+    const needsReview = screen.getByRole("region", { name: "Needs Review" });
+    const unassigned = needsReview.querySelector(
+      'tr[data-task-id="Unassigned drift"]',
+    );
+    if (!(unassigned instanceof HTMLElement)) {
+      throw new Error("expected unassigned Needs Review Task row");
+    }
+    expect(
+      [...unassigned.querySelectorAll("dt")].map((label) => label.textContent),
+    ).toEqual(["Assignee", "Effort", "Execution", "Commitment"]);
+    expect(unassigned.textContent).toContain("AssigneeUnassigned");
+  });
+
   it("opens the shared Home Task editor and closes back to the same Sprint Planning without action_SPD11_AC80", async () => {
     const api = gateway();
     const editor = taskEditorHarness("API");
@@ -917,6 +1102,9 @@ describe("SprintTaskReview", () => {
       />,
     );
 
+    expect(screen.getByRole("region", { name: "Harry" }).textContent).toContain(
+      "Capacity: 1h of 8h",
+    );
     await userEvent.click(screen.getByRole("button", { name: "API" }));
     const dialog = await screen.findByRole("dialog", { name: "Edit Task" });
     expect(editor.projectsGateway.get).toHaveBeenCalledWith("project-alpha");
@@ -939,7 +1127,7 @@ describe("SprintTaskReview", () => {
     expect(window.location.hash).toBe("#sprints");
   });
 
-  it("regenerates Sprint Planning after saving through the shared Home Task editor without navigating Home_SPD11_AC80", async () => {
+  it("regenerates Sprint Planning usage and live Parent Name after saving through the shared Home Task editor_SPD11_SPD12_SPD17_AC47And80", async () => {
     const current = detail(
       [member("member-1", "Harry", [{ date: "2026-08-04", minutes: 480 }])],
       [task("API")],
@@ -949,7 +1137,16 @@ describe("SprintTaskReview", () => {
       members: current.members,
       tasks: [
         {
-          task: task("API", { name: "Updated API" }),
+          task: task("API", {
+            name: "Updated API",
+            parentName: "Updated Parent",
+            effortMinutes: 450,
+            executionEnd: "2026-08-05",
+            commitmentEnd: "2026-08-06",
+            allocations: [{ date: "2026-08-04", minutes: 120 }],
+            inSprintAllocationMinutes: 120,
+            totalAllocationMinutes: 120,
+          }),
           reason: "mandatory",
         },
       ],
@@ -970,6 +1167,9 @@ describe("SprintTaskReview", () => {
       />,
     );
 
+    expect(screen.getByRole("region", { name: "Harry" }).textContent).toContain(
+      "Capacity: 1h of 8h",
+    );
     await userEvent.click(screen.getByRole("button", { name: "API" }));
     const dialog = await screen.findByRole("dialog", { name: "Edit Task" });
     const name = within(dialog).getByLabelText("Name");
@@ -997,6 +1197,20 @@ describe("SprintTaskReview", () => {
     expect(
       await screen.findByRole("button", { name: "Updated API" }),
     ).toBeTruthy();
+    const updatedRow = screen
+      .getByRole("region", { name: "Harry" })
+      .querySelector('tr[data-task-id="API"]');
+    if (!(updatedRow instanceof HTMLElement)) {
+      throw new Error("expected regenerated Task row");
+    }
+    expect(updatedRow.textContent).toContain("Updated Parent (open)");
+    expect(updatedRow.textContent).not.toContain("Backend Group (open)");
+    expect(updatedRow.textContent).toContain("Effort7.5h");
+    expect(updatedRow.textContent).toContain("Execution4–5 Aug 2026");
+    expect(updatedRow.textContent).toContain("Commitment4–6 Aug 2026");
+    expect(screen.getByRole("region", { name: "Harry" }).textContent).toContain(
+      "Capacity: 2h of 8h",
+    );
     expect(screen.queryByRole("dialog", { name: "Edit Task" })).toBeNull();
     expect(window.location.hash).toBe("#sprints");
     expect(closeSprintPlanning).not.toHaveBeenCalled();
@@ -1046,5 +1260,44 @@ describe("deriveReviewProjection", () => {
         overcapacityMinutes: 120,
       },
     ]);
+  });
+
+  it("derives uncapped local Sprint usage from selected in-range allocations only_SPD12_AC19And35", () => {
+    const result = deriveReviewProjection(
+      [member("member-1", "Harry", [{ date: "2026-08-04", minutes: 480 }])],
+      [
+        task("Selected", {
+          allocations: [
+            { date: "2026-08-03", minutes: 180 },
+            { date: "2026-08-04", minutes: 600 },
+          ],
+          inSprintAllocationMinutes: 600,
+          outsideAllocationMinutes: 180,
+          totalAllocationMinutes: 780,
+        }),
+        task("Needs review", {
+          allocations: [{ date: "2026-08-04", minutes: 240 }],
+          inSprintAllocationMinutes: 240,
+          totalAllocationMinutes: 240,
+          warnings: ["Execution allocation could not be resolved."],
+        }),
+      ],
+      "2026-08-04",
+      "2026-08-04",
+    );
+
+    expect(result.members[0]).toMatchObject({
+      capacityMinutes: 480,
+      inSprintAllocationMinutes: 600,
+      remainingMinutes: 0,
+      overcapacityMinutes: 120,
+      totalAllocationMinutes: 780,
+    });
+    expect(result.totals).toMatchObject({
+      selectedMemberAllocationMinutes: 600,
+      needsReviewAllocationMinutes: 240,
+      allTaskInSprintMinutes: 840,
+      allTaskTotalMinutes: 1020,
+    });
   });
 });

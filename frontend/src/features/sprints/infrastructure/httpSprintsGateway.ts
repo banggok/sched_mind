@@ -44,6 +44,11 @@ type TaskProjectionDTO = Omit<
   | "projectPriority"
   | "wbsRank"
   | "dailyPlanOrderDate"
+  | "effortMinutes"
+  | "executionStart"
+  | "executionEnd"
+  | "commitmentStart"
+  | "commitmentEnd"
 > & {
   allocations?: SprintTaskProjection["allocations"] | null;
   warnings?: string[] | null;
@@ -51,6 +56,11 @@ type TaskProjectionDTO = Omit<
   projectPriority?: number;
   wbsRank?: number;
   dailyPlanOrderDate?: string | null;
+  effortMinutes?: number | null;
+  executionStart?: string | null;
+  executionEnd?: string | null;
+  commitmentStart?: string | null;
+  commitmentEnd?: string | null;
 };
 type MemberProjectionDTO = Omit<
   SprintMemberProjection,
@@ -278,6 +288,11 @@ function mapTaskProjection(value: TaskProjectionDTO): SprintTaskProjection {
     wbsPath: value.wbsPath ?? value.wbsOrder,
     wbsRank: value.wbsRank ?? 0,
     dailyPlanOrderDate: value.dailyPlanOrderDate ?? undefined,
+    effortMinutes: value.effortMinutes ?? undefined,
+    executionStart: value.executionStart ?? undefined,
+    executionEnd: value.executionEnd ?? undefined,
+    commitmentStart: value.commitmentStart ?? undefined,
+    commitmentEnd: value.commitmentEnd ?? undefined,
     allocations: value.allocations ?? [],
     warnings: value.warnings ?? [],
   };
