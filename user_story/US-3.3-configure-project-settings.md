@@ -207,10 +207,10 @@ Project Settings are entirely read-only.
 - Toggle or field changes remain draft until Save.
 - Cancel restores confirmed values and sends no mutation.
 - OFF→ON requires confirmation.
-- Every scheduling-impacting settings change runs US-6.2 transitive impact simulation.
-- Open-only cross-project impact requires grouped Project-name confirmation and server revalidation.
-- Any impacted Locked Project blocks the settings change atomically.
-- With Scheduling Start Date configured, confirmed OFF→ON runs US-6.1 scheduling for the allowed transitive impacted Open scope as part of one atomic operation.
+- Every scheduling-relevant settings change runs US-6.2 transitive recalculation simulation.
+- Another Open Project requires grouped Project-name confirmation only when an Executable Task Execution/Commitment Start or End changes; server revalidation covers the full recalculation state.
+- A Locked Project blocks the settings change only when a protected Executable Task timeline date would counterfactually change; allocation-only pressure does not block.
+- With Scheduling Start Date configured, confirmed OFF→ON runs US-6.1 scheduling for the allowed transitive recalculation Open scope as part of one atomic operation.
 - If settings persistence, impact validation, or scheduling fails, all changes roll back and confirmed settings/timelines remain unchanged.
 - OFF→ON without Scheduling Start Date saves the settings, does not invoke
   scheduling, keeps generated dates empty, and displays the approved warning.
@@ -230,7 +230,7 @@ After confirmed Save:
 
 After confirmed Save with a valid anchor:
 
-- US-6.1 recalculates unfinished Tasks only across the transitive impacted Open scope.
+- US-6.1 recalculates unfinished Tasks only across the transitive recalculation Open scope; only the timeline-delta subset is shown in impact warning.
 - Tasks with complete Actual Date remain completed historical anchors.
 - Manual dates of unfinished Tasks are replaced by scheduler-generated dates.
 - Stored Project Buffer becomes active.

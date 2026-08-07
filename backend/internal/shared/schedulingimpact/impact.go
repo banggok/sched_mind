@@ -85,6 +85,16 @@ func WithOperation(ctx context.Context, ownerProjectID string, mode Mode) contex
 	})
 }
 
+// WithPreviewOperation starts a fresh scheduling-impact preview on top of the
+// caller context while deliberately ignoring any previously supplied
+// confirmation token. This is used by server-side simulations (for example,
+// Project Reopen fixed-point discovery) that must always observe the current
+// impact set rather than accidentally accepting a client token.
+func WithPreviewOperation(ctx context.Context, ownerProjectID string, mode Mode) context.Context {
+	ctx = WithOperation(ctx, ownerProjectID, mode)
+	return context.WithValue(ctx, requestContextKey{}, "")
+}
+
 func Operation(ctx context.Context) (enabled bool, ownerProjectID string, mode Mode, confirmationToken string) {
 	if ctx == nil {
 		return false, "", ModeOrdinary, ""

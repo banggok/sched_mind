@@ -51,6 +51,7 @@ func (repository *Repository) persist(
 
 	dirtyTasks := make(map[string]struct{})
 	dirtyProjects := make(map[string]struct{}, len(dependencyDirtyProjects))
+	timelineImpactedProjects := make(map[string]struct{})
 	for projectID := range dependencyDirtyProjects {
 		dirtyProjects[projectID] = struct{}{}
 	}
@@ -65,6 +66,7 @@ func (repository *Repository) persist(
 		if !executionExists || !commitmentExists {
 			return fmt.Errorf("%w: missing generated schedule for task %s", schedulingdomain.ErrDataIntegrity, taskID)
 		}
+		timelineChanged := !scheduleDatesMatchTask(task, executionSchedule, commitmentSchedule)
 		changed := !scheduleMatchesTask(task, executionSchedule, commitmentSchedule) ||
 			!allocationRowsEquivalent(state.existingAllocations[schedulingdomain.Execution][taskID], generatedRows[schedulingdomain.Execution][taskID]) ||
 			!allocationRowsEquivalent(state.existingAllocations[schedulingdomain.Commitment][taskID], generatedRows[schedulingdomain.Commitment][taskID])
@@ -92,6 +94,9 @@ func (repository *Repository) persist(
 		state.tasks[taskID] = task
 		dirtyTasks[taskID] = struct{}{}
 		dirtyProjects[task.ProjectID] = struct{}{}
+		if timelineChanged {
+			timelineImpactedProjects[task.ProjectID] = struct{}{}
+		}
 	}
 	// Open manual Tasks own authoritative dates. Their fixed allocation rows
 	// participate in the shared projection according to Project Priority.
@@ -129,13 +134,13 @@ func (repository *Repository) persist(
 	}
 	sort.Slice(projectChanges, func(left, right int) bool { return projectChanges[left].ProjectID < projectChanges[right].ProjectID })
 
-	lockedImpactIDs, err := state.potentialLockedImpacts()
+	lockedImpactIDs, err := state.potentialLockedTimelineImpacts()
 	if err != nil {
 		return err
 	}
 	lockedProjects := impactProjects(state, lockedImpactIDs, "locked")
-	openProjects := impactProjects(state, mapKeys(dirtyProjects), "open")
-	signature := persistenceSignature(taskChanges, projectChanges, generatedRows, dirtyTasks, dependencyDirtyProjects)
+	openProjects := impactProjects(state, mapKeys(timelineImpactedProjects), "open")
+	signature := persistenceSignature(state, taskChanges, projectChanges, generatedRows, dirtyTasks, dependencyDirtyProjects)
 	if err := schedulingimpact.Guard(ctx, signature, lockedProjects, openProjects); err != nil {
 		return err
 	}
@@ -202,18 +207,19 @@ func impactProjects(state *portfolioState, projectIDs []string, requiredStatus s
 }
 
 func persistenceSignature(
+	state *portfolioState,
 	taskChanges []taskPersistenceChange,
 	projectChanges []projectPersistenceChange,
 	generatedRows map[schedulingdomain.Timeline]map[string][]allocationModel,
 	dirtyTasks map[string]struct{},
 	dependencyDirtyProjects map[string]struct{},
 ) string {
-	parts := make([]string, 0)
+	parts := []string{"state:" + schedulingStateSignature(state)}
 	for _, change := range taskChanges {
 		parts = append(parts, "task:"+change.TaskID+":"+updateSignature(change.Updates))
 	}
 	for _, change := range projectChanges {
-		parts = append(parts, "project:"+change.ProjectID+":"+dateSignature(change.StartDate)+":"+dateSignature(change.EndDate))
+		parts = append(parts, "project:"+change.ProjectID+":version:"+integerSignature(change.Version)+":"+dateSignature(change.StartDate)+":"+dateSignature(change.EndDate))
 	}
 	for _, timeline := range []schedulingdomain.Timeline{schedulingdomain.Execution, schedulingdomain.Commitment} {
 		for _, taskID := range mapKeys(dirtyTasks) {
@@ -221,7 +227,7 @@ func persistenceSignature(
 				parts = append(parts, strings.Join([]string{
 					"allocation", string(timeline), taskID,
 					schedulingdomain.DateKey(row.AllocationDate),
-					row.AllocatedMinutes, row.RemainingCapacityMinutes,
+					row.AssigneeID, row.AllocatedMinutes, row.RemainingCapacityMinutes, integerSignature(int64(row.Sequence)),
 				}, ":"))
 			}
 		}
@@ -231,6 +237,118 @@ func persistenceSignature(
 	}
 	sort.Strings(parts)
 	return strings.Join(parts, "|")
+}
+
+func schedulingStateSignature(state *portfolioState) string {
+	if state == nil {
+		return "nil"
+	}
+	parts := make([]string, 0)
+	projectIDs := make([]string, 0, len(state.projects))
+	for projectID := range state.projects {
+		projectIDs = append(projectIDs, projectID)
+	}
+	sort.Strings(projectIDs)
+	for _, projectID := range projectIDs {
+		project := state.projects[projectID]
+		parts = append(parts, strings.Join([]string{
+			"project-state", project.ID, project.Status,
+			integerSignature(int64(project.Priority)),
+			fmt.Sprint(project.AutomaticScheduling),
+			dateSignature(project.SchedulingStartDate),
+			integerSignature(int64(project.ProjectBuffer)),
+			dateSignature(project.StartDate), dateSignature(project.EndDate),
+			integerSignature(project.ScheduleVersion),
+		}, ":"))
+	}
+
+	taskIDs := make([]string, 0, len(state.tasks))
+	memberIDs := make(map[string]struct{})
+	for taskID, task := range state.tasks {
+		taskIDs = append(taskIDs, taskID)
+		if task.AssigneeID != nil && *task.AssigneeID != "" {
+			memberIDs[*task.AssigneeID] = struct{}{}
+		}
+	}
+	sort.Strings(taskIDs)
+	for _, taskID := range taskIDs {
+		task := state.tasks[taskID]
+		parts = append(parts, strings.Join([]string{
+			"task-state", task.ID, task.ProjectID, task.ParentKey, stringPointerSignature(task.ParentID),
+			integerSignature(int64(task.Position)), stringPointerSignature(task.RoleID), stringPointerSignature(task.AssigneeID),
+			intPointerSignature(task.EffortMinutes), integerSignature(int64(task.LagDays)), integerSignature(int64(task.CapacityAllocationPercentage)),
+			dateSignature(task.ExecutionStart), dateSignature(task.ExecutionEnd), dateSignature(task.CommitmentStart), dateSignature(task.CommitmentEnd),
+			dateSignature(task.ActualStart), dateSignature(task.ActualEnd), stringPointerSignature(task.ExecutionUnscheduledReason), stringPointerSignature(task.CommitmentUnscheduledReason),
+		}, ":"))
+	}
+
+	sortedMemberIDs := make([]string, 0, len(memberIDs))
+	for memberID := range memberIDs {
+		sortedMemberIDs = append(sortedMemberIDs, memberID)
+	}
+	sort.Strings(sortedMemberIDs)
+	for _, memberID := range sortedMemberIDs {
+		member, exists := state.members[memberID]
+		if !exists {
+			parts = append(parts, "member-state:"+memberID+":missing")
+			continue
+		}
+		parts = append(parts, strings.Join([]string{
+			"member-state", member.ID, member.DailyCapacity, member.BufferPercentage,
+		}, ":"))
+		for _, override := range state.overrides[memberID] {
+			parts = append(parts, strings.Join([]string{
+				"override-state", memberID, schedulingdomain.DateKey(override.StartDate), schedulingdomain.DateKey(override.EndDate), override.Capacity,
+			}, ":"))
+		}
+	}
+
+	holidayDates := make([]string, 0, len(state.holidays))
+	for date := range state.holidays {
+		holidayDates = append(holidayDates, date)
+	}
+	sort.Strings(holidayDates)
+	for _, date := range holidayDates {
+		parts = append(parts, "holiday-state:"+date)
+	}
+
+	for _, dependency := range state.dependencies {
+		parts = append(parts, "dependency-state:"+dependency.BlockingTaskID+":"+dependency.BlockedTaskID)
+	}
+
+	for _, timeline := range []schedulingdomain.Timeline{schedulingdomain.Execution, schedulingdomain.Commitment, schedulingdomain.Actual} {
+		byTask := state.existingAllocations[timeline]
+		allocationTaskIDs := make([]string, 0, len(byTask))
+		for taskID := range byTask {
+			allocationTaskIDs = append(allocationTaskIDs, taskID)
+		}
+		sort.Strings(allocationTaskIDs)
+		for _, taskID := range allocationTaskIDs {
+			for _, row := range byTask[taskID] {
+				parts = append(parts, strings.Join([]string{
+					"existing-allocation-state", string(timeline), taskID, row.AssigneeID, schedulingdomain.DateKey(row.AllocationDate),
+					row.AllocatedMinutes, row.RemainingCapacityMinutes, integerSignature(int64(row.Sequence)),
+				}, ":"))
+			}
+		}
+	}
+
+	sort.Strings(parts)
+	return strings.Join(parts, "~")
+}
+
+func stringPointerSignature(value *string) string {
+	if value == nil {
+		return "null"
+	}
+	return *value
+}
+
+func intPointerSignature(value *int) string {
+	if value == nil {
+		return "null"
+	}
+	return integerSignature(int64(*value))
 }
 
 func updateSignature(updates map[string]any) string {
@@ -271,6 +389,10 @@ func dateSignature(value *time.Time) string {
 		return "null"
 	}
 	return schedulingdomain.DateKey(*value)
+}
+
+func integerSignature(value int64) string {
+	return new(big.Int).SetInt64(value).String()
 }
 
 func buildTimelineAllocationRows(state *portfolioState, result *timelineResult) ([]allocationModel, error) {
@@ -374,12 +496,16 @@ func groupAllocationRows(rows []allocationModel) map[string][]allocationModel {
 	return grouped
 }
 
-func scheduleMatchesTask(task taskModel, execution, commitment taskSchedule) bool {
+func scheduleDatesMatchTask(task taskModel, execution, commitment taskSchedule) bool {
 	return datesMatch(task.ExecutionStart, execution.Start) &&
 		datesMatch(task.ExecutionEnd, execution.End) &&
-		stringsMatch(task.ExecutionUnscheduledReason, execution.Reason) &&
 		datesMatch(task.CommitmentStart, commitment.Start) &&
-		datesMatch(task.CommitmentEnd, commitment.End) &&
+		datesMatch(task.CommitmentEnd, commitment.End)
+}
+
+func scheduleMatchesTask(task taskModel, execution, commitment taskSchedule) bool {
+	return scheduleDatesMatchTask(task, execution, commitment) &&
+		stringsMatch(task.ExecutionUnscheduledReason, execution.Reason) &&
 		stringsMatch(task.CommitmentUnscheduledReason, commitment.Reason)
 }
 

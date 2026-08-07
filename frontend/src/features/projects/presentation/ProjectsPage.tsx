@@ -854,8 +854,8 @@ function BulkReopenDialog({
         Reopen related locked projects?
       </h2>
       <p className="mt-3 leading-7 text-muted">
-        These projects share scheduling constraints and must be reopened in one
-        atomic change.
+        The locked projects below must be reopened in one atomic change. Open
+        projects are listed only when their existing timeline will change.
       </p>
       <section className="mt-5" aria-labelledby="locked-reopen-list">
         <h3 id="locked-reopen-list" className="font-extrabold">
@@ -870,7 +870,7 @@ function BulkReopenDialog({
       {plan.openProjects.length > 0 ? (
         <section className="mt-5" aria-labelledby="open-recalculate-list">
           <h3 id="open-recalculate-list" className="font-extrabold">
-            Open Projects that will be recalculated
+            Open Projects whose timeline will change
           </h3>
           <ul className="mt-2 list-disc space-y-1 pl-5">
             {plan.openProjects.map((project) => (

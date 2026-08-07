@@ -8,7 +8,7 @@
 > opened directly from Home continue
 > through the existing owning use cases and US-6.2 impact coordination.
 
-> **Product decision update — US-6.2:** Actual Date range, Open timeline actualization, Actual Allocation, historical overcapacity, Locked Project immutability, generic cross-project impact warning/confirmation, capacity-setting impact, atomic bulk Project Reopen, transitive impacted-scope recalculation, and Priority validation around Locked Projects are owned by US-6.2 and supersede contradictory wording in this story.
+> **Product decision update — US-6.2:** Actual Date range, Open timeline actualization, Actual Allocation, historical overcapacity, Locked Project immutability, timeline-only cross-project warning/blocking, capacity-setting recalculation, atomic bulk Project Reopen, transitive recalculation scope, hidden-state confirmation revalidation, and Priority validation around Locked Projects are owned by US-6.2 and supersede contradictory wording in this story.
 
 > **Product decision update — US-6.3:** Task Capacity Allocation Percentage allows
 > concurrent same-assignee planned allocation while preserving dependency
@@ -293,7 +293,7 @@ Delete unfinished leaf juga menggunakan scheduling-impact boundary. Delete tidak
 
 Rename dan Role-only change tetap tidak menjalankan scheduler bila tidak mengubah Assignee.
 
-Complete Actual Date is a scheduling trigger owned by US-6.2. On Open Project it actualizes Execution/Commitment and persists Actual Allocation. On Locked Project it preserves protected baseline but persists Actual Allocation. In both cases, impacted Open Projects may be recalculated. Factual Actual Date remains saveable even when another Locked Project is impacted. Reopen Task remains governed by US-4.2 and is available only while the Project is Open.
+Complete Actual Date is a scheduling trigger owned by US-6.2. On Open Project it actualizes Execution/Commitment and persists Actual Allocation. On Locked Project it preserves protected baseline but persists Actual Allocation. In both cases, the transitive Open recalculation scope may be recalculated, while grouped warning names contain only Projects whose Executable Task Execution/Commitment Start or End changes. Factual Actual Date remains saveable even when another Locked Project has a counterfactual protected timeline-date impact. Reopen Task remains governed by US-4.2 and is available only while the Project is Open.
 
 ### 7.2 Automatic Scheduling OFF
 
@@ -305,7 +305,7 @@ Complete Actual Date is a scheduling trigger owned by US-6.2. On Open Project it
 
 ### 7.3 Capacity and Holiday Mutation
 
-Daily Capacity, Member Buffer, Public Holiday, Project Buffer, and other effective capacity-setting mutations follow US-6.2 generic impact simulation. Capacity Override create/update/delete follows the same guard only when the before/after minimum active override changes Resolved Daily Capacity on at least one Date. Open-only impact requires confirmation; any ordinary Locked impact blocks save; confirmed allowed mutation recalculates only transitive impacted Open Projects.
+Daily Capacity, Member Buffer, Public Holiday, Project Buffer, and other effective capacity-setting mutations follow US-6.2 transitive recalculation and timeline-only impact classification. Capacity Override create/update/delete follows the same guard only when the before/after minimum active override changes Resolved Daily Capacity on at least one Date. Another Open Project requires confirmation only when an Executable Task Execution/Commitment Start or End changes; an ordinary mutation is blocked by a Locked Project only when a protected Task timeline date would counterfactually change. Confirmed allowed mutation recalculates the complete transitive Open scope, including allocation/readiness-only Projects that are not shown in the warning.
 
 Pada impact preview dan confirmed recalculation, engine wajib menggunakan
 latest confirmed:
@@ -371,13 +371,13 @@ Automatic Scheduling requires a Project Scheduling Start Date.
 
 - Unfinished eligible Tasks may be recalculated.
 - Actual Date actualizes completed Task timelines and Actual Allocation according to US-6.2.
-- Recalculation is limited to the transitive impacted scheduling scope.
+- Recalculation is limited to the transitive recalculation scope; warning scope is the timeline-delta subset defined by US-6.2.
 
 #### Locked
 
 - Locked Project is never a mutable Execution/Commitment scheduler output.
 - Persisted Execution/Commitment dates and allocations are immutable anchors.
-- Actual Date may be entered without changing the protected baseline; its Actual Allocation may trigger recalculation of impacted Open Projects.
+- Actual Date may be entered without changing the protected baseline; its Actual Allocation may trigger the transitive Open recalculation scope, while only Task timeline deltas warn.
 - Planning changes require explicit Project Reopen to Open.
 
 #### Closed
@@ -777,7 +777,7 @@ US-6.2 adds these mandatory distinctions:
 
 - valid inability to schedule is persisted as `Unscheduled + Reason`, not returned as scheduler failure;
 - historical completed overcapacity is valid and is not repaired or rejected;
-- Locked→Open Reopen commits status plus transitive impacted-scope recalculation atomically;
+- Locked→Open Reopen commits status plus transitive recalculation-scope persistence atomically;
 - technical/integrity/concurrency failure rolls Reopen back to Locked;
 - unrelated Projects outside the impacted scope are neither recalculated nor version-updated;
 - priority mutation is rejected atomically when any Locked Project would be affected.
@@ -1169,7 +1169,7 @@ For `8`, `30%`, and `20%`, Raw Commitment is `4.48` and rounded Commitment is `4
 
 **Given** Automatic Scheduling ON
 **When** manual dependency is created or deleted successfully
-**Then** effective graph and transitive impacted-scope dates are recalculated atomically.
+**Then** effective graph and transitive recalculation-scope dates are recalculated atomically.
 
 ### AC-28 — Lag and Effort mutation trigger scheduling
 
@@ -1214,7 +1214,7 @@ For `8`, `30%`, and `20%`, Raw Commitment is `4.48` and rounded Commitment is `4
 **And** Actual Allocation may recalculate impacted Open Projects
 **And** every other planning/dependency/Task mutation is rejected until explicit Project Reopen.
 
-### AC-32 — Transitive impacted-scope recalculation
+### AC-32 — Transitive recalculation scope
 
 **Given** Project A mutation/reopen affects B and B affects C
 **When** recalculation runs
@@ -1225,8 +1225,9 @@ For `8`, `30%`, and `20%`, Raw Commitment is `4.48` and rounded Commitment is `4
 ### AC-32A — Priority change with Locked Projects
 
 **When** Project Priority changes while Locked Projects exist
-**Then** simulation proves no Locked timeline, allocation, or dependency-validity impact before Save
-**And** any Locked impact rejects the entire operation atomically.
+**Then** simulation proves no protected Locked Executable Task Execution/Commitment Start or End would change before Save
+**And** allocation/readiness-only pressure does not classify the Locked Project as impacted
+**And** any protected timeline-date impact rejects the entire operation atomically.
 
 ### AC-33 — Independent Commitment schedule
 
@@ -1541,7 +1542,7 @@ implementation-specific record.
 10. Priority-preserving Task Daily Limits, residual-capacity sharing, and safe auto-blocker reconciliation are enforced by production code and tests.
 11. Locked timelines and allocations cannot be overwritten; Locked Project has no mutable scheduler output.
 12. Completed records are historical anchors with Actual-End normalization, valid overcapacity, and no next-day debt; Closed Projects are excluded.
-13. Triggered mutation plus transitive impacted-scope scheduling is atomic.
+13. Triggered mutation plus transitive recalculation-scope scheduling is atomic; timeline-only warning classification does not truncate propagation.
 14. Schedule version/concurrency strategy prevents stale overwrite.
 15. Structured errors are stable and frontend-safe.
 16. Cache invalidation covers Task, dependency, Project, timeline, and workspace projections.
@@ -1570,7 +1571,7 @@ Implementation must assess and update:
   - transaction and concurrency strategy;
   - Locked immutable-anchor and Actual End exception treatment;
   - completed historical overcapacity and no carry-over;
-  - transitive impacted-scope traversal;
+  - transitive recalculation-scope traversal and timeline-only warning classification;
   - Priority simulation and Locked-impact rejection;
   - cache/version strategy;
   - query/index strategy.
@@ -1612,12 +1613,12 @@ Implementation must assess and update:
 - At most one auto blocker exists per Task; manual blockers may remain multiple.
 - Manual dependency semantics cannot be overwritten or deleted by Auto Dependency.
 - Auto Dependency uses Execution allocation; Commitment uses the resulting effective graph.
-- Scheduler supports portfolio relationships but recalculates only the transitive impacted scheduling scope; unrelated Projects are not touched.
+- Scheduler supports portfolio relationships but recalculates only the transitive recalculation scope; warning scope is the subset with Executable Task Execution/Commitment date changes, and unrelated Projects are not touched.
 - Completed Tasks use Actual End as dependency anchor and follow US-6.2 Actual Date/Actual Allocation rules.
 - Historical overcapacity is valid, floors remaining capacity at zero, and creates no next-day debt.
 - Locked Projects do not run Execution/Commitment scheduling; their baselines and allocations are immutable anchors.
 - Locked→Open is an explicit Project transition that recalculates affected unfinished work.
-- Every scheduling-impacting Task/capacity/priority mutation follows US-6.2 grouped impact guard; ordinary Locked impact blocks save, while factual Actual Date is the explicit exception.
+- Every scheduling-relevant Task/capacity/priority mutation follows US-6.2 transitive recalculation plus timeline-only grouped impact guard; ordinary Locked blocking is limited to counterfactual protected Task date changes, while factual Actual Date is the explicit exception.
 - Closed Projects are excluded.
 - Forecast remains outside this story.
 

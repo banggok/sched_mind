@@ -58,10 +58,10 @@ export function SchedulingImpactDialog() {
           className="mt-3 text-sm text-muted"
         >
           {locked
-            ? "This change would alter one or more locked project schedules. Reopen those projects before continuing."
+            ? "This change would shift protected task timelines in one or more locked projects. Reopen those projects before continuing."
             : stale
-              ? "The portfolio changed after the previous preview. Review the updated affected projects before confirming again."
-              : "Saving this change will reschedule other projects. Review the affected projects before continuing."}
+              ? "The portfolio changed after the previous preview. Review the updated timeline-impacted projects before confirming again."
+              : "Saving this change will shift task timelines in other projects. Review the timeline-impacted projects before continuing."}
         </p>
         <ImpactGroup
           title="Locked projects"

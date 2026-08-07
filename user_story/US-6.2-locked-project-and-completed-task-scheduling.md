@@ -43,11 +43,17 @@ Planned Execution, Commitment, manual, dan Locked baseline allocation tidak
 menjadi lawan head-to-head ketika Actual Allocation baru dibentuk.
 
 SchedMind mendukung shared assignee capacity dan cross-project dependency.
-Karena itu setiap scheduling-impacting mutation harus melakukan impact
-simulation. Open Project lain yang terdampak memerlukan confirmation sebelum
-save. Locked Project yang terdampak biasanya memblokir save. Actual Date adalah
-pengecualian karena fakta eksekusi harus tetap dapat dicatat; Locked Project
-lain tidak berubah dan overlap historis tetap valid.
+Karena itu setiap scheduling-impacting mutation harus melakukan server-side
+simulation terhadap scope yang dapat mempropagasi perubahan. **Recalculation
+scope** dan **warning impact** adalah dua konsep berbeda: Project lain tetap
+boleh dihitung ulang untuk menjaga correctness scheduler, tetapi hanya Project
+yang Execution/Commitment timeline-nya benar-benar berubah yang ditampilkan
+dalam cross-project warning. Perubahan allocation, capacity availability,
+dependency readiness, atau unscheduled reason tanpa perubahan Start/End tidak
+cukup untuk memunculkan warning. Locked Project dengan protected timeline yang
+secara counterfactual harus berubah tetap mengikuti Locked blocking rule. Actual
+Date adalah pengecualian karena fakta eksekusi harus tetap dapat dicatat; Locked
+Project lain tidak berubah dan overlap historis tetap valid.
 
 Project Reopen mempunyai risiko mutual lock. Jika Reopen A membutuhkan B yang
 masih Locked, dan B juga membutuhkan A, sistem harus menawarkan atomic bulk
@@ -73,8 +79,11 @@ membuka Project satu per satu dalam urutan yang mustahil.
 | Completion-order immutability | Existing completed Actual rows are not recomputed when another Task completes; the later command allocates around them |
 | Locked baseline | Persisted Execution/Commitment dates and allocations protected while Project Locked |
 | Scheduling-impacting mutation | Mutation that can change dates, allocations, dependency readiness, unscheduled state, priority order, or capacity available to another Task/Project |
-| Impacted Project | Project other than the mutation owner whose confirmed scheduling projection would change |
-| Transitive impacted scope | Impacted set expanded A→B→C until no further Project changes |
+| Recalculation-affected Project | Project other than the mutation owner whose scheduling state must be recalculated or whose schedule-relevant projection changes while evaluating downstream effects; this may include allocation/readiness/capacity changes with unchanged dates |
+| Timeline-impacted Project | Project other than the mutation owner where simulation changes at least one Executable Task's Execution Start, Execution End, Commitment Start, or Commitment End; `null ↔ date` also counts |
+| Impacted Project | In the cross-project warning/confirmation contract, alias for Timeline-impacted Project |
+| Transitive recalculation scope | Recalculation-affected scope expanded through schedule-relevant propagation A→B→C until fixed point, even when an intermediate Project has no timeline change |
+| Warning impacted set | Timeline-impacted subset of the transitive recalculation scope; only this set is listed in the generic cross-project warning |
 | Required Locked Reopen Closure | Every Locked Project that must become Open together so a requested Reopen can be calculated without mutating any remaining Locked Project |
 | Locked Project Name exception | Project Name may be renamed while Locked; all scheduling-relevant Project settings and Task/WBS planning data remain immutable |
 
@@ -92,8 +101,8 @@ membuka Project satu per satu dalam urutan yang mustahil.
 - Task-centric allocation verification UI.
 - Data contract capable of supporting future assignee-centric allocation analytics.
 - Dependency validation when Actual Date is entered.
-- Recalculation of unfinished work in transitive impacted scope.
-- Generic cross-project impact preview, warning, confirmation, stale-preview protection, and atomic save.
+- Recalculation of unfinished work in the transitive recalculation scope.
+- Generic cross-project recalculation simulation plus timeline-only impact warning, confirmation, stale-preview protection, and atomic save.
 - Impact caused by Task, dependency, priority, Member capacity/buffer, Capacity Override, Public Holiday, Project Buffer, Project Reopen, and future scheduling-impacting settings.
 - Locked Project blocking rules, Project Name-only rename exception, and Actual Date exception.
 - Atomic bulk reopen for mutually/transitively related Locked Projects.
@@ -108,7 +117,7 @@ membuka Project satu per satu dalam urutan yang mustahil.
 - Overtime compensation, recovery capacity, or carrying overcapacity as debt to another Date.
 - User-editable Actual Allocation rows.
 - Assignee-centric analytics page design; only the underlying consistent allocation projection is required now.
-- Reason/detail per impacted Project in warning UI; warning lists Project names only.
+- Reason/detail per timeline-impacted Project in warning UI; warning lists Project names only.
 - Automatic repair of corrupted persisted data.
 
 ---
@@ -202,7 +211,7 @@ Rules:
 - Actual End is always used as completed dependency readiness anchor.
 - `Actual End < former Start` is normalized by the formulas above and must not produce `end before start`.
 - The completed Task is not moved again by unfinished scheduling.
-- Scheduler recalculates unfinished Tasks in the transitive impacted scope.
+- Scheduler recalculates unfinished Tasks in the transitive recalculation scope.
 
 ### 6.2 Planned Dependency Start Rules Remain
 
@@ -550,27 +559,29 @@ When saved:
 - the Locked Project itself is not rescheduled;
 - Actual Allocation is calculated using the protected Execution Start baseline and Sections 7.3–7.7;
 - new Actual Allocation changes capacity available to Open Projects;
-- scheduler recalculates transitive impacted Open Projects;
+- scheduler recalculates the transitive recalculation scope of Open Projects;
 - Locked Project dependencies and WBS order remain unchanged;
 - Forecast effect remains deferred.
 
 Therefore, “Locked Project does not run scheduler” means the scheduler may not
 mutate that Locked Project. It does not prevent Actual Date from triggering
-recalculation of impacted Open Projects.
+recalculation of recalculation-affected Open Projects.
 
 ### 8.4 Actual Date Impact on Other Locked Projects
 
 Actual Date is factual data and is an exception to ordinary Locked-impact
-blocking:
+blocking. The timeline-only warning definition in Section 9 still applies:
 
 - Actual Date remains saveable even when its Actual Allocation or readiness affects another Locked Project;
-- when any other Project is impacted, UI shows the same grouped Locked/Open Project-name warning and requires confirmation;
-- Locked impact is informational for Actual Date and does not block confirmation;
-- server revalidates impact on Confirm;
+- another Locked Project is warning-impacted only when simulation shows that its protected Execution/Commitment Start or End would need to change under current scheduling rules;
+- allocation-only overlap, capacity-pressure, readiness change, or unscheduled-reason change with unchanged protected dates does not put that Locked Project in the warning;
+- when at least one other Project is timeline-impacted, UI shows the same grouped Locked/Open Project-name warning and requires confirmation;
+- Locked timeline impact is informational for Actual Date and does not block confirmation;
+- server revalidates the full recalculation state and current timeline-impacted set on Confirm;
 - no Locked Project timeline, allocation baseline, dependency, or status is mutated;
 - overlap between Actual Allocation and locked allocations is accepted as historical overcapacity;
 - overlap between actual dependent Task ranges is accepted after predecessor-completion validation;
-- impacted Open Projects are recalculated atomically with Actual Date save.
+- recalculation-affected Open Projects are recalculated atomically with Actual Date save, including intermediate Projects that are not warning-impacted.
 
 ### 8.5 Close
 
@@ -583,7 +594,7 @@ Date pair. Close does not rewrite the locked baseline.
 
 ### 9.1 Covered Mutations
 
-The same impact contract applies to every confirmed mutation that can change
+The same simulation contract applies to every confirmed mutation that can change
 scheduling state or available capacity, including:
 
 - create/edit/delete/move/reorder scheduling-relevant Task/WBS;
@@ -600,45 +611,97 @@ scheduling state or available capacity, including:
 - future scheduling-impacting capacity or planning settings.
 
 A mutation that has no scheduling impact follows its owning story and need not
-show a cross-project warning. Project Name-only rename is explicitly outside
-this impact guard.
+run cross-project simulation. Project Name-only rename is explicitly outside
+this guard.
 
-### 9.2 Impact Definition
+### 9.2 Timeline-Only Warning Impact Definition
 
-Another Project is impacted when server-side simulation predicts a change to at
-least one confirmed scheduling projection, including:
+A Project other than the mutation owner is **timeline-impacted** only when the
+server-side before/after simulation changes at least one Executable Task's
+confirmed planning date:
 
-- Execution dates or allocation;
-- Commitment dates or allocation;
-- Actual Allocation rows or Actual-capacity availability consumed by unfinished work;
-- scheduled/unscheduled state or unscheduled reason;
-- dependency readiness;
-- aggregate Project dates derived from affected Tasks.
+- Execution Start;
+- Execution End;
+- Commitment Start; or
+- Commitment End.
 
-The current Project being edited is excluded from the warning list.
+Comparison is value-based. `null → date` and `date → null` are timeline changes.
+A Task date change counts even when the Project-level aggregate Start/End remains
+identical because another Task still defines the same aggregate boundary.
 
-### 9.3 Transitive Scope
+The following changes **do not by themselves** make another Project warning-
+impacted when all four date fields above remain unchanged for every Executable
+Task in that Project:
 
-Impact is expanded transitively:
+- Execution or Commitment daily-allocation shape/amount;
+- available or remaining capacity;
+- Actual Allocation or Actual-capacity availability;
+- dependency readiness or dependency-derived internal state;
+- scheduled/unscheduled reason when the date fields remain unchanged;
+- priority/order metadata;
+- Project/group aggregate values that merely recompute to the same task-derived
+  timeline.
+
+The mutation-owner Project is excluded from the cross-project warning. For
+non-Project-scoped mutations such as Member capacity or Public Holiday changes,
+there is no owner Project to exclude.
+
+### 9.3 Recalculation Scope Is Broader Than Warning Scope
+
+Scheduler traversal must not use the warning impacted set as its propagation
+boundary. It expands the **transitive recalculation scope** through any schedule-
+relevant change that can affect downstream work, including dates, allocations,
+capacity availability, readiness, or scheduled/unscheduled state.
+
+Example:
 
 ```text
-A changes B
-B changes C
-=> impacted Projects: B and C
+Mutation in Project B
+=> Project A allocation changes, but A dates stay identical
+=> A capacity change shifts Project C dates
+
+Recalculation-affected: A and C
+Warning-impacted: C only
 ```
 
-Independent Project D is not recalculated, version-updated, or allowed to block
-the mutation because of unrelated state.
+Project A must still be recalculated/persisted as required even though it is not
+listed in the warning. Independent Project D is not recalculated, persisted, or
+version-updated merely because it shares no effective propagation path.
 
-### 9.4 Warning Behaviour
+If recalculation changes an Open Project's non-date scheduling projection while
+its dates stay unchanged, that projection may be persisted atomically without
+adding the Project to the warning. The resulting version/concurrency state must
+still participate in server revalidation.
 
-#### No Other Project Impact
+### 9.4 Locked Project Evaluation
 
-Save proceeds without cross-project warning.
+Locked Project Execution/Commitment dates and allocations remain immutable
+anchors. Ordinary simulation must schedule Open work around those protected
+reservations rather than treating allocation-only pressure as permission to
+rewrite a Locked baseline.
 
-#### Open Projects Only
+A Locked Project is warning-impacted when the proposed mutation makes its
+protected Execution/Commitment timeline invalid under current scheduling rules
+or would require at least one protected Start/End to change if the Project were
+recalculated. This counterfactual timeline delta is sufficient even though the
+actual Locked baseline is never mutated.
 
-Before save, UI shows a confirmation warning listing impacted Project names:
+Allocation-only pressure against a Locked reservation does not create a warning
+when its protected Start/End remain valid. If an ordinary mutation requires a
+Locked timeline change, existing Locked blocking applies. Actual Date keeps the
+factual exception in Section 8.4.
+
+### 9.5 Warning Behaviour
+
+#### No Other Project Timeline Impact
+
+Save proceeds without cross-project warning, even when another Open Project was
+recalculated and only its allocation/readiness/capacity projection changed.
+
+#### Open Timeline-Impacted Projects Only
+
+Before save, UI shows a confirmation warning listing only timeline-impacted Open
+Project names:
 
 ```text
 Open Projects
@@ -648,9 +711,9 @@ Open Projects
 
 No per-Project reason is required. User may Confirm or Cancel.
 
-#### Locked and Open Projects
+#### Locked and Open Timeline Impact
 
-For ordinary planning/capacity mutation, UI groups names:
+For ordinary planning/capacity mutation, UI groups timeline-impacted names:
 
 ```text
 Locked Projects
@@ -661,7 +724,7 @@ Open Projects
 - Project D
 ```
 
-If at least one Locked Project is impacted:
+If at least one Locked Project is timeline-impacted:
 
 - save is blocked;
 - no partial mutation or Open-Project recalculation is persisted;
@@ -669,23 +732,31 @@ If at least one Locked Project is impacted:
 
 Actual Date follows the exception in Section 8.4 and remains saveable.
 
-### 9.5 Server Revalidation and Atomic Save
+### 9.6 Server Revalidation and Atomic Save
 
 Impact preview is advisory and version-bound. On Confirm, server must:
 
 1. reacquire required transaction/scheduling locks;
-2. recalculate the proposed mutation and transitive impacted set;
-3. validate current Project statuses and schedule versions;
-4. compare with the preview token/version;
-5. persist the mutation and all allowed Open-Project recalculation atomically.
+2. recalculate the proposed mutation and full transitive recalculation scope;
+3. recompute the current timeline-impacted warning set from before/after Task dates;
+4. validate current Project statuses, scheduling state, and schedule versions;
+5. compare the relevant state with the preview token/version;
+6. persist the mutation and all allowed Open-Project recalculation atomically.
 
-If the impacted set or relevant version changed:
+The confirmation token/revalidation boundary must cover the full schedule-
+relevant recalculation state, not only Project names shown in the warning. A
+hidden allocation/readiness/capacity change may alter downstream results even
+when the visible warning list is unchanged.
+
+If the timeline-impacted set or relevant scheduling/version state changed:
 
 - do not save;
-- return a stale-impact response with the new grouped Project names;
-- UI replaces the old warning and requires a new confirmation.
+- return a stale-impact response with the new grouped timeline-impacted Project names;
+- UI replaces the old warning and requires a new confirmation when confirmation is still required.
 
-No stale confirmation may mutate a newly Locked Project.
+No stale confirmation may mutate a newly Locked Project. When the latest
+simulation has no cross-project timeline impact, the server may proceed under
+the normal latest-state atomic save path without presenting an obsolete warning.
 
 ---
 
@@ -706,9 +777,20 @@ Task-level Reopen is not a substitute for Project Reopen.
 When Reopen Project A is requested, server simulates the recalculation needed
 once A becomes Open.
 
-If remaining Locked Project B would need to change, B is added to the Required
-Locked Reopen Closure. Simulation repeats as though A and B are Open. If that
-requires Locked C to change, C is added. Expansion continues until fixed point.
+If remaining Locked Project B would require a protected Execution/Commitment
+Start or End change, B is added to the Required Locked Reopen Closure. Allocation-
+only pressure with unchanged protected dates does not require B to be reopened;
+its Locked baseline remains an immutable anchor. Simulation repeats as though A
+and every required timeline-impacted Locked Project are Open. If that requires a
+protected timeline change in Locked C, C is added. Expansion continues until
+fixed point.
+
+Connectivity alone is never sufficient to add a Project to the closure. Shared
+Assignee or dependency links only make a Project part of the recalculation
+candidate scope. Priority remains authoritative during simulation. Therefore,
+when higher-priority Locked Project A keeps the same protected dates while
+lower-priority Locked Project B is reopened, A remains Locked and is not added to
+the required closure.
 
 This resolves mutual lock:
 
@@ -735,10 +817,16 @@ Locked Projects that must be reopened together
 - Project A
 - Project B
 
-Open Projects that will be recalculated
+Open Projects whose timeline will change
 - Project C
 - Project D
 ```
+
+The Open list is the timeline-impacted subset, not the complete recalculation
+scope. An Automatic Scheduling Project that has no Scheduling Start Date and no
+existing Execution/Commitment timeline may still be considered during
+recalculation, but it is not listed as Reopen impact merely because it remains
+unscheduled or its non-date scheduling metadata is refreshed.
 
 Actions:
 
@@ -755,7 +843,7 @@ On **Reopen All**, server revalidates the closure and versions. Then atomically:
 
 - changes every Project in the required Locked closure to Open;
 - keeps completed Tasks as historical Actual Allocation anchors;
-- recalculates unfinished Tasks across the transitive impacted Open scope;
+- recalculates unfinished Tasks across the transitive recalculation Open scope;
 - reconciles dependencies and allocations;
 - persists status, schedule, allocation, and version changes together.
 
@@ -778,10 +866,11 @@ change that leaves the per-Date minimum unchanged is persisted without warning,
 scheduler invocation, or schedule-version change.
 
 - Locked Projects are immutable anchors during simulation.
-- Open Projects may be recalculated.
-- A change succeeds only when no Locked Project would require mutation.
-- If a Locked Project is impacted, the ordinary change is blocked atomically.
-- The response/UI lists names grouped by Locked/Open without detailed reasons.
+- Open Projects may be recalculated even when their dates remain unchanged.
+- Allocation-only pressure must schedule around Locked reservations and must not rewrite their protected allocation baseline.
+- A change succeeds only when no Locked Project would require a protected Execution/Commitment timeline change.
+- If a Locked Project is timeline-impacted, the ordinary change is blocked atomically.
+- The response/UI lists only timeline-impacted names grouped by Locked/Open without detailed reasons.
 - Project Priority may include changing the Priority of a Locked Project only if simulation proves all Locked Projects remain unchanged and dependency-valid.
 
 Actual Date remains the factual-data exception defined in Section 8.4.
@@ -820,9 +909,9 @@ Existing owning endpoints remain authoritative. Minimum stable concepts:
 | `ACTUAL_DATE_PREDECESSOR_UNFINISHED` | 409 | At least one effective predecessor lacks a complete Actual Date |
 | `PROJECT_CANNOT_LOCK_WITH_UNSCHEDULED_TASKS` | 409 | At least one unfinished Task is not fully scheduled |
 | `PROJECT_LOCKED_READ_ONLY` | 409 | Prohibited mutation requested on Locked Project; Project Name-only rename and eligible Actual Date mutation are excluded |
-| `SCHEDULING_IMPACT_CONFIRMATION_REQUIRED` | 409 | Mutation affects Open Projects and requires user confirmation |
-| `SCHEDULING_LOCKED_PROJECT_IMPACT` | 409 | Ordinary mutation affects at least one Locked Project and is blocked |
-| `SCHEDULING_IMPACT_STALE` | 409 | Impact set/version changed after preview |
+| `SCHEDULING_IMPACT_CONFIRMATION_REQUIRED` | 409 | Mutation changes another Open Project's Execution/Commitment timeline and requires user confirmation |
+| `SCHEDULING_LOCKED_PROJECT_IMPACT` | 409 | Ordinary mutation would require at least one Locked Project's protected Execution/Commitment timeline to change and is blocked |
+| `SCHEDULING_IMPACT_STALE` | 409 | Timeline-impact set or relevant recalculation/version state changed after preview |
 | `PROJECT_BULK_REOPEN_REQUIRED` | 409 | Reopen requires a transitive Locked Project closure |
 | `PROJECT_REOPEN_SCHEDULING_FAILED` | 409/500 according to established mapping | Atomic Reopen failed and rolled back |
 
@@ -925,11 +1014,11 @@ internal lock IDs, or per-Project scheduler internals.
 **And** Actual Allocation is persisted
 **And** owning Locked Project is not rescheduled.
 
-### AC-14 — Locked completion recalculates impacted Open Projects
+### AC-14 — Locked completion recalculates affected Open Projects
 
 **Given** Actual Allocation on Locked Project changes shared capacity/readiness
 **When** Actual Date is saved
-**Then** transitively impacted Open Projects are recalculated
+**Then** transitively recalculation-affected Open Projects are recalculated
 **And** independent Projects are untouched.
 
 ### AC-15 — Actual Date is not blocked by Locked impact
@@ -938,7 +1027,7 @@ internal lock IDs, or per-Project scheduler internals.
 **When** grouped impact warning is confirmed and server revalidation succeeds
 **Then** factual completion succeeds
 **And** every Locked Project remains unchanged
-**And** impacted Open Projects are recalculated
+**And** recalculation-affected Open Projects are recalculated
 **And** overlap is represented as historical state rather than integrity failure.
 
 ### AC-16 — Locked planning mutation remains rejected
@@ -983,39 +1072,65 @@ internal lock IDs, or per-Project scheduler internals.
 **Then** the same persisted/reconstructable Actual Allocation rows can answer Task-centric and assignee-centric queries
 **And** no separate arithmetic produces divergent totals.
 
-### AC-20 — Open-only cross-project impact requires confirmation
+### AC-20 — Candidate-only or non-date cross-project change does not warn
 
-**Given** mutation affects one or more other Open Projects and no Locked Project
-**Then** warning lists impacted Project names
-**And** save occurs only after confirmation and server revalidation.
+**Given** Project B mutation causes Project A to enter cross-project simulation,
+including because B and A share an Assignee
+**When** every Executable Task in A keeps the same Execution Start/End and
+Commitment Start/End values
+**Then** Project A is not listed in a cross-project warning
+**And** no confirmation is required solely because of Project A
+**And** this remains true whether A's allocation/readiness/capacity projection
+also stays identical or changes without changing those dates.
 
-### AC-21 — Ordinary Locked impact blocks save
+### AC-21 — Any other-Project timeline change requires warning
 
-**Given** non-Actual mutation affects a Locked Project
-**Then** warning groups Locked/Open Project names
-**And** complete operation is blocked with no partial save.
+**Given** a mutation changes at least one Executable Task's Execution Start,
+Execution End, Commitment Start, or Commitment End in another Open Project
+**Then** that Project is listed in the warning
+**And** save occurs only after confirmation and server revalidation
+**And** the warning still applies when the Project aggregate Start/End remains
+unchanged.
 
-### AC-22 — Impact is transitively bounded
+### AC-22 — Locked timeline impact blocks ordinary save
 
-**Given** A changes B and B changes C
-**Then** B and C appear as impacted
+**Given** a non-Actual mutation would require at least one protected Execution or
+Commitment Start/End in a Locked Project to change
+**Then** warning groups timeline-impacted Locked/Open Project names
+**And** the complete operation is blocked with no partial save.
+
+**Given** only allocation pressure against a Locked baseline changes while the
+protected dates remain valid
+**Then** the Locked Project is not warning-impacted
+**And** its dates and allocations remain unchanged anchors.
+
+### AC-23 — Recalculation propagates through non-warning intermediate Projects
+
+**Given** mutation in B changes A's schedule-relevant allocation/capacity state
+without changing A's dates
+**And** that change causes C's Execution or Commitment date to change
+**Then** A remains absent from the warning
+**And** C appears in the warning
+**And** A and C are both included in the required transitive recalculation scope
 **And** independent D is not recalculated or version-updated.
 
-### AC-23 — Stale impact confirmation cannot save
+### AC-24 — Stale impact confirmation cannot save
 
-**Given** impact/status/version changes after preview
-**When** user confirms old warning
+**Given** timeline impact, recalculation state, status, or relevant version changes after preview
+**When** user confirms the old warning
 **Then** save is rejected with `SCHEDULING_IMPACT_STALE`
-**And** UI receives the current grouped Project list.
+**And** UI receives the current grouped timeline-impacted Project list
+**And** unchanged warning names do not make a stale hidden allocation/readiness/capacity state valid.
 
-### AC-24 — Capacity sources use the same guard
+### AC-24A — Capacity sources use the same timeline-only warning guard
 
 **When** Daily Capacity, Member Buffer, Public Holiday, or Project Buffer changes
-**Then** the same transitive impact warning/blocking/revalidation contract applies.
+**Then** scheduler traverses the required transitive recalculation scope
+**And** warning/blocking is based only on resulting Execution/Commitment timeline changes in other Projects.
 
 **When** Capacity Override create/update/delete changes the resolved per-Date
 minimum for at least one Date
-**Then** the same guard applies.
+**Then** the same rule applies.
 
 **When** only the override record changes and the resolved per-Date minimum does
 not change
@@ -1029,6 +1144,16 @@ schedule-version change.
 **Then** required Locked closure contains A and B
 **And** user is offered Reopen All rather than an impossible single-Project sequence.
 
+**Given** Locked Project A has higher Priority than Locked Project B
+**And** reopening B leaves every protected Execution/Commitment Start/End in A unchanged
+**When** B is reopened
+**Then** A is not added to the Required Locked Reopen Closure
+**And** B may reopen without requiring A solely because both Projects share an Assignee or dependency-connected recalculation scope.
+
+**Given** Open Automatic Scheduling Project C has no Scheduling Start Date and no existing Execution/Commitment timeline
+**When** C is encountered while previewing another Project Reopen
+**Then** C is not listed in the Reopen warning unless at least one existing Task timeline date in C actually changes.
+
 ### AC-26 — Reopen closure expands transitively
 
 **Given** A requires B and B requires Locked C
@@ -1038,7 +1163,7 @@ schedule-version change.
 
 **When** Reopen All is confirmed
 **Then** every required Locked Project becomes Open together
-**And** impacted Open scope is recalculated
+**And** transitive recalculation Open scope is recalculated
 **And** partial Reopen is impossible.
 
 ### AC-28 — Bulk Reopen failure rolls back
@@ -1084,25 +1209,28 @@ schedule-version change.
 | TC-11 | Complete successor while predecessor unfinished | Rejected |
 | TC-12 | Completed predecessor and overlapping successor Actual Date | Accepted |
 | TC-13 | Locked Task receives Actual Date | Baseline unchanged; Actual Allocation stored |
-| TC-14 | Locked Actual Date impacts Open B and independent C | B recalculated; C untouched |
-| TC-15 | Locked Actual Date overlaps another Locked allocation | Grouped warning/confirm; save succeeds; both locked baselines unchanged |
+| TC-14 | Locked Actual Date changes Open B allocation but not B dates; independent C | B recalculated without warning; C untouched |
+| TC-15 | Locked Actual Date creates allocation-only overlap with another Locked Project and no protected date would change | No warning for that Locked Project; save succeeds; both locked baselines unchanged |
 | TC-15A | Rename Locked Project from Projects | Name changes; protected fields/baseline/status unchanged; no scheduler or impact preview |
 | TC-15B | Rename Locked Project from Home | Same shared command/result as Projects; route stays Home |
 | TC-15C | Submit Locked Project Name plus protected Settings change | Whole request rejected with `PROJECT_LOCKED_READ_ONLY` |
 | TC-15D | Open Locked Task from Home and save Actual Date | Direct shared Task dialog; planning fields read-only; factual save follows Locked Actual Date rules |
 | TC-16 | View completed Task allocation | Execution/Commitment/Actual groups show daily rows and totals |
 | TC-17 | Query Task POV and assignee POV | Same allocation row totals |
-| TC-18 | Edit Task impacts Open B/C | Warning names B/C; confirm required |
-| TC-19 | Edit Task impacts Locked B and Open C | Blocked; grouped names displayed |
-| TC-20 | Actual Date impacts Locked B | Grouped warning/confirm; factual save succeeds; B unchanged |
+| TC-18 | Edit Project B causes shared-Assignee Project A to enter simulation, but all A Execution/Commitment dates stay unchanged | No warning for A and no confirmation solely because A was considered/recalculated |
+| TC-18A | Project B mutation changes A allocation with unchanged A dates, and that hidden change shifts C timeline | A recalculated but omitted from warning; warning names C; confirm required |
+| TC-19 | Edit Task would change Locked B protected timeline and Open C timeline | Blocked; grouped B/C names displayed |
+| TC-20 | Actual Date would require Locked B protected timeline change | Grouped warning/confirm; factual save succeeds; B unchanged |
 | TC-21 | Member Daily Capacity impacts Open Projects | Same warning/confirmation contract |
 | TC-22 | Member Buffer impacts Locked Project | Save blocked |
 | TC-23 | Capacity Override changes resolved minimum | Same generic guard |
 | TC-23A | Capacity Override record changes but minimum is unchanged | Persist record; no warning/scheduler/version change |
 | TC-23B | Public Holiday or Project Buffer impact | Same generic guard |
-| TC-24 | Impact changes between preview and confirm | Stale confirmation rejected; updated list returned |
-| TC-25 | A impacts B impacts C | B/C recalculated; independent D untouched |
+| TC-24 | Hidden recalculation state or timeline-impact set changes between preview and confirm | Stale confirmation rejected; current warning list returned |
+| TC-25 | A changes B allocation with unchanged B dates, which shifts C timeline | B/C recalculated; warning contains C only; independent D untouched |
 | TC-26 | Mutual A/B Locked Reopen | Required closure A/B; Reopen All offered |
+| TC-26A | A/B Locked share an Assignee; A has higher Priority; reopening lower-priority B leaves A dates unchanged | B reopens without requiring A |
+| TC-26B | Connected Open auto Project C has no Scheduling Start Date and no existing timeline | C may remain in recalculation scope but is absent from Reopen warning |
 | TC-27 | A/B closure requires Locked C | Closure expands to A/B/C |
 | TC-28 | User attempts partial closure | Not allowed |
 | TC-29 | Bulk Reopen succeeds | All closure statuses Open; impacted schedules atomic |
@@ -1126,14 +1254,14 @@ schedule-version change.
 - Completion-order immutability, historical overcapacity, and no carry-over.
 - Completed predecessor validation with allowed Actual overlap.
 - Lock eligibility, Locked mutation policy, and Project Name-only exception.
-- Impact classification and Locked exception for Actual Date.
+- Separation of transitive recalculation scope from timeline-only warning impact, including Locked and Actual Date exceptions.
 - Required Locked Reopen closure/fixed-point expansion.
 
 ### 16.2 Application Tests
 
 - Completion coordination for Open and Locked Projects.
 - Locked Project Name-only rename bypasses scheduling impact while mixed protected payloads fail atomically.
-- Generic impact preview and confirmation token.
+- Generic full-scope scheduling preview with timeline-only warning classification and confirmation token.
 - Stale preview rejection.
 - Actual Date save with Locked impact exception.
 - Ordinary mutation blocked by Locked impact.
@@ -1147,7 +1275,7 @@ schedule-version change.
 - Persist Execution/Commitment/Actual allocation rows independently.
 - Task-centric and assignee-centric queries produce equal totals.
 - Cross-project capacity consumption from Locked completed Task.
-- Transitive impacted-scope traversal.
+- Transitive recalculation-scope traversal through non-warning intermediate Projects.
 - Locked rows unchanged during Open recalculation.
 - Bulk Reopen closure, optimistic concurrency, and rollback.
 
@@ -1167,7 +1295,7 @@ schedule-version change.
 - Actual Date pair input and validation.
 - Read-only allocation verification section.
 - Non-working factual dates with working-date allocation display.
-- Grouped Open/Locked impact warning names only.
+- Grouped Open/Locked warning contains timeline-impacted Project names only.
 - Confirmation, stale warning refresh, cancel, and no partial save.
 - Mutual Locked Reopen All workflow.
 - Locked Project rename from Projects and Home uses one shared command and leaves scheduling state untouched.
@@ -1222,12 +1350,12 @@ Forecast remains deferred and must not be inferred from Actual Allocation.
 - Locked Project Name-only rename is metadata-only: it uses the same Project command from Projects and Home and never runs scheduler or impact preview.
 - A Locked Project rename payload that also changes any protected field is rejected atomically.
 - Locked Task Edit opens directly over Home for eligible Actual Date mutation; no hidden Projects or Project Structure navigation is permitted.
-- Locked completion may trigger scheduler for impacted Open Projects while never mutating Locked Projects.
-- Actual Date remains saveable after grouped warning/confirmation even when another Locked Project is impacted.
-- Ordinary scheduling-impacting mutation is blocked when any Locked Project is impacted.
-- Open-only impact requires warning, confirmation, and server-side revalidation.
-- Impact warning lists Project names only, grouped by Locked/Open, excluding the current Project.
-- Impact scope is transitive and excludes independent Projects.
+- Locked completion may trigger scheduler for recalculation-affected Open Projects while never mutating Locked Projects.
+- Actual Date remains saveable after grouped warning/confirmation even when another Locked Project has a counterfactual protected timeline impact.
+- Ordinary scheduling-impacting mutation is blocked when any Locked Project would require a protected Execution/Commitment timeline change.
+- Open-only cross-project warning is required only for Execution/Commitment timeline changes; allocation/readiness/capacity-only changes do not warn.
+- Impact warning lists timeline-impacted Project names only, grouped by Locked/Open, excluding the current Project when one exists.
+- Recalculation scope is transitive through schedule-relevant changes; the warning set is its timeline-impacted subset and excludes independent Projects.
 - Daily Capacity, Member Buffer, Public Holiday, Project Buffer, Priority, and other effective capacity changes use the same impact guard.
 - Capacity Override overlap is allowed; the minimum active override is resolved per Member/Date before buffers.
 - Capacity Override mutation uses the guard only when that resolved minimum changes on at least one Date.

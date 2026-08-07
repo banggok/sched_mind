@@ -6,7 +6,7 @@ import (
 	schedulingdomain "github.com/banggok/sched_mind/backend/internal/scheduling/domain"
 )
 
-func (state *portfolioState) potentialLockedImpacts() ([]string, error) {
+func (state *portfolioState) potentialLockedTimelineImpacts() ([]string, error) {
 	locked := make(map[string]struct{})
 	for projectID, project := range state.projects {
 		if project.Status == "locked" && project.AutomaticScheduling {
@@ -40,19 +40,6 @@ func (state *portfolioState) potentialLockedImpacts() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	executionRows, err := buildTimelineAllocationRowsWithOvercapacity(simulation, execution, true)
-	if err != nil {
-		return nil, err
-	}
-	commitmentRows, err := buildTimelineAllocationRowsWithOvercapacity(simulation, commitment, true)
-	if err != nil {
-		return nil, err
-	}
-	generatedRows := map[schedulingdomain.Timeline]map[string][]allocationModel{
-		schedulingdomain.Execution:  groupAllocationRows(executionRows),
-		schedulingdomain.Commitment: groupAllocationRows(commitmentRows),
-	}
-
 	impacted := make(map[string]struct{})
 	for taskID, task := range state.tasks {
 		if _, lockedProject := locked[task.ProjectID]; !lockedProject {
@@ -66,9 +53,7 @@ func (state *portfolioState) potentialLockedImpacts() ([]string, error) {
 		if !executionExists || !commitmentExists {
 			return nil, fmt.Errorf("%w: missing locked-project simulation for task %s", schedulingdomain.ErrDataIntegrity, taskID)
 		}
-		if !scheduleMatchesTask(task, executionSchedule, commitmentSchedule) ||
-			!allocationRowsEquivalent(state.existingAllocations[schedulingdomain.Execution][taskID], generatedRows[schedulingdomain.Execution][taskID]) ||
-			!allocationRowsEquivalent(state.existingAllocations[schedulingdomain.Commitment][taskID], generatedRows[schedulingdomain.Commitment][taskID]) {
+		if !scheduleDatesMatchTask(task, executionSchedule, commitmentSchedule) {
 			impacted[task.ProjectID] = struct{}{}
 		}
 	}

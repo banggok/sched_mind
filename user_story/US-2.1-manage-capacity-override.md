@@ -34,9 +34,9 @@ Capacity Override boleh aktif pada Date yang sama untuk menangani kondisi
 berlapis seperti periode support yang di dalamnya terdapat cuti atau sakit.
 Untuk setiap Date, Capacity Override efektif adalah Capacity terkecil dari
 seluruh override aktif milik Member tersebut. Mutation yang benar-benar mengubah
-resolved effective capacity mengikuti US-6.2 cross-project impact guard dan,
-setelah confirmation, menghitung ulang transitive impacted Open scope secara
-atomik.
+resolved effective capacity mengikuti US-6.2 transitive recalculation dan
+timeline-only cross-project impact guard. Complete recalculation scope, termasuk
+Project dengan allocation/readiness-only delta tanpa warning, dipersist atomik.
 
 ---
 
@@ -288,10 +288,13 @@ Sick Override: 0h, Date 3
 Create, update, dan delete terlebih dahulu membandingkan Resolved Daily Capacity
 sebelum dan sesudah mutation untuk seluruh Date pada union old/new ranges:
 
-* Jika minimal satu Date berubah, mutation mengikuti US-6.2 transitive impact
-  simulation. Open-only impact requires confirmation and server revalidation;
-  impacted Locked Project blocks ordinary mutation atomically. Confirmed
-  mutation dan impacted Open-Project recalculation dipersist bersama.
+* Jika minimal satu Date berubah, mutation mengikuti US-6.2 transitive
+  recalculation simulation. Another Open Project requires confirmation hanya jika
+  Executable Task Execution/Commitment Start atau End berubah; Locked Project
+  blocks ordinary mutation hanya jika protected Task timeline date secara
+  counterfactual perlu berubah. Confirmed mutation dan seluruh recalculation-
+  affected Open scope dipersist bersama, termasuk non-warning allocation/readiness
+  delta.
 * Jika tidak ada Date yang berubah, record mutation tetap disimpan tetapi tidak
   menampilkan cross-project warning, tidak menjalankan scheduler, dan tidak
   mengubah schedule version. Contoh: override `4h` tetap menjadi minimum saat
@@ -1614,7 +1617,7 @@ User story dianggap selesai jika:
 15. Failed form mempertahankan input dan duplicate submission dicegah.
 16. Loading, empty, error, retry, success, accessibility, dan responsive states
     telah diimplementasikan dan diuji.
-17. Mutation uses US-6.2 transitive impact preview, grouped warning, Locked blocking, and server revalidation.
+17. Mutation uses US-6.2 transitive recalculation, timeline-only grouped warning, Locked blocking, and server revalidation.
 18. Confirmed allowed mutation and impacted Open-Project recalculation persist atomically using the latest override.
 19. Public Holiday menghasilkan Resolved Daily Capacity `0`. Pada working Date
     non-holiday, minimum Capacity dari seluruh active overrides menggantikan
