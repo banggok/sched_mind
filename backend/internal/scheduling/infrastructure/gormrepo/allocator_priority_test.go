@@ -58,3 +58,28 @@ func TestAllocationConsumesCapacityForManualReservationByProjectPriority_US63_AC
 		})
 	}
 }
+
+func TestAllocationConsumesCapacityForResolvedManualGroupUsesEffectiveMode_US44_AC10_US63_AC19(t *testing.T) {
+	candidate := schedulableTask("automatic-task", "high", 1, "member", 960, 0)
+	reserved := schedulableTask("manual-group-task", "low", 1, "member", 480, 0)
+	reserved.EffectiveLifecycle = "open"
+	reserved.EffectiveAutomaticScheduling = false
+	allocation := dailyAllocation{
+		TaskID: reserved.ID, MemberID: "member",
+		Date:    time.Date(2026, 8, 3, 0, 0, 0, 0, time.UTC),
+		Minutes: big.NewRat(240, 1), Fixed: true,
+	}
+	state := &portfolioState{
+		projects: map[string]projectModel{
+			"high": {ID: "high", Status: "open", Priority: 1, AutomaticScheduling: true},
+			// Raw Project mode is intentionally ON: the Task is manual only because
+			// its resolved Group configuration overrides Automatic Scheduling OFF.
+			"low": {ID: "low", Status: "open", Priority: 2, AutomaticScheduling: true},
+		},
+		tasks: map[string]taskModel{candidate.ID: candidate, reserved.ID: reserved},
+	}
+	calendar := newAllocationCalendar(state, schedulingdomain.Execution)
+	if calendar.allocationConsumesCapacityFor(candidate, allocation) {
+		t.Fatal("lower-priority resolved manual Group allocation consumed higher-priority automatic capacity")
+	}
+}

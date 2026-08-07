@@ -1,5 +1,7 @@
 # US-5.1 — Manage Dependency
 
+> **Product decision update — US-4.4:** Dependency mutation eligibility is based on effective lifecycle, not owning Project status alone. An endpoint inside a locally/effectively Locked Group is read-only even when its Project is Open. Group scheduling override does not change the US-6.4 manual-only dependency graph.
+
 > **Product decision update — US-6.4:** Dependency is manual-only. Scheduler-owned
 > automatic ownership, shared ownership, source projection, automatic-only
 > read-only behaviour, and `Keep as Manual Dependency` are removed. One persisted

@@ -47,6 +47,8 @@ const mockedGateways = vi.hoisted(() => {
     create: vi.fn<WBSGateway["create"]>(),
     createSibling: vi.fn<WBSGateway["createSibling"]>(),
     rename: vi.fn<WBSGateway["rename"]>(),
+    updateGroupScheduling: vi.fn<WBSGateway["updateGroupScheduling"]>(),
+    changeGroupStatus: vi.fn<WBSGateway["changeGroupStatus"]>(),
     reorder: vi.fn<WBSGateway["reorder"]>(),
     place: vi.fn<WBSGateway["place"]>(),
     move: vi.fn<WBSGateway["move"]>(),
@@ -341,8 +343,9 @@ describe("App Home row focus restoration", () => {
       .mockResolvedValueOnce(portfolioResult(initialRows))
       .mockImplementation(() => refreshedProjection.promise);
     mockedGateways.wbs.tree.mockResolvedValue([groupNode()]);
-    mockedGateways.wbs.rename.mockImplementation(async () => {
+    mockedGateways.wbs.updateGroupScheduling.mockImplementation(async () => {
       advanceScheduleProjectionVersion();
+      return groupNode();
     });
 
     const user = userEvent.setup();
@@ -372,10 +375,10 @@ describe("App Home row focus restoration", () => {
     await user.type(name, "Renamed Phase");
     await user.click(within(dialog).getByRole("button", { name: "Save" }));
     await waitFor(() =>
-      expect(mockedGateways.wbs.rename).toHaveBeenCalledWith(
+      expect(mockedGateways.wbs.updateGroupScheduling).toHaveBeenCalledWith(
         "alpha",
         "group-100",
-        "Renamed Phase",
+        expect.objectContaining({ name: "Renamed Phase" }),
       ),
     );
     await waitFor(() =>

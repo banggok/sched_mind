@@ -1,5 +1,7 @@
 # US-7.1 — Home Portfolio Gantt Workspace
 
+> **Product decision update — US-4.4:** The shared Group dialog opened from Home now includes Group scheduling inheritance/override and eligible Lock/Reopen controls in addition to rename and the US-4.3 summary. Home remains the route/background; no separate Group settings page is introduced. Row mutation eligibility follows effective Group/Project lifecycle.
+
 > **Authority:** This story owns the Home navigation entry, portfolio Gantt read
 > model, Project selection and global saved-filter behaviour, WBS/timeline
 > presentation, canonical Home orchestration of Project/WBS actions, and removal

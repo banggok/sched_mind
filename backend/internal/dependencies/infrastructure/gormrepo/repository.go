@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/banggok/sched_mind/backend/internal/dependencies/domain"
+	groupscheduling "github.com/banggok/sched_mind/backend/internal/shared/groupscheduling"
 	"github.com/banggok/sched_mind/backend/internal/shared/persistence"
 	"github.com/banggok/sched_mind/backend/internal/shared/schedulingimpact"
 	"gorm.io/gorm"
@@ -34,6 +35,12 @@ type taskModel struct {
 	ParentID                                *string
 	Position                                int
 	ActualStart, ActualEnd, ExecutionStart  *time.Time
+	GroupSchedulingSource                   string
+	GroupAutomaticScheduling                *bool
+	GroupSchedulingStartDate                *time.Time
+	GroupLocalStatus                        string
+	GroupLockedAutomaticScheduling          *bool
+	GroupLockedSchedulingStartDate          *time.Time
 }
 
 type hierarchyNode struct {
@@ -47,6 +54,7 @@ func (taskModel) TableName() string { return "wbs_nodes" }
 type projectModel struct {
 	ID, Name, NameKey, Status string
 	AutomaticScheduling       bool
+	SchedulingStartDate       *time.Time
 }
 
 func (projectModel) TableName() string { return "projects" }
@@ -163,7 +171,24 @@ func (r *Repository) Candidates(ctx context.Context, taskID string, direction do
 	}
 	adjacency := adjacencyMap(edges)
 	valid := make([]domain.Task, 0, len(rows))
+	resolverCache := make(map[string]*groupscheduling.Resolver)
 	for _, v := range rows {
+		resolver := resolverCache[v.ProjectID]
+		if resolver == nil {
+			var loadErr error
+			resolver, loadErr = loadGroupResolver(r.db.WithContext(ctx), v.ProjectID)
+			if loadErr != nil {
+				return nil, loadErr
+			}
+			resolverCache[v.ProjectID] = resolver
+		}
+		effective, effectiveErr := resolver.EffectiveFor(v.ID)
+		if effectiveErr != nil {
+			return nil, effectiveErr
+		}
+		if effective.Lifecycle != groupscheduling.LifecycleOpen {
+			continue
+		}
 		pathStart, pathTarget := v.ID, current.ID
 		if direction == domain.BlockedBy {
 			pathStart, pathTarget = current.ID, v.ID
@@ -337,6 +362,17 @@ func validateEndpoint(tx *gorm.DB, id string, blocked bool) (taskModel, error) {
 	if p.Status != "open" {
 		return t, domain.ErrLockedProject
 	}
+	resolver, err := loadGroupResolver(tx, t.ProjectID)
+	if err != nil {
+		return t, err
+	}
+	effective, err := resolver.EffectiveFor(t.ID)
+	if err != nil {
+		return t, err
+	}
+	if effective.Lifecycle != groupscheduling.LifecycleOpen {
+		return t, domain.ErrLockedGroup
+	}
 	var children int64
 	if err := tx.Model(&taskModel{}).Where("project_id = ? AND parent_key = ?", t.ProjectID, t.ID).Count(&children).Error; err != nil {
 		return t, err
@@ -362,6 +398,17 @@ func ensureEndpointProjectsOpen(tx *gorm.DB, tasks ...taskModel) error {
 		if project.Status != "open" {
 			return domain.ErrLockedProject
 		}
+		resolver, err := loadGroupResolver(tx, task.ProjectID)
+		if err != nil {
+			return err
+		}
+		effective, err := resolver.EffectiveFor(task.ID)
+		if err != nil {
+			return err
+		}
+		if effective.Lifecycle != groupscheduling.LifecycleOpen {
+			return domain.ErrLockedGroup
+		}
 	}
 	return nil
 }
@@ -382,9 +429,33 @@ func lockActiveProjects(tx *gorm.DB) (map[string]bool, error) {
 	}
 	out := map[string]bool{}
 	for _, p := range rows {
-		out[p.ID] = p.AutomaticScheduling
+		out[p.ID] = p.Status == "open"
 	}
 	return out, nil
+}
+
+func loadGroupResolver(db *gorm.DB, projectID string) (*groupscheduling.Resolver, error) {
+	var project projectModel
+	if err := db.First(&project, "id = ?", projectID).Error; err != nil {
+		return nil, err
+	}
+	var tasks []taskModel
+	if err := db.Where("project_id = ?", projectID).Order("parent_key ASC").Order("position ASC").Find(&tasks).Error; err != nil {
+		return nil, err
+	}
+	nodes := make([]groupscheduling.Node, 0, len(tasks))
+	for _, task := range tasks {
+		source := groupscheduling.Source(task.GroupSchedulingSource)
+		if source == "" {
+			source = groupscheduling.SourceInherit
+		}
+		status := groupscheduling.LocalStatus(task.GroupLocalStatus)
+		if status == "" {
+			status = groupscheduling.StatusOpen
+		}
+		nodes = append(nodes, groupscheduling.Node{ID: task.ID, ParentID: task.ParentID, Name: task.Name, Source: source, AutomaticSchedulingOverride: task.GroupAutomaticScheduling, SchedulingStartDateOverride: task.GroupSchedulingStartDate, LocalStatus: status, LockedAutomaticScheduling: task.GroupLockedAutomaticScheduling, LockedSchedulingStartDate: task.GroupLockedSchedulingStartDate})
+	}
+	return groupscheduling.New(groupscheduling.Project{ID: project.ID, Name: project.Name, Status: project.Status, AutomaticScheduling: project.AutomaticScheduling, SchedulingStartDate: project.SchedulingStartDate}, nodes)
 }
 
 func cyclePath(tx *gorm.DB, start, target string) ([]string, error) {

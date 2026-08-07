@@ -297,12 +297,16 @@ export function WBSPanel({
                     value={target}
                     onChange={(event) => setTarget(event.target.value)}
                   >
-                    <option value="">Project root</option>
+                    <option value="" disabled={project.status !== "open"}>
+                      Project root
+                    </option>
                     {all
                       .filter(
                         (node) =>
                           node.id !== draft.node?.id &&
-                          !descendants(draft.node, node.id),
+                          !descendants(draft.node, node.id) &&
+                          (node.scheduling?.effectiveLifecycle ??
+                            project.status) === "open",
                       )
                       .map((node) => (
                         <option key={node.id} value={node.id}>

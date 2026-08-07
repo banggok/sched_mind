@@ -74,6 +74,7 @@ type rowItem struct {
 	IncompleteSchedule bool    `json:"incompleteSchedule"`
 	HasChildren        bool    `json:"hasChildren"`
 	Completed          bool    `json:"completed"`
+	EffectiveLifecycle string  `json:"effectiveLifecycle"`
 }
 type dependencyItem struct {
 	ID             string `json:"id"`
@@ -213,7 +214,7 @@ func mapPortfolio(value domain.Portfolio) portfolioItem {
 			RoleID: row.RoleID, RoleName: row.RoleName,
 			AssigneeID: row.AssigneeID, AssigneeName: row.AssigneeName, EffortMinutes: row.EffortMinutes,
 			Start: dateString(row.Start), End: dateString(row.End), UnscheduledReason: row.UnscheduledReason,
-			IncompleteEffort: row.IncompleteEffort, IncompleteSchedule: row.IncompleteSchedule, HasChildren: row.HasChildren, Completed: row.Completed,
+			IncompleteEffort: row.IncompleteEffort, IncompleteSchedule: row.IncompleteSchedule, HasChildren: row.HasChildren, Completed: row.Completed, EffectiveLifecycle: row.EffectiveLifecycle,
 		})
 	}
 	dependencies := make([]dependencyItem, 0, len(value.Dependencies))

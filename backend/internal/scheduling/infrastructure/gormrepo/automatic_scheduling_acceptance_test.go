@@ -620,28 +620,35 @@ func (scheduler *acceptanceFailingScheduler) MarkProjectUnscheduled(context.Cont
 func (acceptanceProjectRecord) TableName() string { return "projects" }
 
 type acceptanceTaskRecord struct {
-	ID                           string `gorm:"primaryKey"`
-	ProjectID                    string
-	ParentID                     *string
-	ParentKey                    string
-	Name                         string
-	NameKey                      string
-	Position                     int
-	RoleID                       *string
-	AssigneeID                   *string
-	EffortMinutes                *int
-	LagDays                      int
-	CapacityAllocationPercentage int `gorm:"default:100"`
-	ExecutionStart               *time.Time
-	ExecutionEnd                 *time.Time
-	CommitmentStart              *time.Time
-	CommitmentEnd                *time.Time
-	ActualStart                  *time.Time
-	ActualEnd                    *time.Time
-	ExecutionUnscheduledReason   *string
-	CommitmentUnscheduledReason  *string
-	CreatedAt                    time.Time
-	UpdatedAt                    time.Time
+	ID                             string `gorm:"primaryKey"`
+	ProjectID                      string
+	ParentID                       *string
+	ParentKey                      string
+	Name                           string
+	NameKey                        string
+	Position                       int
+	RoleID                         *string
+	AssigneeID                     *string
+	EffortMinutes                  *int
+	LagDays                        int
+	CapacityAllocationPercentage   int `gorm:"default:100"`
+	ExecutionStart                 *time.Time
+	ExecutionEnd                   *time.Time
+	CommitmentStart                *time.Time
+	CommitmentEnd                  *time.Time
+	ActualStart                    *time.Time
+	ActualEnd                      *time.Time
+	ExecutionUnscheduledReason     *string
+	CommitmentUnscheduledReason    *string
+	GroupSchedulingSource          string `gorm:"default:inherit"`
+	GroupAutomaticScheduling       *bool
+	GroupSchedulingStartDate       *time.Time
+	GroupLocalStatus               string `gorm:"default:open"`
+	GroupSchedulingVersion         int64
+	GroupLockedAutomaticScheduling *bool
+	GroupLockedSchedulingStartDate *time.Time
+	CreatedAt                      time.Time
+	UpdatedAt                      time.Time
 }
 
 func (acceptanceTaskRecord) TableName() string { return "wbs_nodes" }
@@ -795,6 +802,292 @@ func TestCreateWBSAcceptanceSkipsSchedulerForNameOnlyTaskWhenProjectHasCompleted
 		storedNewTask.ExecutionUnscheduledReason != nil ||
 		storedNewTask.CommitmentUnscheduledReason != nil {
 		t.Fatalf("new Task projection = %#v, want empty unscheduled state without scheduler projection", storedNewTask)
+	}
+}
+
+func TestGroupEffectiveSchedulingAcceptance_US44_AC9_AC10_AC11_AC12(t *testing.T) {
+	t.Run("Project OFF still schedules a custom automatic Group with its own anchor and Project Buffer", func(t *testing.T) {
+		database := acceptanceDatabase(t)
+		now := time.Date(2026, 8, 7, 8, 0, 0, 0, time.UTC)
+		groupAnchor := mustDate("2026-08-10")
+		roleID, memberID, groupID := "role", "member", "group"
+		if err := database.Create(&acceptanceRoleRecord{ID: roleID, Name: "Engineer"}).Error; err != nil {
+			t.Fatal(err)
+		}
+		if err := database.Create(&acceptanceMemberRecord{ID: memberID, Name: "Rani", RoleID: roleID, DailyCapacity: "8", BufferPercentage: "0", CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+			t.Fatal(err)
+		}
+		if err := database.Create(&acceptanceProjectRecord{ID: "project", Name: "Project", NameKey: "project", Status: "open", Priority: 1, AutomaticScheduling: false, ProjectBuffer: 20, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+			t.Fatal(err)
+		}
+		automatic := true
+		effort := 480
+		rows := []acceptanceTaskRecord{
+			{ID: groupID, ProjectID: "project", ParentKey: "", Name: "Automatic Group", NameKey: "automatic group", Position: 1, GroupSchedulingSource: "override", GroupAutomaticScheduling: &automatic, GroupSchedulingStartDate: &groupAnchor, GroupLocalStatus: "open", CreatedAt: now, UpdatedAt: now},
+			{ID: "task", ProjectID: "project", ParentID: &groupID, ParentKey: groupID, Name: "Task", NameKey: "task", Position: 1, RoleID: &roleID, AssigneeID: &memberID, EffortMinutes: &effort, GroupSchedulingSource: "inherit", GroupLocalStatus: "open", CreatedAt: now, UpdatedAt: now},
+		}
+		if err := database.Create(&rows).Error; err != nil {
+			t.Fatal(err)
+		}
+
+		scheduler := schedulingapplication.NewService(NewWithDependencies(database, func() time.Time { return now }, func() (string, error) { return "automatic", nil }))
+		if err := scheduler.RecalculateActiveProjects(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+
+		confirmed := loadAcceptanceTask(t, database, "task")
+		assertDate(t, "Group execution start", confirmed.ExecutionStart, "2026-08-10")
+		assertDate(t, "Group execution end", confirmed.ExecutionEnd, "2026-08-10")
+		assertDate(t, "Group commitment start", confirmed.CommitmentStart, "2026-08-10")
+		assertDate(t, "Group commitment end", confirmed.CommitmentEnd, "2026-08-11")
+	})
+
+	t.Run("Project ON preserves manual dates in a custom manual Group", func(t *testing.T) {
+		database := acceptanceDatabase(t)
+		now := time.Date(2026, 8, 7, 8, 0, 0, 0, time.UTC)
+		projectAnchor := mustDate("2026-08-10")
+		manualDate := mustDate("2026-08-12")
+		roleID, memberID, groupID := "role", "member", "group"
+		if err := database.Create(&acceptanceRoleRecord{ID: roleID, Name: "Engineer"}).Error; err != nil {
+			t.Fatal(err)
+		}
+		if err := database.Create(&acceptanceMemberRecord{ID: memberID, Name: "Rani", RoleID: roleID, DailyCapacity: "8", BufferPercentage: "0", CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+			t.Fatal(err)
+		}
+		if err := database.Create(&acceptanceProjectRecord{ID: "project", Name: "Project", NameKey: "project", Status: "open", Priority: 1, AutomaticScheduling: true, SchedulingStartDate: &projectAnchor, ProjectBuffer: 20, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+			t.Fatal(err)
+		}
+		automatic := false
+		effort := 480
+		rows := []acceptanceTaskRecord{
+			{ID: groupID, ProjectID: "project", ParentKey: "", Name: "Manual Group", NameKey: "manual group", Position: 1, GroupSchedulingSource: "override", GroupAutomaticScheduling: &automatic, GroupLocalStatus: "open", CreatedAt: now, UpdatedAt: now},
+			{ID: "task", ProjectID: "project", ParentID: &groupID, ParentKey: groupID, Name: "Task", NameKey: "task", Position: 1, RoleID: &roleID, AssigneeID: &memberID, EffortMinutes: &effort, ExecutionStart: &manualDate, ExecutionEnd: &manualDate, CommitmentStart: &manualDate, CommitmentEnd: &manualDate, GroupSchedulingSource: "inherit", GroupLocalStatus: "open", CreatedAt: now, UpdatedAt: now},
+		}
+		if err := database.Create(&rows).Error; err != nil {
+			t.Fatal(err)
+		}
+
+		scheduler := schedulingapplication.NewService(NewWithDependencies(database, func() time.Time { return now }, func() (string, error) { return "automatic", nil }))
+		if err := scheduler.RecalculateActiveProjects(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+
+		confirmed := loadAcceptanceTask(t, database, "task")
+		assertDate(t, "manual Group execution start", confirmed.ExecutionStart, "2026-08-12")
+		assertDate(t, "manual Group execution end", confirmed.ExecutionEnd, "2026-08-12")
+		assertDate(t, "manual Group commitment start", confirmed.CommitmentStart, "2026-08-12")
+		assertDate(t, "manual Group commitment end", confirmed.CommitmentEnd, "2026-08-12")
+	})
+}
+
+func TestGroupSchedulingAllocationOnlySiblingRecalculationDoesNotWarn_US44_AC23(t *testing.T) {
+	database := acceptanceDatabase(t)
+	now := time.Date(2026, 8, 7, 8, 0, 0, 0, time.UTC)
+	projectAnchor := mustDate("2026-08-10")
+	ownerAnchor := mustDate("2026-08-10")
+	movedOwnerAnchor := mustDate("2026-08-11")
+	roleID, memberID := "role", "member"
+	ownerGroupID, siblingGroupID := "owner-group", "sibling-group"
+	if err := database.Create(&acceptanceRoleRecord{ID: roleID, Name: "Engineer"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Create(&acceptanceMemberRecord{
+		ID: memberID, Name: "Rani", RoleID: roleID,
+		DailyCapacity: "8", BufferPercentage: "0", CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Create(&acceptanceProjectRecord{
+		ID: "project", Name: "Project", NameKey: "project", Status: "open", Priority: 1,
+		AutomaticScheduling: true, AutoCalculateDate: true, SchedulingStartDate: &projectAnchor,
+		ProjectBuffer: 0, CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	automatic := true
+	effort := 240
+	percentage := 50
+	rows := []acceptanceTaskRecord{
+		{ID: ownerGroupID, ProjectID: "project", ParentKey: "", Name: "Owner Group", NameKey: "owner group", Position: 1, GroupSchedulingSource: "override", GroupAutomaticScheduling: &automatic, GroupSchedulingStartDate: &ownerAnchor, GroupLocalStatus: "open", CreatedAt: now, UpdatedAt: now},
+		{ID: "owner-task", ProjectID: "project", ParentID: &ownerGroupID, ParentKey: ownerGroupID, Name: "Owner Task", NameKey: "owner task", Position: 1, RoleID: &roleID, AssigneeID: &memberID, EffortMinutes: &effort, CapacityAllocationPercentage: percentage, GroupSchedulingSource: "inherit", GroupLocalStatus: "open", CreatedAt: now, UpdatedAt: now},
+		{ID: siblingGroupID, ProjectID: "project", ParentKey: "", Name: "Sibling Group", NameKey: "sibling group", Position: 2, GroupSchedulingSource: "inherit", GroupLocalStatus: "open", CreatedAt: now, UpdatedAt: now},
+		{ID: "sibling-task", ProjectID: "project", ParentID: &siblingGroupID, ParentKey: siblingGroupID, Name: "Sibling Task", NameKey: "sibling task", Position: 1, RoleID: &roleID, AssigneeID: &memberID, EffortMinutes: &effort, CapacityAllocationPercentage: percentage, GroupSchedulingSource: "inherit", GroupLocalStatus: "open", CreatedAt: now, UpdatedAt: now},
+	}
+	if err := database.Create(&rows).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	scheduler := schedulingapplication.NewService(NewWithDependencies(database, func() time.Time { return now }, func() (string, error) { return "group-allocation-only", nil }))
+	if err := scheduler.RecalculateActiveProjects(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	beforeSibling := loadAcceptanceTask(t, database, "sibling-task")
+	beforeRows := loadAcceptanceAllocations(t, database, "sibling-task", string(schedulingdomain.Execution))
+
+	wbsService := wbsapplication.NewServiceWithDependencies(
+		wbsgormrepo.New(database),
+		scheduler,
+		func() time.Time { return now.Add(time.Hour) },
+		func() (string, error) { return "unused", nil },
+	)
+	updated, err := wbsService.UpdateGroupScheduling(context.Background(), "project", ownerGroupID, wbsapplication.GroupSchedulingInput{
+		ExpectedVersion:     0,
+		Source:              "override",
+		AutomaticScheduling: &automatic,
+		SchedulingStartDate: &movedOwnerAnchor,
+	})
+	if err != nil {
+		t.Fatalf("allocation-only sibling recalculation returned warning/block: %v", err)
+	}
+	if updated == nil || updated.Scheduling.Version != 1 {
+		t.Fatalf("updated owner Group = %#v, want scheduling version 1", updated)
+	}
+
+	afterSibling := loadAcceptanceTask(t, database, "sibling-task")
+	afterRows := loadAcceptanceAllocations(t, database, "sibling-task", string(schedulingdomain.Execution))
+	requireAcceptanceTaskTimelineUnchanged(t, beforeSibling, afterSibling)
+	requireAcceptanceAllocationMetadataChanged(t, beforeRows, afterRows)
+}
+
+func TestGroupReopenDoesNotIncludeHigherPriorityLockedGroupWhenProtectedDatesStayFixed_US44_AC26(t *testing.T) {
+	database := acceptanceDatabase(t)
+	now := time.Date(2026, 8, 7, 8, 0, 0, 0, time.UTC)
+	anchor := mustDate("2026-08-10")
+	roleID, memberID := "role", "member"
+	if err := database.Create(&acceptanceRoleRecord{ID: roleID, Name: "Engineer"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Create(&acceptanceMemberRecord{
+		ID: memberID, Name: "Rani", RoleID: roleID,
+		DailyCapacity: "8", BufferPercentage: "0", CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	projects := []acceptanceProjectRecord{
+		{ID: "high", Name: "High", NameKey: "high", Status: "open", Priority: 1, AutomaticScheduling: true, AutoCalculateDate: true, SchedulingStartDate: &anchor, ProjectBuffer: 0, CreatedAt: now, UpdatedAt: now},
+		{ID: "low", Name: "Low", NameKey: "low", Status: "open", Priority: 2, AutomaticScheduling: true, AutoCalculateDate: true, SchedulingStartDate: &anchor, ProjectBuffer: 0, CreatedAt: now, UpdatedAt: now},
+	}
+	if err := database.Create(&projects).Error; err != nil {
+		t.Fatal(err)
+	}
+	effort := 480
+	highGroupID, lowGroupID := "high-group", "low-group"
+	rows := []acceptanceTaskRecord{
+		{ID: highGroupID, ProjectID: "high", ParentKey: "", Name: "High Group", NameKey: "high group", Position: 1, GroupSchedulingSource: "inherit", GroupLocalStatus: "open", CreatedAt: now, UpdatedAt: now},
+		{ID: "high-task", ProjectID: "high", ParentID: &highGroupID, ParentKey: highGroupID, Name: "High Task", NameKey: "high task", Position: 1, RoleID: &roleID, AssigneeID: &memberID, EffortMinutes: &effort, GroupSchedulingSource: "inherit", GroupLocalStatus: "open", CreatedAt: now, UpdatedAt: now},
+		{ID: lowGroupID, ProjectID: "low", ParentKey: "", Name: "Low Group", NameKey: "low group", Position: 1, GroupSchedulingSource: "inherit", GroupLocalStatus: "open", CreatedAt: now, UpdatedAt: now},
+		{ID: "low-task", ProjectID: "low", ParentID: &lowGroupID, ParentKey: lowGroupID, Name: "Low Task", NameKey: "low task", Position: 1, RoleID: &roleID, AssigneeID: &memberID, EffortMinutes: &effort, GroupSchedulingSource: "inherit", GroupLocalStatus: "open", CreatedAt: now, UpdatedAt: now},
+	}
+	if err := database.Create(&rows).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	scheduler := schedulingapplication.NewService(NewWithDependencies(database, func() time.Time { return now }, func() (string, error) { return "group-reopen-priority", nil }))
+	if err := scheduler.RecalculateActiveProjects(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	assertDate(t, "higher-priority Group baseline", loadAcceptanceTask(t, database, "high-task").ExecutionStart, "2026-08-10")
+	assertDate(t, "lower-priority Group baseline", loadAcceptanceTask(t, database, "low-task").ExecutionStart, "2026-08-11")
+
+	wbsService := wbsapplication.NewServiceWithDependencies(
+		wbsgormrepo.New(database),
+		scheduler,
+		func() time.Time { return now.Add(time.Hour) },
+		func() (string, error) { return "unused", nil },
+	)
+	if _, err := wbsService.ChangeGroupStatus(context.Background(), "high", highGroupID, "locked", 0); err != nil {
+		t.Fatalf("lock higher-priority Group: %v", err)
+	}
+	if _, err := wbsService.ChangeGroupStatus(context.Background(), "low", lowGroupID, "locked", 0); err != nil {
+		t.Fatalf("lock lower-priority Group: %v", err)
+	}
+	highLockedBaseline := loadAcceptanceTask(t, database, "high-task")
+
+	reopened, err := wbsService.ChangeGroupStatus(context.Background(), "low", lowGroupID, "open", 1)
+	if err != nil {
+		var closure schedulingimpact.Error
+		if errors.As(err, &closure) && closure.Kind == schedulingimpact.ReopenClosureRequired {
+			t.Fatalf("lower-priority Group reopen incorrectly requires higher-priority protected scope: lockedProjects=%#v lockedGroups=%#v", closure.LockedProjects, closure.LockedGroups)
+		}
+		t.Fatalf("reopen lower-priority Group: %v", err)
+	}
+	if reopened == nil || reopened.Scheduling.LocalStatus != "open" {
+		t.Fatalf("reopened lower-priority Group = %#v, want local open", reopened)
+	}
+
+	var highGroup acceptanceTaskRecord
+	if err := database.First(&highGroup, "id = ?", highGroupID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if highGroup.GroupLocalStatus != "locked" {
+		t.Fatalf("higher-priority Group status=%q, want locked", highGroup.GroupLocalStatus)
+	}
+	highAfter := loadAcceptanceTask(t, database, "high-task")
+	requireAcceptanceTaskTimelineUnchanged(t, highLockedBaseline, highAfter)
+}
+
+func TestProjectReopenPreservesNestedLocalGroupLock_US44_AC16(t *testing.T) {
+	database := acceptanceDatabase(t)
+	now := time.Date(2026, 8, 7, 8, 0, 0, 0, time.UTC)
+	anchor := mustDate("2026-08-10")
+	roleID, memberID, groupID := "role", "member", "group"
+	if err := database.Create(&acceptanceRoleRecord{ID: roleID, Name: "Engineer"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Create(&acceptanceMemberRecord{
+		ID: memberID, Name: "Rani", RoleID: roleID,
+		DailyCapacity: "8", BufferPercentage: "0", CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Create(&acceptanceProjectRecord{
+		ID: "project", Name: "Project", NameKey: "project", Status: "open", Priority: 1,
+		AutomaticScheduling: true, AutoCalculateDate: true, SchedulingStartDate: &anchor,
+		ProjectBuffer: 0, CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	effort := 480
+	rows := []acceptanceTaskRecord{
+		{ID: groupID, ProjectID: "project", ParentKey: "", Name: "Group", NameKey: "group", Position: 1, GroupSchedulingSource: "inherit", GroupLocalStatus: "open", CreatedAt: now, UpdatedAt: now},
+		{ID: "task", ProjectID: "project", ParentID: &groupID, ParentKey: groupID, Name: "Task", NameKey: "task", Position: 1, RoleID: &roleID, AssigneeID: &memberID, EffortMinutes: &effort, GroupSchedulingSource: "inherit", GroupLocalStatus: "open", CreatedAt: now, UpdatedAt: now},
+	}
+	if err := database.Create(&rows).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	scheduler := schedulingapplication.NewService(NewWithDependencies(database, func() time.Time { return now }, func() (string, error) { return "project-reopen-group-lock", nil }))
+	if err := scheduler.RecalculateActiveProjects(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	wbsService := wbsapplication.NewServiceWithDependencies(
+		wbsgormrepo.New(database),
+		scheduler,
+		func() time.Time { return now.Add(time.Hour) },
+		func() (string, error) { return "unused", nil },
+	)
+	if _, err := wbsService.ChangeGroupStatus(context.Background(), "project", groupID, "locked", 0); err != nil {
+		t.Fatalf("lock Group: %v", err)
+	}
+
+	projectService := projectapplication.NewServiceWithDependencies(projectrepo.New(database), scheduler, func() time.Time { return now.Add(2 * time.Hour) }, func() (string, error) { return "unused", nil })
+	if _, err := projectService.ChangeStatus(context.Background(), "project", projectdomain.StatusLocked); err != nil {
+		t.Fatalf("lock Project: %v", err)
+	}
+	reopened, err := projectService.ChangeStatus(context.Background(), "project", projectdomain.StatusOpen)
+	if err != nil {
+		t.Fatalf("reopen Project: %v", err)
+	}
+	if reopened == nil || reopened.Status != projectdomain.StatusOpen {
+		t.Fatalf("reopened Project=%#v, want open", reopened)
+	}
+
+	group, err := wbsService.Get(context.Background(), "project", groupID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if group.Scheduling.LocalStatus != "locked" || group.Scheduling.EffectiveLifecycle != "locked" || group.Scheduling.LockOwnerID != groupID {
+		t.Fatalf("Group after Project reopen=%#v, want preserved local/effective Group lock", group.Scheduling)
 	}
 }
 

@@ -25,9 +25,7 @@ export function WBSSummary({
 
   return (
     <div
-      className={`grid min-w-0 gap-4 ${
-        subject === "project" ? "lg:grid-cols-3" : ""
-      }`.trim()}
+      className="grid min-w-0 gap-4 lg:grid-cols-3"
       aria-label={`${subject === "project" ? "Project" : "Group"} summary details`}
     >
       <TimelineSection

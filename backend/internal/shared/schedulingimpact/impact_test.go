@@ -105,3 +105,80 @@ func requestContext(t *testing.T, token string) context.Context {
 	}
 	return captured
 }
+
+func TestGuardScopesGroupOperationExcludesOnlyOwnerGroupAndKeepsSiblingGroup_US44_AC22_AC23(t *testing.T) {
+	ctx := WithGroupOperation(requestContext(t, ""), "project", "owner-group", ModeOrdinary)
+	groups := []Group{
+		{ID: "owner-group", ProjectID: "project", Name: "Owner", Path: "Alpha / Owner", Version: 1},
+		{ID: "sibling-group", ProjectID: "project", Name: "Sibling", Path: "Alpha / Sibling", Version: 2},
+		{ID: "other-group", ProjectID: "other", Name: "Other", Path: "Beta / Other", Version: 3},
+	}
+
+	err := GuardScopes(ctx, "timeline-signature", nil, nil, nil, groups)
+	var impact Error
+	if !errors.As(err, &impact) || impact.Kind != ConfirmationRequired {
+		t.Fatalf("impact=%#v err=%v, want confirmation", impact, err)
+	}
+	if len(impact.OpenGroups) != 2 || impact.OpenGroups[0].ID != "sibling-group" || impact.OpenGroups[1].ID != "other-group" {
+		t.Fatalf("open groups=%#v, want same-Project sibling plus other Project Group", impact.OpenGroups)
+	}
+	for _, group := range impact.OpenGroups {
+		if group.ID == "owner-group" {
+			t.Fatalf("owner Group leaked into impact list: %#v", impact.OpenGroups)
+		}
+	}
+}
+
+func TestGuardScopesBlocksTimelineImpactToLockedGroup_US44_AC24(t *testing.T) {
+	ctx := WithGroupOperation(requestContext(t, ""), "project", "owner-group", ModeOrdinary)
+	locked := []Group{{ID: "locked-group", ProjectID: "project", Name: "Locked", Path: "Alpha / Locked", Status: "locked", Version: 11}}
+
+	err := GuardScopes(ctx, "timeline-signature", nil, nil, locked, nil)
+	var impact Error
+	if !errors.As(err, &impact) || impact.Kind != LockedScopeImpact {
+		t.Fatalf("impact=%#v err=%v, want SCHEDULING_LOCKED_SCOPE_IMPACT", impact, err)
+	}
+	if len(impact.LockedGroups) != 1 || impact.LockedGroups[0].Path != "Alpha / Locked" {
+		t.Fatalf("locked groups=%#v", impact.LockedGroups)
+	}
+}
+
+func TestGuardScopesKeepsDuplicateGroupNamesDistinctByQualifiedPath_US44_AC22(t *testing.T) {
+	ctx := WithGroupOperation(requestContext(t, ""), "project", "owner-group", ModeOrdinary)
+	groups := []Group{
+		{ID: "api-a", ProjectID: "project", Name: "API", Path: "Alpha / Parent A / API", Version: 4},
+		{ID: "api-b", ProjectID: "project", Name: "API", Path: "Alpha / Parent B / API", Version: 5},
+	}
+
+	err := GuardScopes(ctx, "timeline-signature", nil, nil, nil, groups)
+	var impact Error
+	if !errors.As(err, &impact) || impact.Kind != ConfirmationRequired {
+		t.Fatalf("impact=%#v err=%v, want confirmation", impact, err)
+	}
+	if len(impact.OpenGroups) != 2 {
+		t.Fatalf("open groups=%#v, want both duplicate-name Groups", impact.OpenGroups)
+	}
+	if impact.OpenGroups[0].Path == impact.OpenGroups[1].Path || impact.OpenGroups[0].ID == impact.OpenGroups[1].ID {
+		t.Fatalf("duplicate-name Groups collapsed: %#v", impact.OpenGroups)
+	}
+	if impact.OpenGroups[0].Path != "Alpha / Parent A / API" || impact.OpenGroups[1].Path != "Alpha / Parent B / API" {
+		t.Fatalf("qualified paths=%#v", impact.OpenGroups)
+	}
+}
+
+func TestGuardScopesGroupPreviewRejectsChangedEffectiveState_US44_AC37(t *testing.T) {
+	preview := WithGroupOperation(requestContext(t, ""), "project", "owner-group", ModeOrdinary)
+	groups := []Group{{ID: "sibling", ProjectID: "project", Name: "Sibling", Path: "Alpha / Sibling", Version: 2}}
+
+	err := GuardScopes(preview, "parent-anchor:2026-08-10", nil, nil, nil, groups)
+	var impact Error
+	if !errors.As(err, &impact) || impact.Kind != ConfirmationRequired || impact.Token == "" {
+		t.Fatalf("preview impact=%#v err=%v", impact, err)
+	}
+
+	confirmed := WithGroupOperation(requestContext(t, impact.Token), "project", "owner-group", ModeOrdinary)
+	err = GuardScopes(confirmed, "parent-anchor:2026-08-11", nil, nil, nil, groups)
+	if !errors.As(err, &impact) || impact.Kind != StaleImpact {
+		t.Fatalf("stale impact=%#v err=%v, want SCHEDULING_IMPACT_STALE", impact, err)
+	}
+}

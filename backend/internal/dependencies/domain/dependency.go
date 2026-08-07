@@ -14,6 +14,7 @@ var (
 	ErrCycle            = errors.New("dependency cycle detected")
 	ErrClosedProject    = errors.New("closed project task not allowed")
 	ErrLockedProject    = errors.New("locked project dependency is read-only")
+	ErrLockedGroup      = errors.New("locked Group dependency is read-only")
 	ErrCompletedBlocked = errors.New("completed task cannot be blocked")
 	ErrCompletedHistory = errors.New("completed dependency history read only")
 	ErrInvalidDirection = errors.New("invalid dependency direction")

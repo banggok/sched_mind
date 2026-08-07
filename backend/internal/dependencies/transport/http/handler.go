@@ -236,6 +236,8 @@ func writeError(w http.ResponseWriter, err error) {
 		status, code, message = 409, "DEPENDENCY_CLOSED_PROJECT_TASK_NOT_ALLOWED", "Closed project tasks cannot be used for a new dependency."
 	case errors.Is(err, domain.ErrLockedProject):
 		status, code, message = 409, "PROJECT_LOCKED_READ_ONLY", "Locked project dependencies are read-only."
+	case errors.Is(err, domain.ErrLockedGroup):
+		status, code, message = 409, "GROUP_LOCKED_READ_ONLY", "Locked Group dependencies are read-only."
 	case errors.Is(err, domain.ErrCompletedBlocked):
 		status, code, message = 409, "DEPENDENCY_COMPLETED_TASK_CANNOT_BE_BLOCKED", "A completed task cannot be blocked by a new dependency."
 	case errors.Is(err, domain.ErrCompletedHistory):

@@ -1,5 +1,7 @@
 # US-6.3 — Task Capacity Allocation Percentage
 
+> **Product decision update — US-4.4:** Task Capacity Allocation Percentage editability and scheduling trigger resolve from the Task's effective lifecycle and Automatic Scheduling configuration. A Task in a Locked Group is planning read-only even when Project is Open, and a Group override may make a Task automatic/manual independently from the raw Project toggle.
+
 > **Authority and supersession:** This story is the authoritative requirement
 > for Task-level planned capacity percentage, concurrent same-assignee planned
 > allocation, percentage rounding, manual fixed allocation, migration/default

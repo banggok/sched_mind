@@ -34,6 +34,18 @@ type taskModel struct {
 	ActualEnd                      *time.Time
 	ExecutionUnscheduledReason     *string
 	CommitmentUnscheduledReason    *string
+	GroupSchedulingSource          string `gorm:"size:10;not null;default:inherit"`
+	GroupAutomaticScheduling       *bool
+	GroupSchedulingStartDate       *time.Time
+	GroupLocalStatus               string `gorm:"size:10;not null;default:open"`
+	GroupSchedulingVersion         int64  `gorm:"not null;default:0"`
+	GroupLockedAutomaticScheduling *bool
+	GroupLockedSchedulingStartDate *time.Time
+	EffectiveAutomaticScheduling   bool       `gorm:"-"`
+	EffectiveSchedulingStartDate   *time.Time `gorm:"-"`
+	EffectiveLifecycle             string     `gorm:"-"`
+	EffectiveLockOwnerID           string     `gorm:"-"`
+	LocalGroupLockOwnerID          string     `gorm:"-"`
 	CreatedAt                      time.Time
 	UpdatedAt                      time.Time
 }

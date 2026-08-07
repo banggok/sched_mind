@@ -37,6 +37,29 @@ type ExecutableFields struct {
 	ActualEnd                    *time.Time
 }
 
+type GroupScheduling struct {
+	Version                      int64
+	Source                       string
+	AutomaticScheduling          *bool
+	SchedulingStartDate          *time.Time
+	LocalStatus                  string
+	EffectiveAutomatic           bool
+	EffectiveStartDate           *time.Time
+	InheritedAutomatic           bool
+	InheritedStartDate           *time.Time
+	InheritedAutomaticSourceID   string
+	InheritedAutomaticSourceName string
+	InheritedStartDateSourceID   string
+	InheritedStartDateSourceName string
+	AutomaticSourceID            string
+	AutomaticSourceName          string
+	StartDateSourceID            string
+	StartDateSourceName          string
+	EffectiveLifecycle           string
+	LockOwnerID                  string
+	LockOwnerName                string
+}
+
 type Node struct {
 	ID          string
 	ProjectID   string
@@ -45,6 +68,7 @@ type Node struct {
 	Position    int
 	HasChildren bool
 	Executable  ExecutableFields
+	Scheduling  GroupScheduling
 	Children    []Node
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
@@ -68,7 +92,7 @@ func New(id, projectID string, parentID *string, name string, position int, now 
 	if err != nil {
 		return nil, err
 	}
-	return &Node{ID: id, ProjectID: projectID, ParentID: cloneString(parentID), Name: name, Position: position, Executable: EmptyExecutable(), Children: []Node{}, CreatedAt: now, UpdatedAt: now}, nil
+	return &Node{ID: id, ProjectID: projectID, ParentID: cloneString(parentID), Name: name, Position: position, Executable: EmptyExecutable(), Scheduling: GroupScheduling{Source: "inherit", LocalStatus: "open", EffectiveLifecycle: "open"}, Children: []Node{}, CreatedAt: now, UpdatedAt: now}, nil
 }
 
 func (node Node) IsExecutable() bool { return !node.HasChildren }

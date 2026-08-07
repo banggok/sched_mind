@@ -1437,7 +1437,7 @@ function Gantt({
   function canDragRow(row: PortfolioRow): boolean {
     return (
       row.kind !== "project" &&
-      projectStatus.get(row.projectId) === "open" &&
+      (row.effectiveLifecycle ?? projectStatus.get(row.projectId)) === "open" &&
       !restrictiveRoleFilter &&
       !busyRowID
     );
@@ -1902,7 +1902,8 @@ function Gantt({
                     data-row-name-line={row.id}
                   >
                     {row.kind !== "project" &&
-                    projectStatus.get(row.projectId) === "open" ? (
+                    (row.effectiveLifecycle ??
+                      projectStatus.get(row.projectId)) === "open" ? (
                       <button
                         type="button"
                         draggable={canDragRow(row)}
@@ -2237,7 +2238,10 @@ function RowActions({
   const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 });
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
-  const open = projectStatus === "open";
+  const open =
+    row.kind === "project"
+      ? row.status === "open"
+      : (row.effectiveLifecycle ?? projectStatus) === "open";
   const canAddSibling = row.kind !== "project" && open;
   const canAddChild =
     (row.kind === "project" && row.status === "open") ||
@@ -3027,7 +3031,7 @@ function canShowCreateActions(
 ): boolean {
   return row.kind === "project"
     ? row.status === "open"
-    : projectStatus === "open";
+    : (row.effectiveLifecycle ?? projectStatus) === "open";
 }
 
 function rowHeightAt(index: number, expandedIndex: number): number {

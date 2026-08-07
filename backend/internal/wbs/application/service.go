@@ -13,6 +13,14 @@ import (
 	"github.com/banggok/sched_mind/backend/internal/wbs/domain"
 )
 
+type GroupSchedulingInput struct {
+	ExpectedVersion     int64
+	Name                *string
+	Source              string
+	AutomaticScheduling *bool
+	SchedulingStartDate *time.Time
+}
+
 type WriteExecutableInput struct {
 	Name                         *string
 	RoleID, AssigneeID           *string
@@ -70,6 +78,9 @@ type Store interface {
 	Create(context.Context, string, string, *string, string, bool, time.Time, func(context.Context, string) error, func(context.Context, []string) error) (*domain.Node, error)
 	CreateSibling(context.Context, string, string, string, string, time.Time, func(context.Context, string) error) (*domain.Node, error)
 	Rename(context.Context, string, string, string, time.Time) (*domain.Node, error)
+	UpdateGroupScheduling(context.Context, string, string, GroupSchedulingInput, time.Time, func(context.Context, string) error) (*domain.Node, error)
+	ChangeGroupStatus(context.Context, string, string, string, int64, time.Time, func(context.Context, string) error) (*domain.Node, error)
+	BulkReopenGroup(context.Context, string, string, string, int64, time.Time, func(context.Context, string) error) (*domain.Node, error)
 	UpdateExecutable(context.Context, string, string, WriteExecutableInput, time.Time, func(context.Context, string) error) (*domain.Node, error)
 	PreviewExecutableSchedule(context.Context, string, string, PreviewExecutableInput, time.Time, func(context.Context, string) error) (*SchedulePreview, error)
 	Complete(context.Context, string, string, time.Time, time.Time, time.Time, func(context.Context, []string) error) (*domain.Node, error)
@@ -188,6 +199,39 @@ func (s *Service) Rename(ctx context.Context, p, id, name string) (*domain.Node,
 	}
 	if value == nil {
 		return nil, errors.New("rename WBS: store returned nil")
+	}
+	return value, nil
+}
+func (s *Service) UpdateGroupScheduling(ctx context.Context, p, id string, input GroupSchedulingInput) (*domain.Node, error) {
+	ctx = schedulingimpact.WithGroupOperation(ctx, p, id, schedulingimpact.ModeOrdinary)
+	value, err := s.store.UpdateGroupScheduling(ctx, p, id, input, s.now(), s.scheduler.RecalculateProjectSchedule)
+	if err != nil {
+		return nil, fmt.Errorf("update Group scheduling: %w", err)
+	}
+	if value == nil {
+		return nil, errors.New("update Group scheduling: store returned nil")
+	}
+	return value, nil
+}
+func (s *Service) ChangeGroupStatus(ctx context.Context, p, id, target string, expectedVersion int64) (*domain.Node, error) {
+	ctx = schedulingimpact.WithGroupOperation(ctx, p, id, schedulingimpact.ModeOrdinary)
+	value, err := s.store.ChangeGroupStatus(ctx, p, id, target, expectedVersion, s.now(), s.scheduler.RecalculateProjectSchedule)
+	if err != nil {
+		return nil, fmt.Errorf("change Group status: %w", err)
+	}
+	if value == nil {
+		return nil, errors.New("change Group status: store returned nil")
+	}
+	return value, nil
+}
+func (s *Service) BulkReopenGroup(ctx context.Context, p, id, token string, expectedVersion int64) (*domain.Node, error) {
+	ctx = schedulingimpact.WithGroupOperation(ctx, p, id, schedulingimpact.ModeBulkReopen)
+	value, err := s.store.BulkReopenGroup(ctx, p, id, token, expectedVersion, s.now(), s.scheduler.RecalculateProjectSchedule)
+	if err != nil {
+		return nil, fmt.Errorf("bulk reopen Group scope: %w", err)
+	}
+	if value == nil {
+		return nil, errors.New("bulk reopen Group scope: store returned nil")
 	}
 	return value, nil
 }

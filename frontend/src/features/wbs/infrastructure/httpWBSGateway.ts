@@ -140,6 +140,45 @@ export function createHTTPWBSGateway(baseURL: string): WBSGateway {
       await request(`${path(projectId)}/${id}`, json("PUT", { name }));
       invalidateAll(true);
     },
+    updateGroupScheduling: async (projectId, id, input) => {
+      const data = await request(
+        `${path(projectId)}/${encodeURIComponent(id)}/scheduling`,
+        json("PUT", input),
+      );
+      invalidateAll(true);
+      return mapConfirmedNode(data, projectId, id, true);
+    },
+    changeGroupStatus: async (projectId, id, status, expectedVersion) => {
+      const statusURL = `${baseURL}${path(projectId)}/${encodeURIComponent(id)}/status`;
+      const reopenAllURL = `${baseURL}${path(projectId)}/${encodeURIComponent(id)}/reopen-all`;
+      const response = await schedulingImpactFetch(
+        statusURL,
+        json("POST", { status, expectedVersion }),
+        status === "open"
+          ? {
+              reopenAll: (impact) =>
+                schedulingImpactFetch(
+                  reopenAllURL,
+                  json("POST", {
+                    status: "open",
+                    token: impact.token,
+                    expectedVersion,
+                  }),
+                ),
+            }
+          : undefined,
+      );
+      if (!response.ok) {
+        const body: unknown = await response.json().catch(() => undefined);
+        throw operationError(body);
+      }
+      invalidateAll(true);
+      const payload: unknown = await response.json();
+      if (!isRecord(payload) || !("data" in payload)) {
+        throw new Error(invalidResponseMessage);
+      }
+      return mapConfirmedNode(payload.data, projectId, id, true);
+    },
     reorder: async (projectId, id, direction) => {
       await request(
         `${path(projectId)}/${id}/reorder`,
@@ -387,6 +426,23 @@ function mapPreviewNode(
   return preview;
 }
 
+function mapConfirmedNode(
+  value: unknown,
+  projectId: string,
+  id: string,
+  grouping: boolean,
+): WBSNode {
+  const confirmed = mapNode(value);
+  if (
+    confirmed.id !== id ||
+    confirmed.projectId !== projectId ||
+    confirmed.hasChildren !== grouping
+  ) {
+    throw new Error(invalidResponseMessage);
+  }
+  return confirmed;
+}
+
 function mapReopenedNode(
   value: unknown,
   projectId: string,
@@ -423,7 +479,8 @@ function mapNode(value: unknown): WBSNode {
     typeof value.position !== "number" ||
     typeof value.hasChildren !== "boolean" ||
     !Array.isArray(value.children) ||
-    !isRecord(value.executable)
+    !isRecord(value.executable) ||
+    !isRecord(value.scheduling)
   ) {
     throw new Error(invalidResponseMessage);
   }
@@ -434,9 +491,97 @@ function mapNode(value: unknown): WBSNode {
     name: value.name,
     position: value.position,
     hasChildren: value.hasChildren,
+    scheduling: mapScheduling(value.scheduling),
     executable: mapExecutable(value.executable),
     children: value.children.map(mapNode),
   };
+}
+
+function mapScheduling(value: Record<string, unknown>): WBSNode["scheduling"] {
+  if (
+    typeof value.version !== "number" ||
+    !Number.isSafeInteger(value.version) ||
+    value.version < 0 ||
+    (value.source !== "inherit" && value.source !== "override") ||
+    (value.localStatus !== "open" && value.localStatus !== "locked") ||
+    typeof value.effectiveAutomaticScheduling !== "boolean" ||
+    typeof value.inheritedAutomaticScheduling !== "boolean" ||
+    !isRecord(value.inheritedAutomaticSource) ||
+    !isRecord(value.inheritedStartDateSource) ||
+    !isRecord(value.automaticSource) ||
+    !isRecord(value.startDateSource) ||
+    !isSchedulingSource(value.inheritedAutomaticSource) ||
+    !isSchedulingSource(value.inheritedStartDateSource) ||
+    !isSchedulingSource(value.automaticSource) ||
+    !isSchedulingSource(value.startDateSource) ||
+    (value.effectiveLifecycle !== "open" &&
+      value.effectiveLifecycle !== "locked" &&
+      value.effectiveLifecycle !== "closed") ||
+    (value.automaticScheduling !== undefined &&
+      value.automaticScheduling !== null &&
+      typeof value.automaticScheduling !== "boolean") ||
+    (value.schedulingStartDate !== undefined &&
+      value.schedulingStartDate !== null &&
+      typeof value.schedulingStartDate !== "string") ||
+    (value.effectiveSchedulingStartDate !== undefined &&
+      value.effectiveSchedulingStartDate !== null &&
+      typeof value.effectiveSchedulingStartDate !== "string") ||
+    (value.inheritedSchedulingStartDate !== undefined &&
+      value.inheritedSchedulingStartDate !== null &&
+      typeof value.inheritedSchedulingStartDate !== "string") ||
+    (value.lockOwner !== undefined &&
+      value.lockOwner !== null &&
+      (!isRecord(value.lockOwner) || !isSchedulingSource(value.lockOwner)))
+  ) {
+    throw new Error(invalidResponseMessage);
+  }
+  return {
+    version: value.version,
+    source: value.source,
+    automaticScheduling:
+      value.automaticScheduling === null
+        ? undefined
+        : value.automaticScheduling,
+    schedulingStartDate: optionalString(value.schedulingStartDate),
+    localStatus: value.localStatus,
+    effectiveAutomaticScheduling: value.effectiveAutomaticScheduling,
+    effectiveSchedulingStartDate: optionalString(
+      value.effectiveSchedulingStartDate,
+    ),
+    inheritedAutomaticScheduling: value.inheritedAutomaticScheduling,
+    inheritedSchedulingStartDate: optionalString(
+      value.inheritedSchedulingStartDate,
+    ),
+    inheritedAutomaticSource: {
+      id: value.inheritedAutomaticSource.id,
+      name: value.inheritedAutomaticSource.name,
+    },
+    inheritedStartDateSource: {
+      id: value.inheritedStartDateSource.id,
+      name: value.inheritedStartDateSource.name,
+    },
+    automaticSource: {
+      id: value.automaticSource.id,
+      name: value.automaticSource.name,
+    },
+    startDateSource: {
+      id: value.startDateSource.id,
+      name: value.startDateSource.name,
+    },
+    effectiveLifecycle: value.effectiveLifecycle,
+    lockOwner:
+      value.lockOwner &&
+      isRecord(value.lockOwner) &&
+      isSchedulingSource(value.lockOwner)
+        ? { id: value.lockOwner.id, name: value.lockOwner.name }
+        : undefined,
+  };
+}
+
+function isSchedulingSource(
+  value: Record<string, unknown>,
+): value is Record<"id" | "name", string> {
+  return typeof value.id === "string" && typeof value.name === "string";
 }
 
 function mapExecutable(value: Record<string, unknown>): WBSNode["executable"] {
@@ -555,6 +700,20 @@ function userMessage(code: string): string {
       return "Complete Role, Effort, and valid Lag to preview the schedule.";
     case "SCHEDULE_PREVIEW_UNAVAILABLE":
       return "Schedule preview is available only for an open unfinished Task with Automatic Scheduling on.";
+    case "GROUP_NOT_GROUPING_WBS":
+      return "Group scheduling can be configured only on a Group that contains WBS items.";
+    case "GROUP_LOCKED_READ_ONLY":
+      return "This scheduling scope is locked. Reopen it before changing planning data.";
+    case "GROUP_CANNOT_LOCK_WITH_UNSCHEDULED_TASKS":
+      return "This Group cannot be locked until every unfinished descendant Task has complete Execution and Commitment schedules.";
+    case "GROUP_OVERRIDE_MUST_BE_RESET_BEFORE_TASK_CONVERSION":
+      return "Reset this Group to inherited scheduling before removing or moving its final child.";
+    case "GROUP_REOPEN_REQUIRED":
+      return "This Group cannot be reopened directly because another scheduling scope owns the lock.";
+    case "GROUP_SCHEDULING_INVALID":
+      return "The Group scheduling configuration is invalid.";
+    case "GROUP_SCHEDULING_STALE":
+      return "This Group changed in another request. Refresh and try again.";
     default:
       return "The item could not be updated. Check the form and try again.";
   }
@@ -563,7 +722,8 @@ function userMessage(code: string): string {
 function isStructuralConflict(error: WBSOperationError): boolean {
   return (
     error.code === "WBS_CREATE_ANCHOR_CONFLICT" ||
-    error.code === "WBS_REORDER_TARGET_INVALID"
+    error.code === "WBS_REORDER_TARGET_INVALID" ||
+    error.code === "GROUP_SCHEDULING_STALE"
   );
 }
 

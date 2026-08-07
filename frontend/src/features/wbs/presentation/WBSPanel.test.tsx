@@ -68,6 +68,8 @@ function gateway(tree: WBSNode[]): WBSGateway {
     create: vi.fn().mockResolvedValue(node("created", "Created")),
     createSibling: vi.fn().mockResolvedValue(node("created", "Created")),
     rename: vi.fn().mockResolvedValue(undefined),
+    updateGroupScheduling: vi.fn<WBSGateway["updateGroupScheduling"]>(),
+    changeGroupStatus: vi.fn<WBSGateway["changeGroupStatus"]>(),
     reorder: vi.fn().mockResolvedValue(undefined),
     place: vi.fn().mockResolvedValue(undefined),
     move: vi.fn().mockResolvedValue(undefined),
@@ -196,7 +198,7 @@ describe("WBS direct Home action controller", () => {
     expect(screen.queryByRole("tree")).toBeNull();
   });
 
-  it("opens the shared Group summary and rename dialog directly", async () => {
+  it("opens the shared Group summary and unified Group edit dialog directly", async () => {
     vi.mocked(options.rolesGateway.list).mockClear();
     vi.mocked(options.membersGateway.list).mockClear();
     const group = node("group", "Development", [node("task", "Backend API")]);
@@ -219,7 +221,17 @@ describe("WBS direct Home action controller", () => {
     fireEvent.change(name, { target: { value: "Delivery" } });
     fireEvent.submit(name.closest("form")!);
     await waitFor(() =>
-      expect(api.rename).toHaveBeenCalledWith("project", "group", "Delivery"),
+      expect(api.updateGroupScheduling).toHaveBeenCalledWith(
+        "project",
+        "group",
+        {
+          expectedVersion: 0,
+          name: "Delivery",
+          schedulingSource: "inherit",
+          automaticScheduling: undefined,
+          schedulingStartDate: undefined,
+        },
+      ),
     );
     expect(options.rolesGateway.list).not.toHaveBeenCalled();
     expect(options.membersGateway.list).not.toHaveBeenCalled();
@@ -230,10 +242,10 @@ describe("WBS direct Home action controller", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it("does not report a Group edit mutation when rename fails", async () => {
+  it("does not report a Group edit mutation when unified Save fails", async () => {
     const group = node("group", "Development", [node("task", "Backend API")]);
     const api = gateway([group]);
-    vi.mocked(api.rename).mockRejectedValue(
+    vi.mocked(api.updateGroupScheduling).mockRejectedValue(
       new Error("Group could not be updated. Try again."),
     );
     const onMutated = vi.fn();

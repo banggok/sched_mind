@@ -78,6 +78,7 @@ describe("httpPortfolioGateway", () => {
                 incompleteSchedule: false,
                 hasChildren: false,
                 completed: false,
+                effectiveLifecycle: "open",
               },
             ],
             dependencies: [],

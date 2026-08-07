@@ -1,5 +1,7 @@
 # US-4.1 Manage WBS
 
+> **Product decision update — US-4.4:** Grouping WBS may own Group-scoped scheduling configuration and local Lock/Reopen without becoming Executable. Task manual/generated editability, WBS mutation eligibility, and scheduler triggers resolve from effective Group/Project configuration and lifecycle. Structural move/conversion across Group boundaries follows US-4.4, including the guard against silently discarding a Group scheduling override on last-child conversion.
+
 > **Product decision update — US-6.4:** Task mutations and rollback-only schedule
 > preview recalculate dates, allocations, and unscheduled state without creating,
 > removing, or previewing automatic dependency ownership. Dependency remains

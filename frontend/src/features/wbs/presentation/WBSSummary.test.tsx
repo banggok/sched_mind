@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { WBSSummary } from "./WBSSummary";
 
 describe("US-4.3 shared WBS summary presentation", () => {
-  it("AC-25 wraps large counts and hour values without a fixed-width summary grid", () => {
+  it("AC-25 keeps Group summary horizontal on large screens while preserving wrapping", () => {
     render(
       <WBSSummary
         summary={{
@@ -30,7 +30,7 @@ describe("US-4.3 shared WBS summary presentation", () => {
 
     const summary = screen.getByLabelText("Group summary details");
     expect(summary.className).toContain("min-w-0");
-    expect(summary.className).not.toContain("grid-cols-3");
+    expect(summary.className).toContain("lg:grid-cols-3");
 
     const coverage = within(summary).getByText(
       "123455 of 123456 tasks scheduled",

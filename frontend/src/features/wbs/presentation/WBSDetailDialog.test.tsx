@@ -995,7 +995,7 @@ describe("WBSDetailDialog assignee recommendation", () => {
     fireEvent.focus(assignee);
 
     await screen.findByText(
-      /Automatic Scheduling needs a Project Scheduling Start Date/,
+      /Automatic Scheduling needs an effective Scheduling Start Date/,
     );
     expect(
       within(assignee)
@@ -1393,4 +1393,259 @@ function abortable<T>(value: T, signal?: AbortSignal): Promise<T> {
       { once: true },
     );
   });
+}
+
+describe("WBSDetailDialog Group scheduling", () => {
+  it("US-4.4 AC-5 initializes an override draft from current effective values", async () => {
+    const gateway = {
+      updateGroupScheduling: vi.fn().mockResolvedValue(groupNode()),
+    } as unknown as WBSGateway;
+    renderGroupDialog(gateway, groupNode());
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Override scheduling settings" }),
+    );
+    fireEvent.change(screen.getByLabelText("Name"), {
+      target: { value: "Platform Stream" },
+    });
+
+    expect(
+      screen.queryByRole("button", { name: "Save scheduling" }),
+    ).toBeNull();
+    expect(screen.queryByRole("button", { name: "Save name" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Save" })).toBeTruthy();
+    expect(
+      screen
+        .getByRole("switch", { name: "Group automatic scheduling" })
+        .getAttribute("aria-checked"),
+    ).toBe("true");
+    expect(
+      screen.getByRole("button", {
+        name: `Scheduling Start Date: ${formatDateOnly("2026-08-10")}`,
+      }),
+    ).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() =>
+      expect(gateway.updateGroupScheduling).toHaveBeenCalledWith(
+        "project",
+        "group",
+        {
+          expectedVersion: 0,
+          name: "Platform Stream",
+          schedulingSource: "override",
+          automaticScheduling: true,
+          schedulingStartDate: "2026-08-10",
+        },
+      ),
+    );
+  });
+
+  it("US-4.4 Section 11.3 reuses OFF-to-ON confirmation before saving", async () => {
+    const node = groupNode({
+      effectiveAutomaticScheduling: false,
+      inheritedAutomaticScheduling: false,
+    });
+    const gateway = {
+      updateGroupScheduling: vi.fn().mockResolvedValue(node),
+    } as unknown as WBSGateway;
+    renderGroupDialog(gateway, node);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Override scheduling settings" }),
+    );
+    fireEvent.click(
+      screen.getByRole("switch", { name: "Group automatic scheduling" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(gateway.updateGroupScheduling).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("alertdialog", {
+        name: "Enable automatic scheduling for this Group?",
+      }),
+    ).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Enable and save" }));
+    await waitFor(() =>
+      expect(gateway.updateGroupScheduling).toHaveBeenCalled(),
+    );
+  });
+
+  it("US-4.4 AC-7 confirms reset when inherited mode changes Custom OFF to ON", async () => {
+    const node = groupNode({
+      source: "override",
+      automaticScheduling: false,
+      schedulingStartDate: undefined,
+      effectiveAutomaticScheduling: false,
+      inheritedAutomaticScheduling: true,
+    });
+    const gateway = {
+      updateGroupScheduling: vi.fn().mockResolvedValue(node),
+    } as unknown as WBSGateway;
+    renderGroupDialog(gateway, node);
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Use inherited scheduling settings",
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(gateway.updateGroupScheduling).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("alertdialog", {
+        name: "Enable automatic scheduling for this Group?",
+      }),
+    ).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Enable and save" }));
+    await waitFor(() =>
+      expect(gateway.updateGroupScheduling).toHaveBeenCalledWith(
+        "project",
+        "group",
+        {
+          expectedVersion: 0,
+          name: "Platform",
+          schedulingSource: "inherit",
+          automaticScheduling: undefined,
+          schedulingStartDate: undefined,
+        },
+      ),
+    );
+  });
+
+  it("US-4.4 AC-35 requires lifecycle confirmation before Lock", async () => {
+    const node = groupNode();
+    const gateway = {
+      changeGroupStatus: vi.fn().mockResolvedValue(node),
+    } as unknown as WBSGateway;
+    renderGroupDialog(gateway, node);
+
+    fireEvent.click(screen.getByRole("button", { name: "Lock Group" }));
+    expect(gateway.changeGroupStatus).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("alertdialog", { name: "Lock Group?" }),
+    ).toBeTruthy();
+
+    fireEvent.click(
+      within(
+        screen.getByRole("alertdialog", { name: "Lock Group?" }),
+      ).getByRole("button", { name: "Lock Group" }),
+    );
+    await waitFor(() =>
+      expect(gateway.changeGroupStatus).toHaveBeenCalledWith(
+        "project",
+        "group",
+        "locked",
+        0,
+      ),
+    );
+  });
+
+  it("US-4.4 AC-36 shows the stronger lock owner and suppresses local lifecycle actions", () => {
+    const node = groupNode({
+      localStatus: "open",
+      effectiveLifecycle: "locked",
+      lockOwner: { id: "parent-group", name: "Platform Parent" },
+    });
+    const gateway = {} as unknown as WBSGateway;
+    renderGroupDialog(gateway, node);
+
+    expect(
+      screen.getByText(
+        "Planning fields are read-only while this scope is locked by Platform Parent.",
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Lock Group" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Reopen Group" })).toBeNull();
+  });
+});
+
+function groupNode(
+  schedulingOverrides: Partial<NonNullable<WBSNode["scheduling"]>> = {},
+): WBSNode {
+  return {
+    id: "group",
+    projectId: "project",
+    name: "Platform",
+    position: 1,
+    hasChildren: true,
+    scheduling: {
+      version: 0,
+      source: "inherit",
+      automaticScheduling: undefined,
+      schedulingStartDate: undefined,
+      localStatus: "open",
+      effectiveAutomaticScheduling: true,
+      effectiveSchedulingStartDate: "2026-08-10",
+      inheritedAutomaticScheduling: true,
+      inheritedSchedulingStartDate: "2026-08-10",
+      inheritedAutomaticSource: { id: "project", name: "Alpha" },
+      inheritedStartDateSource: { id: "project", name: "Alpha" },
+      automaticSource: { id: "project", name: "Alpha" },
+      startDateSource: { id: "project", name: "Alpha" },
+      effectiveLifecycle: "open",
+      lockOwner: undefined,
+      ...schedulingOverrides,
+    },
+    executable: {
+      lagDays: 0,
+      executionTimeline: {},
+      commitmentTimeline: {},
+    },
+    children: [
+      {
+        id: "task",
+        projectId: "project",
+        parentId: "group",
+        name: "Task",
+        position: 1,
+        hasChildren: false,
+        executable: {
+          lagDays: 0,
+          effortMinutes: 60,
+          executionTimeline: { start: "2026-08-10", end: "2026-08-10" },
+          commitmentTimeline: { start: "2026-08-10", end: "2026-08-10" },
+        },
+        children: [],
+      },
+    ],
+  };
+}
+
+function renderGroupDialog(gateway: WBSGateway, node: WBSNode) {
+  const rolesGateway = {
+    list: vi
+      .fn()
+      .mockResolvedValue({ items: [], page: 1, pageSize: 100, total: 0 }),
+  } as unknown as RolesGateway;
+  const membersGateway = {
+    list: vi
+      .fn()
+      .mockResolvedValue({ items: [], page: 1, pageSize: 100, total: 0 }),
+  } as unknown as TeamMembersGateway;
+  return render(
+    <WBSDetailDialog
+      project={{
+        id: "project",
+        name: "Alpha",
+        status: "open",
+        autoCalculateDate: true,
+        automaticScheduling: true,
+        schedulingStartDate: "2026-08-10",
+        projectBuffer: 20,
+        scheduleVersion: 0,
+        priority: 1,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      }}
+      node={node}
+      gateway={gateway}
+      rolesGateway={rolesGateway}
+      membersGateway={membersGateway}
+      onClose={() => undefined}
+      onChanged={() => undefined}
+      onReopened={() => undefined}
+    />,
+  );
 }

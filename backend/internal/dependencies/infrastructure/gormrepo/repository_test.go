@@ -1134,3 +1134,74 @@ func TestCandidatesIncludeTasksFromAllActiveProjects(t *testing.T) {
 		)
 	}
 }
+
+func TestCreateRejectsDependencyWhenEitherEndpointIsInLockedGroup_US44_AC32(t *testing.T) {
+	repo, db := testRepository(t)
+	seedProjectAndTasks(t, db)
+	seedLockedDependencyGroup(t, db)
+
+	created, err := repo.Create(
+		context.Background(),
+		testDependency("locked-edge", "a", "locked-task"),
+		func(context.Context, []string) error { return nil },
+	)
+	if created != nil || !errors.Is(err, domain.ErrLockedGroup) {
+		t.Fatalf("Create(open -> locked)=(%#v,%v), want ErrLockedGroup", created, err)
+	}
+	var count int64
+	if err := db.Model(&dependencyModel{}).Where("id = ?", "locked-edge").Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("locked dependency persisted count=%d, want 0", count)
+	}
+}
+
+func TestCandidatesExcludeTasksInsideLockedGroup_US44_AC32(t *testing.T) {
+	repo, db := testRepository(t)
+	seedProjectAndTasks(t, db)
+	seedLockedDependencyGroup(t, db)
+
+	page, err := repo.Candidates(context.Background(), "a", domain.Blocks, "", 1, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, candidate := range page.Items {
+		if candidate.ID == "locked-task" {
+			t.Fatalf("locked Group Task leaked into candidates: %#v", page.Items)
+		}
+	}
+}
+
+func seedLockedDependencyGroup(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	locked := true
+	groupID := "locked-group"
+	values := []taskModel{
+		{
+			ID:                             groupID,
+			ProjectID:                      "project",
+			ParentKey:                      "",
+			Name:                           "Locked Group",
+			NameKey:                        "locked group",
+			Position:                       4,
+			GroupSchedulingSource:          "inherit",
+			GroupLocalStatus:               "locked",
+			GroupLockedAutomaticScheduling: &locked,
+		},
+		{
+			ID:                    "locked-task",
+			ProjectID:             "project",
+			ParentID:              &groupID,
+			ParentKey:             groupID,
+			Name:                  "Locked Task",
+			NameKey:               "locked task",
+			Position:              1,
+			GroupSchedulingSource: "inherit",
+			GroupLocalStatus:      "open",
+		},
+	}
+	if err := db.Create(&values).Error; err != nil {
+		t.Fatal(err)
+	}
+}

@@ -24,7 +24,10 @@ func TestComposeRowsBuildsDeterministicHierarchyAndRecursiveSummary(t *testing.T
 		{ID: "completed", ProjectID: "alpha", ParentID: &rootID, Name: "Completed", Position: 1, RoleID: &roleID, RoleName: &roleName, EffortMinutes: &effort, Start: &start, End: &end, ActualStart: &actualStart, ActualEnd: &actualEnd},
 	}
 
-	rows, anchor := composeRows(projects, nodes)
+	rows, anchor, err := composeRows(projects, nodes)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(rows) != 5 {
 		t.Fatalf("row count = %d: %#v", len(rows), rows)
 	}
@@ -39,6 +42,9 @@ func TestComposeRowsBuildsDeterministicHierarchyAndRecursiveSummary(t *testing.T
 	}
 	if !rows[2].Completed || rows[3].Completed {
 		t.Fatalf("completion flags = completed:%v unscheduled:%v", rows[2].Completed, rows[3].Completed)
+	}
+	if rows[1].EffectiveLifecycle != "open" || rows[2].EffectiveLifecycle != "open" || rows[4].EffectiveLifecycle != "locked" {
+		t.Fatalf("effective lifecycle projection = group:%q task:%q beta:%q", rows[1].EffectiveLifecycle, rows[2].EffectiveLifecycle, rows[4].EffectiveLifecycle)
 	}
 	if rows[2].RoleID == nil || *rows[2].RoleID != roleID || rows[2].RoleName == nil || *rows[2].RoleName != roleName {
 		t.Fatalf("task role = %#v", rows[2])

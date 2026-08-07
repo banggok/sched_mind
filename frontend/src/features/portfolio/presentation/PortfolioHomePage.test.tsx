@@ -203,6 +203,8 @@ function wbsGateway(): WBSGateway {
     create: vi.fn().mockResolvedValue(undefined),
     createSibling: vi.fn().mockResolvedValue(undefined),
     rename: vi.fn().mockResolvedValue(undefined),
+    updateGroupScheduling: vi.fn<WBSGateway["updateGroupScheduling"]>(),
+    changeGroupStatus: vi.fn<WBSGateway["changeGroupStatus"]>(),
     reorder: vi.fn().mockResolvedValue(undefined),
     place: vi.fn().mockResolvedValue(undefined),
     move: vi.fn().mockResolvedValue(undefined),

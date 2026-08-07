@@ -29,12 +29,23 @@ type Project struct {
 	Version int64  `json:"-"`
 }
 
+type Group struct {
+	ID        string `json:"id"`
+	ProjectID string `json:"projectId"`
+	Name      string `json:"name"`
+	Path      string `json:"path"`
+	Status    string `json:"-"`
+	Version   int64  `json:"-"`
+}
+
 type Kind string
 
 const (
-	ConfirmationRequired Kind = "SCHEDULING_IMPACT_CONFIRMATION_REQUIRED"
-	LockedProjectImpact  Kind = "SCHEDULING_LOCKED_PROJECT_IMPACT"
-	StaleImpact          Kind = "SCHEDULING_IMPACT_STALE"
+	ConfirmationRequired  Kind = "SCHEDULING_IMPACT_CONFIRMATION_REQUIRED"
+	LockedProjectImpact   Kind = "SCHEDULING_LOCKED_PROJECT_IMPACT"
+	LockedScopeImpact     Kind = "SCHEDULING_LOCKED_SCOPE_IMPACT"
+	ReopenClosureRequired Kind = "SCHEDULING_SCOPE_REOPEN_CLOSURE_REQUIRED"
+	StaleImpact           Kind = "SCHEDULING_IMPACT_STALE"
 )
 
 type Error struct {
@@ -42,6 +53,8 @@ type Error struct {
 	Token          string
 	LockedProjects []Project
 	OpenProjects   []Project
+	LockedGroups   []Group
+	OpenGroups     []Group
 }
 
 func (value Error) Error() string {
@@ -50,6 +63,10 @@ func (value Error) Error() string {
 		return "scheduling impact confirmation is required"
 	case LockedProjectImpact:
 		return "scheduling mutation would affect a locked project"
+	case LockedScopeImpact:
+		return "scheduling mutation would affect a locked scheduling scope"
+	case ReopenClosureRequired:
+		return "scheduling scope reopen closure is required"
 	case StaleImpact:
 		return "scheduling impact changed after preview"
 	default:
@@ -63,6 +80,7 @@ type operationContextKey struct{}
 type operation struct {
 	Enabled        bool
 	OwnerProjectID string
+	OwnerGroupID   string
 	Mode           Mode
 }
 
@@ -85,6 +103,13 @@ func WithOperation(ctx context.Context, ownerProjectID string, mode Mode) contex
 	})
 }
 
+func WithGroupOperation(ctx context.Context, ownerProjectID, ownerGroupID string, mode Mode) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, operationContextKey{}, operation{Enabled: true, OwnerProjectID: ownerProjectID, OwnerGroupID: ownerGroupID, Mode: mode})
+}
+
 // WithPreviewOperation starts a fresh scheduling-impact preview on top of the
 // caller context while deliberately ignoring any previously supplied
 // confirmation token. This is used by server-side simulations (for example,
@@ -92,6 +117,11 @@ func WithOperation(ctx context.Context, ownerProjectID string, mode Mode) contex
 // impact set rather than accidentally accepting a client token.
 func WithPreviewOperation(ctx context.Context, ownerProjectID string, mode Mode) context.Context {
 	ctx = WithOperation(ctx, ownerProjectID, mode)
+	return context.WithValue(ctx, requestContextKey{}, "")
+}
+
+func WithGroupPreviewOperation(ctx context.Context, ownerProjectID, ownerGroupID string, mode Mode) context.Context {
+	ctx = WithGroupOperation(ctx, ownerProjectID, ownerGroupID, mode)
 	return context.WithValue(ctx, requestContextKey{}, "")
 }
 
@@ -107,25 +137,52 @@ func Operation(ctx context.Context) (enabled bool, ownerProjectID string, mode M
 	return value.Enabled, value.OwnerProjectID, value.Mode, token
 }
 
+func OperationScope(ctx context.Context) (enabled bool, ownerProjectID, ownerGroupID string, mode Mode, confirmationToken string) {
+	if ctx == nil {
+		return false, "", "", ModeOrdinary, ""
+	}
+	value, _ := ctx.Value(operationContextKey{}).(operation)
+	token, _ := ctx.Value(requestContextKey{}).(string)
+	if value.Mode == "" {
+		value.Mode = ModeOrdinary
+	}
+	return value.Enabled, value.OwnerProjectID, value.OwnerGroupID, value.Mode, token
+}
+
 func Guard(ctx context.Context, signature string, lockedProjects, openProjects []Project) error {
-	enabled, ownerProjectID, mode, suppliedToken := Operation(ctx)
+	return GuardScopes(ctx, signature, lockedProjects, openProjects, nil, nil)
+}
+
+func GuardScopes(ctx context.Context, signature string, lockedProjects, openProjects []Project, lockedGroups, openGroups []Group) error {
+	enabled, ownerProjectID, ownerGroupID, mode, suppliedToken := OperationScope(ctx)
 	if !enabled || mode == ModeBulkReopen {
 		return nil
 	}
-	lockedProjects = normalizeProjects(lockedProjects, ownerProjectID)
-	openProjects = normalizeProjects(openProjects, ownerProjectID)
-	if len(lockedProjects) == 0 && len(openProjects) == 0 {
+	excludeOwnerProject := ownerGroupID == ""
+	projectOwner := ""
+	if excludeOwnerProject {
+		projectOwner = ownerProjectID
+	}
+	lockedProjects = normalizeProjects(lockedProjects, projectOwner)
+	openProjects = normalizeProjects(openProjects, projectOwner)
+	lockedGroups = normalizeGroups(lockedGroups, ownerProjectID, ownerGroupID, excludeOwnerProject)
+	openGroups = normalizeGroups(openGroups, ownerProjectID, ownerGroupID, excludeOwnerProject)
+	if len(lockedProjects) == 0 && len(openProjects) == 0 && len(lockedGroups) == 0 && len(openGroups) == 0 {
 		return nil
 	}
-	token := impactToken(ownerProjectID, mode, signature, lockedProjects, openProjects)
-	if mode != ModeActualDate && len(lockedProjects) > 0 {
-		return Error{Kind: LockedProjectImpact, Token: token, LockedProjects: lockedProjects, OpenProjects: openProjects}
+	token := impactToken(ownerProjectID, ownerGroupID, mode, signature, lockedProjects, openProjects, lockedGroups, openGroups)
+	if mode != ModeActualDate && (len(lockedProjects) > 0 || len(lockedGroups) > 0) {
+		kind := LockedProjectImpact
+		if len(lockedGroups) > 0 {
+			kind = LockedScopeImpact
+		}
+		return Error{Kind: kind, Token: token, LockedProjects: lockedProjects, OpenProjects: openProjects, LockedGroups: lockedGroups, OpenGroups: openGroups}
 	}
 	if suppliedToken == "" {
-		return Error{Kind: ConfirmationRequired, Token: token, LockedProjects: lockedProjects, OpenProjects: openProjects}
+		return Error{Kind: ConfirmationRequired, Token: token, LockedProjects: lockedProjects, OpenProjects: openProjects, LockedGroups: lockedGroups, OpenGroups: openGroups}
 	}
 	if suppliedToken != token {
-		return Error{Kind: StaleImpact, Token: token, LockedProjects: lockedProjects, OpenProjects: openProjects}
+		return Error{Kind: StaleImpact, Token: token, LockedProjects: lockedProjects, OpenProjects: openProjects, LockedGroups: lockedGroups, OpenGroups: openGroups}
 	}
 	return nil
 }
@@ -151,13 +208,41 @@ func normalizeProjects(values []Project, ownerProjectID string) []Project {
 	return out
 }
 
-func impactToken(ownerProjectID string, mode Mode, signature string, lockedProjects, openProjects []Project) string {
-	parts := []string{ownerProjectID, string(mode), signature}
+func normalizeGroups(values []Group, ownerProjectID, ownerGroupID string, excludeOwnerProject bool) []Group {
+	byID := make(map[string]Group, len(values))
+	for _, value := range values {
+		if value.ID == "" || value.ID == ownerGroupID || (excludeOwnerProject && value.ProjectID == ownerProjectID) {
+			continue
+		}
+		byID[value.ID] = value
+	}
+	out := make([]Group, 0, len(byID))
+	for _, value := range byID {
+		out = append(out, value)
+	}
+	sort.Slice(out, func(left, right int) bool {
+		leftLabel, rightLabel := strings.ToLower(out[left].Path), strings.ToLower(out[right].Path)
+		if leftLabel == rightLabel {
+			return out[left].ID < out[right].ID
+		}
+		return leftLabel < rightLabel
+	})
+	return out
+}
+
+func impactToken(ownerProjectID, ownerGroupID string, mode Mode, signature string, lockedProjects, openProjects []Project, lockedGroups, openGroups []Group) string {
+	parts := []string{ownerProjectID, ownerGroupID, string(mode), signature}
 	for _, value := range lockedProjects {
 		parts = append(parts, "locked:"+value.ID+":"+integer(value.Version))
 	}
 	for _, value := range openProjects {
 		parts = append(parts, "open:"+value.ID+":"+integer(value.Version))
+	}
+	for _, value := range lockedGroups {
+		parts = append(parts, "locked-group:"+value.ID+":"+integer(value.Version))
+	}
+	for _, value := range openGroups {
+		parts = append(parts, "open-group:"+value.ID+":"+integer(value.Version))
 	}
 	digest := sha256.Sum256([]byte(strings.Join(parts, "|")))
 	return hex.EncodeToString(digest[:])
@@ -195,6 +280,8 @@ type impactDetail struct {
 	Token          string    `json:"token"`
 	LockedProjects []Project `json:"lockedProjects"`
 	OpenProjects   []Project `json:"openProjects"`
+	LockedGroups   []Group   `json:"lockedGroups"`
+	OpenGroups     []Group   `json:"openGroups"`
 }
 
 func WriteHTTPError(response http.ResponseWriter, err error) bool {
@@ -207,9 +294,7 @@ func WriteHTTPError(response http.ResponseWriter, err error) bool {
 		Code:    impactError.Kind,
 		Message: message,
 		Details: impactDetail{
-			Token:          impactError.Token,
-			LockedProjects: impactError.LockedProjects,
-			OpenProjects:   impactError.OpenProjects,
+			Token: impactError.Token, LockedProjects: impactError.LockedProjects, OpenProjects: impactError.OpenProjects, LockedGroups: impactError.LockedGroups, OpenGroups: impactError.OpenGroups,
 		},
 	})
 	return true

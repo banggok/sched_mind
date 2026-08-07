@@ -71,17 +71,16 @@ func (state *portfolioState) scheduleTimeline(timeline schedulingdomain.Timeline
 
 	pending := make(map[string]taskModel)
 	for _, task := range state.tasks {
-		project := state.projects[task.ProjectID]
 		if _, leaf := state.leafOrder[task.ID]; !leaf {
 			continue
 		}
 		if _, fixed := fixedTaskIDs[task.ID]; fixed {
 			continue
 		}
-		if task.ActualStart != nil && task.ActualEnd != nil || project.Status != "open" || !project.AutomaticScheduling {
+		if task.ActualStart != nil && task.ActualEnd != nil || task.EffectiveLifecycle != "open" || !task.EffectiveAutomaticScheduling {
 			continue
 		}
-		if project.SchedulingStartDate == nil {
+		if task.EffectiveSchedulingStartDate == nil {
 			result.schedules[task.ID] = unscheduled(task.ID, reasonMissingAnchor)
 			continue
 		}
@@ -346,8 +345,7 @@ func (result *timelineResult) invalidateDisplaced(taskIDs []string, pending map[
 		if !exists {
 			continue
 		}
-		project := state.projects[task.ProjectID]
-		if task.ActualStart != nil && task.ActualEnd != nil || project.Status != "open" || !project.AutomaticScheduling {
+		if task.ActualStart != nil && task.ActualEnd != nil || task.EffectiveLifecycle != "open" || !task.EffectiveAutomaticScheduling {
 			continue
 		}
 		result.calendar.removeTask(taskID)
@@ -366,8 +364,7 @@ func (result *timelineResult) invalidateDisplaced(taskIDs []string, pending map[
 
 func (result *timelineResult) readiness(task taskModel) (time.Time, bool, bool, error) {
 	state := result.calendar.state
-	project := state.projects[task.ProjectID]
-	candidate := schedulingdomain.DateOnly(*project.SchedulingStartDate).AddDate(0, 0, task.LagDays)
+	candidate := schedulingdomain.DateOnly(*task.EffectiveSchedulingStartDate).AddDate(0, 0, task.LagDays)
 	blockers := state.blockers(task.ID)
 	if len(blockers) == 0 {
 		return candidate, false, false, nil
@@ -474,10 +471,24 @@ func (calendar *allocationCalendar) allocationConsumesCapacityFor(candidate task
 	if !taskExists || !projectExists {
 		return true
 	}
-	if reservedTask.ActualStart != nil && reservedTask.ActualEnd != nil || reservedProject.Status == "locked" {
+	effectiveLifecycle := reservedTask.EffectiveLifecycle
+	effectiveAutomaticScheduling := reservedTask.EffectiveAutomaticScheduling
+	// Direct allocator/unit-test states created before effective Group resolution do
+	// not carry the transient Effective* fields. Preserve the legacy Project-level
+	// semantics only for that unresolved state; resolved Group overrides always set
+	// EffectiveLifecycle and therefore remain authoritative.
+	if effectiveLifecycle == "" {
+		effectiveLifecycle = reservedProject.Status
+		if effectiveLifecycle == "" {
+			effectiveLifecycle = "open"
+		}
+		effectiveAutomaticScheduling = reservedProject.AutomaticScheduling
+	}
+
+	if reservedTask.ActualStart != nil && reservedTask.ActualEnd != nil || effectiveLifecycle == "locked" {
 		return true
 	}
-	if reservedProject.Status == "open" && !reservedProject.AutomaticScheduling {
+	if effectiveLifecycle == "open" && !effectiveAutomaticScheduling {
 		candidateProject, exists := calendar.state.projects[candidate.ProjectID]
 		if !exists {
 			return true

@@ -34,6 +34,13 @@ type createAcceptanceWBSRecord struct {
 	CapacityAllocationPercentage                                                         int `gorm:"default:100"`
 	ExecutionStart, ExecutionEnd, CommitmentStart, CommitmentEnd, ActualStart, ActualEnd *time.Time
 	ExecutionUnscheduledReason, CommitmentUnscheduledReason                              *string
+	GroupSchedulingSource                                                                string `gorm:"default:inherit"`
+	GroupAutomaticScheduling                                                             *bool
+	GroupSchedulingStartDate                                                             *time.Time
+	GroupLocalStatus                                                                     string `gorm:"default:open"`
+	GroupSchedulingVersion                                                               int64
+	GroupLockedAutomaticScheduling                                                       *bool
+	GroupLockedSchedulingStartDate                                                       *time.Time
 	CreatedAt, UpdatedAt                                                                 time.Time
 }
 

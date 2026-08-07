@@ -11,6 +11,7 @@ import (
 
 	"github.com/banggok/sched_mind/backend/internal/portfolio/application"
 	"github.com/banggok/sched_mind/backend/internal/portfolio/domain"
+	"github.com/banggok/sched_mind/backend/internal/shared/groupscheduling"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -20,29 +21,37 @@ type Repository struct{ database *gorm.DB }
 func New(database *gorm.DB) *Repository { return &Repository{database: database} }
 
 type projectRow struct {
-	ID              string
-	Name            string
-	Status          string
-	Priority        int
-	ScheduleVersion int64
+	ID                  string
+	Name                string
+	Status              string
+	Priority            int
+	ScheduleVersion     int64
+	AutomaticScheduling bool
+	SchedulingStartDate *time.Time
 }
 
 type nodeRow struct {
-	ID                string
-	ProjectID         string
-	ParentID          *string
-	Name              string
-	Position          int
-	RoleID            *string
-	RoleName          *string
-	AssigneeID        *string
-	AssigneeName      *string
-	EffortMinutes     *int
-	Start             *time.Time
-	End               *time.Time
-	UnscheduledReason *string
-	ActualStart       *time.Time
-	ActualEnd         *time.Time
+	ID                             string
+	ProjectID                      string
+	ParentID                       *string
+	Name                           string
+	Position                       int
+	RoleID                         *string
+	RoleName                       *string
+	AssigneeID                     *string
+	AssigneeName                   *string
+	EffortMinutes                  *int
+	Start                          *time.Time
+	End                            *time.Time
+	UnscheduledReason              *string
+	ActualStart                    *time.Time
+	ActualEnd                      *time.Time
+	GroupSchedulingSource          string
+	GroupAutomaticScheduling       *bool
+	GroupSchedulingStartDate       *time.Time
+	GroupLocalStatus               string
+	GroupLockedAutomaticScheduling *bool
+	GroupLockedSchedulingStartDate *time.Time
 }
 
 type dependencyRow struct {
@@ -60,7 +69,7 @@ func (repository *Repository) ActiveProjects(ctx context.Context) ([]domain.Proj
 	var rows []projectRow
 	if err := repository.database.WithContext(ctx).
 		Table("projects").
-		Select("id, name, status, priority, schedule_version").
+		Select("id, name, status, priority, schedule_version, automatic_scheduling, scheduling_start_date").
 		Where("status IN ?", []string{"open", "locked"}).
 		Order("priority ASC").Order("id ASC").
 		Scan(&rows).Error; err != nil {
@@ -91,7 +100,7 @@ func (repository *Repository) Portfolio(ctx context.Context, query application.P
 	var projects []projectRow
 	if err := repository.database.WithContext(ctx).
 		Table("projects").
-		Select("id, name, status, priority, schedule_version").
+		Select("id, name, status, priority, schedule_version, automatic_scheduling, scheduling_start_date").
 		Where("id IN ? AND status IN ?", query.ProjectIDs, []string{"open", "locked"}).
 		Order("priority ASC").Order("id ASC").
 		Scan(&projects).Error; err != nil {
@@ -110,7 +119,7 @@ func (repository *Repository) Portfolio(ctx context.Context, query application.P
 	if query.Projection == domain.Commitment {
 		startColumn, endColumn, reasonColumn = "commitment_start", "commitment_end", "commitment_unscheduled_reason"
 	}
-	selectClause := fmt.Sprintf("node.id, node.project_id, node.parent_id, node.name, node.position, node.role_id, role.name AS role_name, node.assignee_id, member.name AS assignee_name, node.effort_minutes, node.%s AS start, node.%s AS end, node.%s AS unscheduled_reason, node.actual_start, node.actual_end", startColumn, endColumn, reasonColumn)
+	selectClause := fmt.Sprintf("node.id, node.project_id, node.parent_id, node.name, node.position, node.role_id, role.name AS role_name, node.assignee_id, member.name AS assignee_name, node.effort_minutes, node.%s AS start, node.%s AS end, node.%s AS unscheduled_reason, node.actual_start, node.actual_end, node.group_scheduling_source, node.group_automatic_scheduling, node.group_scheduling_start_date, node.group_local_status, node.group_locked_automatic_scheduling, node.group_locked_scheduling_start_date", startColumn, endColumn, reasonColumn)
 	var nodes []nodeRow
 	if err := repository.database.WithContext(ctx).
 		Table("wbs_nodes AS node").
@@ -122,7 +131,12 @@ func (repository *Repository) Portfolio(ctx context.Context, query application.P
 		Scan(&nodes).Error; err != nil {
 		return nil, fmt.Errorf("query portfolio WBS: %w", err)
 	}
-	portfolio.Rows, portfolio.WorkingDayAnchor = composeRows(projects, nodes)
+	rows, workingDayAnchor, err := composeRows(projects, nodes)
+	if err != nil {
+		return nil, err
+	}
+	portfolio.Rows = rows
+	portfolio.WorkingDayAnchor = workingDayAnchor
 
 	var dependencies []dependencyRow
 	if err := repository.database.WithContext(ctx).
@@ -173,7 +187,7 @@ type aggregate struct {
 	incompleteSchedule bool
 }
 
-func composeRows(projects []projectRow, nodes []nodeRow) ([]domain.Row, *time.Time) {
+func composeRows(projects []projectRow, nodes []nodeRow) ([]domain.Row, *time.Time, error) {
 	byProject := make(map[string][]nodeRow)
 	for _, node := range nodes {
 		byProject[node.ProjectID] = append(byProject[node.ProjectID], node)
@@ -182,6 +196,22 @@ func composeRows(projects []projectRow, nodes []nodeRow) ([]domain.Row, *time.Ti
 	var anchor *time.Time
 	for _, project := range projects {
 		projectNodes := byProject[project.ID]
+		resolverNodes := make([]groupscheduling.Node, 0, len(projectNodes))
+		for _, node := range projectNodes {
+			source := groupscheduling.Source(node.GroupSchedulingSource)
+			if source == "" {
+				source = groupscheduling.SourceInherit
+			}
+			status := groupscheduling.LocalStatus(node.GroupLocalStatus)
+			if status == "" {
+				status = groupscheduling.StatusOpen
+			}
+			resolverNodes = append(resolverNodes, groupscheduling.Node{ID: node.ID, ParentID: node.ParentID, Name: node.Name, Source: source, AutomaticSchedulingOverride: node.GroupAutomaticScheduling, SchedulingStartDateOverride: node.GroupSchedulingStartDate, LocalStatus: status, LockedAutomaticScheduling: node.GroupLockedAutomaticScheduling, LockedSchedulingStartDate: node.GroupLockedSchedulingStartDate})
+		}
+		resolver, err := groupscheduling.New(groupscheduling.Project{ID: project.ID, Name: project.Name, Status: project.Status, AutomaticScheduling: project.AutomaticScheduling, SchedulingStartDate: project.SchedulingStartDate}, resolverNodes)
+		if err != nil {
+			return nil, nil, fmt.Errorf("resolve Group scheduling for portfolio project %s: %w", project.ID, err)
+		}
 		byParent := make(map[string][]nodeRow)
 		for _, node := range projectNodes {
 			key := ""
@@ -248,9 +278,10 @@ func composeRows(projects []projectRow, nodes []nodeRow) ([]domain.Row, *time.Ti
 			ID: project.ID, ProjectID: project.ID, Kind: "project", Name: project.Name, Status: project.Status,
 			EffortMinutes: projectEffort, Start: cloneDate(projectAggregate.start), End: cloneDate(projectAggregate.end),
 			IncompleteEffort: projectAggregate.incompleteEffort, IncompleteSchedule: projectAggregate.incompleteSchedule,
-			HasChildren: len(projectNodes) > 0,
+			HasChildren: len(projectNodes) > 0, EffectiveLifecycle: project.Status,
 		})
 
+		var resolverError error
 		var appendNode func(nodeRow, string, int)
 		appendNode = func(node nodeRow, number string, depth int) {
 			children := byParent[node.ID]
@@ -264,6 +295,13 @@ func composeRows(projects []projectRow, nodes []nodeRow) ([]domain.Row, *time.Ti
 				copy := value.effort
 				effort = &copy
 			}
+			lifecycle := project.Status
+			effective, err := resolver.EffectiveFor(node.ID)
+			if err != nil {
+				resolverError = err
+				return
+			}
+			lifecycle = string(effective.Lifecycle)
 			row := domain.Row{
 				ID: node.ID, ProjectID: node.ProjectID, ParentID: node.ParentID, Kind: kind,
 				Name: node.Name, WBSNumber: number, Depth: depth, Position: node.Position,
@@ -271,8 +309,9 @@ func composeRows(projects []projectRow, nodes []nodeRow) ([]domain.Row, *time.Ti
 				AssigneeID: node.AssigneeID, AssigneeName: node.AssigneeName, EffortMinutes: effort,
 				Start: cloneDate(value.start), End: cloneDate(value.end), UnscheduledReason: node.UnscheduledReason,
 				IncompleteEffort: value.incompleteEffort, IncompleteSchedule: value.incompleteSchedule,
-				HasChildren: len(children) > 0,
-				Completed:   node.ActualStart != nil && node.ActualEnd != nil,
+				HasChildren:        len(children) > 0,
+				Completed:          node.ActualStart != nil && node.ActualEnd != nil,
+				EffectiveLifecycle: lifecycle,
 			}
 			if kind != "task" {
 				row.AssigneeID = nil
@@ -286,9 +325,12 @@ func composeRows(projects []projectRow, nodes []nodeRow) ([]domain.Row, *time.Ti
 		}
 		for index, root := range byParent[""] {
 			appendNode(root, fmt.Sprintf("%d", index+1), 1)
+			if resolverError != nil {
+				return nil, nil, fmt.Errorf("resolve Group scheduling for portfolio node %s: %w", root.ID, resolverError)
+			}
 		}
 	}
-	return rows, anchor
+	return rows, anchor, nil
 }
 
 func mergeAggregate(left, right aggregate) aggregate {

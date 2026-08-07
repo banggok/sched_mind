@@ -167,6 +167,8 @@ function taskEditorHarness(taskName = "API") {
     create: vi.fn(),
     createSibling: vi.fn(),
     rename: vi.fn(),
+    updateGroupScheduling: vi.fn<WBSGateway["updateGroupScheduling"]>(),
+    changeGroupStatus: vi.fn<WBSGateway["changeGroupStatus"]>(),
     reorder: vi.fn(),
     place: vi.fn(),
     move: vi.fn(),
