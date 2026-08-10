@@ -737,6 +737,94 @@ func acceptanceDatabase(t *testing.T) *gorm.DB {
 	return database
 }
 
+func TestExecutablePreviewIgnoresAllocationOnlyGapInLockedManualGroup_US44_AC24(t *testing.T) {
+	database := acceptanceDatabase(t)
+	now := time.Date(2026, 8, 10, 8, 0, 0, 0, time.UTC)
+	anchor := mustDate("2026-08-10")
+	lockedStart := mustDate("2026-08-12")
+	lockedEnd := mustDate("2026-08-13")
+	roleID, memberID := "role", "member"
+	if err := database.Create(&acceptanceRoleRecord{ID: roleID, Name: "Engineer"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Create(&acceptanceMemberRecord{
+		ID: memberID, Name: "Rani", RoleID: roleID,
+		DailyCapacity: "8", BufferPercentage: "0", CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Create(&acceptanceProjectRecord{
+		ID: "project", Name: "Project", NameKey: "project", Status: "open", Priority: 1,
+		AutomaticScheduling: true, AutoCalculateDate: true, SchedulingStartDate: &anchor,
+		ProjectBuffer: 0, CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	lockedAutomatic := false
+	lockedGroupID, openGroupID := "locked-manual-group", "open-group"
+	rows := []acceptanceTaskRecord{
+		{
+			ID: openGroupID, ProjectID: "project", ParentKey: "", Name: "Open Group", NameKey: "open group", Position: 1,
+			GroupSchedulingSource: "inherit", GroupLocalStatus: "open", CreatedAt: now, UpdatedAt: now,
+		},
+		{
+			ID: "preview-task", ProjectID: "project", ParentID: &openGroupID, ParentKey: openGroupID, Name: "Preview Task", NameKey: "preview task", Position: 1,
+			GroupSchedulingSource: "inherit", GroupLocalStatus: "open", CreatedAt: now, UpdatedAt: now,
+		},
+		{
+			ID: lockedGroupID, ProjectID: "project", ParentKey: "", Name: "Locked Manual Group", NameKey: "locked manual group", Position: 2,
+			GroupSchedulingSource: "override", GroupAutomaticScheduling: &lockedAutomatic, GroupLocalStatus: "locked",
+			GroupLockedAutomaticScheduling: &lockedAutomatic, CreatedAt: now, UpdatedAt: now,
+		},
+		{
+			ID: "protected-task", ProjectID: "project", ParentID: &lockedGroupID, ParentKey: lockedGroupID, Name: "Protected Task", NameKey: "protected task", Position: 1,
+			ExecutionStart: &lockedStart, ExecutionEnd: &lockedEnd, CommitmentStart: &lockedStart, CommitmentEnd: &lockedEnd,
+			GroupSchedulingSource: "inherit", GroupLocalStatus: "open", CreatedAt: now, UpdatedAt: now,
+		},
+	}
+	if err := database.Create(&rows).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	scheduler := schedulingapplication.NewService(NewWithDependencies(
+		database,
+		func() time.Time { return now },
+		func() (string, error) { return "preview-regression", nil },
+	))
+	wbsService := wbsapplication.NewServiceWithDependencies(
+		wbsgormrepo.New(database),
+		scheduler,
+		func() time.Time { return now.Add(time.Hour) },
+		func() (string, error) { return "unused", nil },
+	)
+	previewEffort := 120
+	preview, err := wbsService.PreviewExecutableSchedule(context.Background(), "project", "preview-task", wbsapplication.PreviewExecutableInput{
+		RoleID:                       &roleID,
+		AssigneeID:                   &memberID,
+		EffortMinutes:                &previewEffort,
+		CapacityAllocationPercentage: 100,
+		LagDays:                      0,
+	})
+	if err != nil {
+		t.Fatalf("preview with protected manual Task lacking allocation prerequisites: %v", err)
+	}
+	if preview == nil || preview.Task == nil || preview.Task.Executable.ExecutionTimeline.Start == nil || preview.Task.Executable.ExecutionTimeline.End == nil {
+		t.Fatalf("preview=%#v, want generated execution timeline", preview)
+	}
+	assertDate(t, "preview execution start", preview.Task.Executable.ExecutionTimeline.Start, "2026-08-10")
+	assertDate(t, "preview execution end", preview.Task.Executable.ExecutionTimeline.End, "2026-08-10")
+
+	protected := loadAcceptanceTask(t, database, "protected-task")
+	assertDate(t, "protected execution start", protected.ExecutionStart, "2026-08-12")
+	assertDate(t, "protected execution end", protected.ExecutionEnd, "2026-08-13")
+	assertDate(t, "protected commitment start", protected.CommitmentStart, "2026-08-12")
+	assertDate(t, "protected commitment end", protected.CommitmentEnd, "2026-08-13")
+	if protected.AssigneeID != nil || protected.EffortMinutes != nil {
+		t.Fatalf("protected Task allocation prerequisites unexpectedly changed: %#v", protected)
+	}
+}
+
 func TestCreateWBSAcceptanceSkipsSchedulerForNameOnlyTaskWhenProjectHasCompletedHistoricalOverCapacityTask_US6_AC29_US4_AC23(t *testing.T) {
 	database := acceptanceDatabase(t)
 	now := time.Date(2026, 8, 1, 8, 0, 0, 0, time.UTC)
