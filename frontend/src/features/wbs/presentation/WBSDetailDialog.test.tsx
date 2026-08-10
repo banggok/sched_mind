@@ -7,6 +7,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { DependenciesGateway } from "../../dependencies/application/dependenciesGateway";
 import type { RolesGateway } from "../../roles/application/rolesGateway";
@@ -489,6 +490,39 @@ describe("WBSDetailDialog option loading", () => {
     expect(confirmedInput.executionEnd).toBeUndefined();
     expect(confirmedInput.commitmentStart).toBeUndefined();
     expect(confirmedInput.commitmentEnd).toBeUndefined();
+  });
+
+  it("US-6.1 AC-38 skips a new blur preview when Save is the focus target", async () => {
+    const user = userEvent.setup();
+    const node = recommendationNode();
+    const previewExecutableSchedule = vi.fn().mockResolvedValue({ task: node });
+    const updateExecutable = vi.fn().mockResolvedValue(undefined);
+    const gateway = recommendationGateway(node, {
+      previewExecutableSchedule,
+      updateExecutable,
+    });
+
+    renderRecommendationDialog(node, gateway);
+    await screen.findByRole("option", { name: "Ayu" });
+
+    const effort = screen.getByLabelText("Effort (hours)");
+    await user.clear(effort);
+    await user.type(effort, "10");
+    expect(document.activeElement).toBe(effort);
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(updateExecutable).toHaveBeenCalledOnce());
+    expect(previewExecutableSchedule).not.toHaveBeenCalled();
+    expect(updateExecutable).toHaveBeenCalledWith(
+      "project",
+      "task",
+      expect.objectContaining({
+        effortHours: 10,
+        roleId: "role",
+        assigneeId: "a",
+      }),
+    );
   });
 
   it("ignores an older schedule preview that resolves after a newer draft", async () => {
