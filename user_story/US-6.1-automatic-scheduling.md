@@ -872,6 +872,10 @@ Lag (days)
   scheduling.
 - Save remains the only action that confirms Task-field changes. A preview must
   never silently auto-save the draft.
+- When clicking Save itself causes the currently focused scheduling field to
+  blur, that blur must not start a new preview request that would immediately be
+  superseded by the confirmed mutation. Any preview that was already in flight
+  before the Save intent is still cancelled by Save.
 - A newer draft or confirmed mutation invalidates an older in-flight preview;
   stale preview responses cannot replace the latest visible draft schedule.
 
@@ -898,7 +902,9 @@ When a Task draft schedule preview is pending:
 - generated dates and dependency ownership in the preview are identified as unconfirmed;
 - the user may continue editing, and the superseded request is cancelled or
   ignored by resolution order;
-- Save aborts an in-flight preview and executes the normal confirmed mutation;
+- Save does not start a new preview solely because Save causes the focused
+  scheduling field to blur; it aborts any preview already in flight and executes
+  the normal confirmed mutation;
 - preview failure preserves both the current draft and the last visible
   confirmed or successfully previewed schedule.
 
@@ -1277,6 +1283,8 @@ For `8`, `30%`, and `20%`, Raw Commitment is `4.48` and rounded Commitment is `4
 **And** missing or invalid Role, Effort, or Lag sends no preview request and exposes the missing-input state
 **And** previewed generated dates and automatic dependency ownership are labelled as unconfirmed
 **And** Save remains the only action that persists the Task draft
+**And** when Save itself causes the edited scheduling field to lose focus, no new preview request is started solely for that blur
+**And** any preview already in flight before Save is aborted
 **And** stale preview responses cannot overwrite a newer draft.
 
 ### AC-39 — Accessibility and responsive behaviour
@@ -1360,7 +1368,7 @@ For `8`, `30%`, and `20%`, Raw Commitment is `4.48` and rounded Commitment is `4
 | TC-61 | Effort edit followed by blur                      | Generated dates and automatic dependency projection appear before Save |
 | TC-62 | Role, Effort, or Lag cleared/invalid then blurred | No preview API call; missing-input state replaces stale draft dates |
 | TC-63 | Two preview requests resolve out of order         | Only the newest draft preview remains visible                      |
-| TC-64 | Save while preview is in flight                   | Preview is aborted; one confirmed mutation persists and schedules  |
+| TC-64 | Save from a focused changed scheduling field or while preview is in flight | Save-triggered blur starts no new preview; any existing preview is aborted; one confirmed mutation persists and schedules |
 | TC-65 | Assignee explicitly cleared then blurred          | Preview API runs; stale automatic ownership is removed; Task shows missing-Assignee unscheduled projection |
 | TC-66 | Create child converts executable parent or retargets dependency | Concrete portfolio scheduler runs atomically; failure rolls back conversion |
 | TC-67 | Delete Name-only unfinished Task while Project also has completed Task | Task is deleted; scheduler is not invoked; completed and remaining Task state is unchanged |

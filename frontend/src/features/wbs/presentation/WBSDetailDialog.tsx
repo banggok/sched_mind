@@ -154,6 +154,7 @@ export function WBSDetailDialog({
     undefined,
   );
   const previewController = useRef<AbortController | undefined>(undefined);
+  const skipNextPreviewOnBlur = useRef(false);
   const scheduleDraftVersion = useRef(0);
   const previewingVersion = useRef<number | undefined>(undefined);
   const lastPreviewedVersion = useRef(0);
@@ -374,6 +375,14 @@ export function WBSDetailDialog({
     setCommitmentUnscheduledReason(reason);
   }
 
+  function previewScheduleAfterBlur(overrides?: { effort?: string }) {
+    if (skipNextPreviewOnBlur.current) {
+      skipNextPreviewOnBlur.current = false;
+      return;
+    }
+    void previewSchedule(overrides);
+  }
+
   async function previewSchedule(overrides?: { effort?: string }) {
     if (
       !planningOpen ||
@@ -473,6 +482,7 @@ export function WBSDetailDialog({
 
   async function save(event: FormEvent) {
     event.preventDefault();
+    skipNextPreviewOnBlur.current = false;
     if (busy || readOnly) return;
     const normalizedEffort = roundToHalfDraft(effort);
     const effortHours = parseDecimalDraft(normalizedEffort);
@@ -998,7 +1008,7 @@ export function WBSDetailDialog({
                 onBlur={() => {
                   const normalized = roundToHalfDraft(effort);
                   setEffort(normalized);
-                  void previewSchedule({ effort: normalized });
+                  previewScheduleAfterBlur({ effort: normalized });
                 }}
               />
               <div>
@@ -1021,7 +1031,7 @@ export function WBSDetailDialog({
                       setCapacityAllocationPercentage(event.target.value);
                     }
                   }}
-                  onBlur={() => void previewSchedule()}
+                  onBlur={() => previewScheduleAfterBlur()}
                 />
               </div>
               <div>
@@ -1039,7 +1049,7 @@ export function WBSDetailDialog({
                       setLag(e.target.value);
                     }
                   }}
-                  onBlur={() => void previewSchedule()}
+                  onBlur={() => previewScheduleAfterBlur()}
                   aria-describedby="detail-lag-help"
                 />
                 <p id="detail-lag-help" className="mt-2 text-sm text-muted">
@@ -1063,7 +1073,7 @@ export function WBSDetailDialog({
                     markScheduleDraftChanged();
                     setRole(event.target.value);
                   }}
-                  onBlur={() => void previewSchedule()}
+                  onBlur={() => previewScheduleAfterBlur()}
                 >
                   <option value="">No role</option>
                   {roles.map((candidateRole) => (
@@ -1117,7 +1127,7 @@ export function WBSDetailDialog({
                       setRecommendation(heldRecommendation);
                       setHeldRecommendation(undefined);
                     }
-                    void previewSchedule();
+                    previewScheduleAfterBlur();
                   }}
                 >
                   <option value="">No assignee</option>
@@ -1303,6 +1313,9 @@ export function WBSDetailDialog({
                 variant="primary"
                 loading={busy}
                 disabled={readOnly}
+                onPointerDown={() => {
+                  skipNextPreviewOnBlur.current = true;
+                }}
               >
                 Save
               </Button>
