@@ -35,6 +35,9 @@ export function RoleMembersDialog({
     () => ({ search: debouncedSearch, page, pageSize: PAGE_SIZE }),
     [debouncedSearch, page],
   );
+  const queryKey = `${role.id}:${page}:${debouncedSearch}`;
+  const [loadedQueryKey, setLoadedQueryKey] = useState<string>();
+  const resultsCurrent = loadedQueryKey === queryKey;
 
   useEffect(() => {
     const controller = new AbortController();
@@ -46,21 +49,23 @@ export function RoleMembersDialog({
         setMembers(result.items);
         setTotal(result.total);
         setError("");
+        setLoadedQueryKey(queryKey);
       })
       .catch((cause: unknown) => {
         if (controller.signal.aborted) return;
         if (cause instanceof DOMException && cause.name === "AbortError")
           return;
         setError(roleMemberError(cause));
+        setLoadedQueryKey(queryKey);
       })
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [gateway, query, retryVersion, role.id]);
+  }, [gateway, query, queryKey, retryVersion, role.id]);
 
   const requestClose = useCallback(() => onClose(), [onClose]);
-  const busy = loading || searchPending;
+  const busy = loading || searchPending || !resultsCurrent;
 
   return (
     <Dialog

@@ -163,7 +163,7 @@ func (result *timelineResult) reserveFixedTasks() error {
 		return compareTaskOrder(result.calendar.state, values[left], values[right])
 	})
 	for _, task := range values {
-		if _, leaf := result.calendar.state.leafOrder[task.ID]; !leaf || task.AssigneeID == nil || task.EffortMinutes == nil {
+		if _, leaf := result.calendar.state.leafOrder[task.ID]; !leaf {
 			continue
 		}
 		start, end := timelineDates(task, result.timeline)
@@ -172,6 +172,16 @@ func (result *timelineResult) reserveFixedTasks() error {
 		}
 		if task.ActualStart != nil && task.ActualEnd != nil && end.After(*task.ActualEnd) {
 			end = datePointer(*task.ActualEnd)
+		}
+		// A fixed timeline and a fixed capacity reservation are separate concerns.
+		// Manual/locked Tasks may have a valid protected Start/End pair without
+		// enough allocation data to reserve capacity (for example, no Assignee or
+		// Effort). Keep the timeline in the scheduling result so dependency and
+		// protected-scope comparison can still use it, while leaving capacity
+		// untouched when allocation reconstruction is impossible.
+		if task.AssigneeID == nil || task.EffortMinutes == nil {
+			result.schedules[task.ID] = taskSchedule{TaskID: task.ID, Start: start, End: end, Allocations: []dailyAllocation{}}
+			continue
 		}
 		allocations, usedProjection, err := result.calendar.reserveProjectedFixed(task, *start, *end)
 		if err != nil {
